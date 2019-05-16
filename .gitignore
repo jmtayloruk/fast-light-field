@@ -1,2 +1,5 @@
+py_symmetry/build
+py_symmetry/build/*
+py_symmetry/py_symmetry.so
 .ipynb_checkpoints
 .DS_Store
