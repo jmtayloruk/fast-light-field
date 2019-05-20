@@ -1,59 +1,73 @@
 {\rtf1\ansi\ansicpg1252\cocoartf1504\cocoasubrtf830
 {\fonttbl\f0\fmodern\fcharset0 Courier;\f1\fmodern\fcharset0 Courier-Bold;}
-{\colortbl;\red255\green255\blue255;\red255\green255\blue255;\red0\green0\blue0;}
-{\*\expandedcolortbl;;\cssrgb\c100000\c100000\c100000;\cssrgb\c0\c0\c0;}
-\paperw11900\paperh16840\margl1440\margr1440\vieww27680\viewh15320\viewkind0
+{\colortbl;\red255\green255\blue255;\red255\green255\blue255;}
+{\*\expandedcolortbl;;\cssrgb\c100000\c100000\c100000;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww21700\viewh15560\viewkind0
 \deftab720
 \pard\pardeftab720\partightenfactor0
 
 \f0\fs28 \cf0 \cb2 \expnd0\expndtw0\kerning0
-   ncalls  tottime  percall  cumtime  percall filename:lineno(function)\
-        1    0.007    0.007  337.964  337.964 <string>:1(<module>)\
-        1    0.138    0.138  337.947  337.947 <ipython-input-53-74f4f8200e6a>:152(backwardProjectACC)\
-       14    1.121    0.080  337.605   24.115 <ipython-input-53-74f4f8200e6a>:122(backwardProjectForZ)\
-      210   
-\f1\b 21.415
-\f0\b0     0.102  332.118    1.582 <ipython-input-53-74f4f8200e6a>:107(backwardProjectForZY)\
-     3150   
-\f1\b 51.213
-\f0\b0     0.016  310.703    0.099 <ipython-input-52-89c45538ce59>:149(special_fftconvolve)\
-     3150    1.084    0.000  
-\f1\b 212.321
-\f0\b0     0.067 fftpack.py:1041(rfftn)\
+      112    0.373    0.003   74.463    0.665 <ipython-input-11-c37fe3b06b6e>:129(backwardProjectForZY)\
+      504    1.432    0.003   
+\f1\b \cb2 72.782
+\f0\b0 \cb2     0.144 <ipython-input-11-c37fe3b06b6e>:91(convolve)\
+calls\
+     4046    0.008    0.000   
+\f1\b \cb2 48.292
+\f0\b0 \cb2     0.012 basic.py:673(fft2)\
+and calls\
+      896    1.006    0.001   
+\f1\b \cb2 24.424
+\f0\b0 \cb2     0.027 <ipython-input-11-c37fe3b06b6e>:84(convolvePart2)\
+ which calls\
+      784    0.059    0.000    2.299    0.003 <ipython-input-11-c37fe3b06b6e>:54(MirrorYArray)\
+ and calls\
+     1680    0.985    0.001   21.094    0.013 <ipython-input-11-c37fe3b06b6e>:71(convolvePart3)\
+  which calls\
+     1470    0.093    0.000    4.855    0.003 <ipython-input-11-c37fe3b06b6e>:37(MirrorXArray)\
+  and calls\
+     3150    
+\f1\b \cb2 6.667
+\f0\b0 \cb2     0.002   
+\f1\b \cb2 14.953
+\f0\b0 \cb2     0.005 <ipython-input-8-dbe0fb60aef9>:123(special_fftconvolve)\
+   calls\
+     3150    0.021    0.000    8.286    0.003 <ipython-input-8-dbe0fb60aef9>:112(special_fftconvolve_part1)\
+    calls\
+     3150    0.046    0.000    7.973    0.003 <ipython-input-8-dbe0fb60aef9>:80(special_rfftn)\
+     calls\
+     3150    0.449    0.000    
+\f1\b \cb2 5.314
+\f0\b0 \cb2     0.002 <ipython-input-8-dbe0fb60aef9>:72(expand)\
+      which calls\
+     3150    2.589    0.001    2.627    0.001 <ipython-input-8-dbe0fb60aef9>:65(tempMul)\
 \
-     3150    0.372    0.000   
-\f1\b 47.169
-\f0\b0     0.015 <ipython-input-52-89c45538ce59>:122(special_fftconvolve_part1)\
-\pard\pardeftab720\partightenfactor0
-\cf0 \cb2      3150    0.057    0.000   46.739    0.015 <ipython-input-52-89c45538ce59>:90(special_rfftn)\
-     3150    4.857    0.002   42.482    0.013 <ipython-input-52-89c45538ce59>:81(expand)\
-->    3150   1.444    0.000    2.529    0.001 <ipython-input-52-89c45538ce59>:67(expand2)\
-->    3150   0.020    0.000   
-\f1\b 11.109
-\f0\b0     0.004 <ipython-input-52-89c45538ce59>:72(expand3)     (does tiling - may be more efficient to do in the other order?)\
-->    3150   0.055    0.000   
-\f1\b 14.916
-\f0\b0     0.005 <ipython-input-52-89c45538ce59>:75(expand4)     (np.append is clearly not very efficient in this context)\
-->    3150   9.010    0.003    9.072    0.003 <ipython-input-52-89c45538ce59>:63(tempMul)     (multiplication of full array with exponential)\
+By implication, 2.6s of fft2 belongs to special_fftconvolve, and all the rest is \'91large\'92 FFTs.\
 \
-       14    0.022    0.002    2.168    0.155 <ipython-input-52-89c45538ce59>:145(special_fftconvolve_part3)\
-\pard\pardeftab720\partightenfactor0
-\cf0 \cb2 \
+I don\'92t understand how special_fftconvolve has so much time assigned to self.\
+I suppose it must be the multiply? I suppose it must be taking the hit for *something*?\
+Maybe the unpickling of \'91projection\'92!?\
 \
-    12615   10.193    0.001   10.193    0.001 \{numpy.zeros\}\
+\
+    10346    3.071    0.000    
+\f1\b \cb2 3.071
+\f0\b0 \cb2     0.000 \{method 'astype' of 'numpy.ndarray' objects\}\
+\
+      112    1.053    0.009    1.083    0.010 memmap.py:207(__new__)\
+\
+\
+\
 \
 \
 63% rfftn, so using symmetries will definitely help significantly for that\
 15% fa*fb in special_fftconvolve \
-14% \cb2 special_fftconvolve_part1. I think these can be improved a lot - try:\
-- fusing maths operations. Make sure function calls don\'92t prevent fused multiply/add\
-- tile in opposite order\
-- no explicit tiling\
-- change axis order in rfftn - faster, and should be better for tiling to complete the matrix with conjugate\
+14% special_fftconvolve_part1. I think these can be improved a lot - try:\
 \
-\
-I think the next step is to update special_fftconvolve to exploit symmetries.\
-It needs to return the full array (which is just a case of modifying the tiling),\
-and then I loop over different aa,bb with symmetries.\
+I should try:\
+- fusing any more maths operations I can find. Make sure function calls don\'92t prevent fused multiply/add\
+- try doing the transpose as the final operation, rather than a mirror\
+- am I tiling in the most efficient order? \
+- would it help to change the axis order in rfftn? Raw speed, but also could be better for tiling to complete the matrix with conjugate\
+- investigate whether fft performance is impacted by the prime factors of the input array\
 \
 }
