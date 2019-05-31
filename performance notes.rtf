@@ -64,10 +64,10 @@ Maybe the unpickling of \'91projection\'92!?\
 14% special_fftconvolve_part1. I think these can be improved a lot - try:\
 \
 I should try:\
-- fusing any more maths operations I can find. Make sure function calls don\'92t prevent fused multiply/add\
+- doing fft2 natively with float (calling through to FFTW myself, perhaps?)\
+- improving code to properly deal with >1 parallel convolution, instead of just iterating over n\
 - try doing the transpose as the final operation, rather than a mirror\
-- am I tiling in the most efficient order? \
 - would it help to change the axis order in rfftn? Raw speed, but also could be better for tiling to complete the matrix with conjugate\
-- investigate whether fft performance is impacted by the prime factors of the input array\
-\
-}
+- fusing any more maths operations I can find. Make sure function calls don\'92t prevent fused multiply/add\
+- am I tiling in the most efficient order? \
+- investigate whether fft performance is impacted by the prime factors of the input array}
