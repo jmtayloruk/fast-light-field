@@ -1,25 +1,48 @@
-{\rtf1\ansi\ansicpg1252\cocoartf1504\cocoasubrtf830
+{\rtf1\ansi\ansicpg1252\cocoartf1404\cocoasubrtf470
 {\fonttbl\f0\fswiss\fcharset0 Helvetica;}
 {\colortbl;\red255\green255\blue255;}
-{\*\expandedcolortbl;;}
-\paperw11900\paperh16840\margl1440\margr1440\vieww15880\viewh11500\viewkind0
+\paperw11900\paperh16840\margl1440\margr1440\vieww21260\viewh17900\viewkind0
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
 \f0\b\fs24 \cf0 Flow recovery - what I\'92ve done\
 
-\b0 Working initially with reconstructed AB images:\
-- I am using a local optimizer, of course, so I need to choose a plausible starting point or things go crazy. That\'92s ok: I should have a decent estimate from PIV analysis of artefact-corrupted images\
-- Recovery at the focal plane itself is definitely locked to lenslet period, when I work on the reconstructed AB images\
+\b0 - I am using a local optimizer, of course, so I need to choose a plausible starting point or things go crazy. That\'92s ok: I should have a decent estimate from PIV analysis of artefact-corrupted images\
+- It turns out that the naive method works surprisingly well with large blurry features - I suppose that\'92s not surprising, since effectively the resolution of the flow analysis is greater than the lenslet pitch. It struggles more when I run it with small blobs (thank goodness!).\
+- BFGS actually doesn\'92t seem to converge to the solution (it fails for some reason). Powell seems more reliable.\
 \
-\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\
 
-\b \cf0 Flow recovery - next steps
+\b Flow recovery - next steps\
+
 \b0 \
-\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
-\cf0 - Run proper dual recovery in the focal plane, to see if (hopefully) I get closer to the true answer\
-- Generate PSFs for close to the focal plane, see whether direct PIV is locked to lenslet period, try running with my code.
-\b \
+- See how the naive algorithm fares with a larger peak velocity (12 instead of 7). Does it still consistently underestimate? By more\'85? Actually no, it does ok. I should maybe investigate somewhat systematically how it fares with different shift values. And also go back to uniform shifts, because I thought I\'92d observed that it really didn\'92t perform properly in that case - but maybe I\'92ve since fixed a bug in that code.\
 \
+- Save the input image (maybe with a timestamp in the filename to avoid overwriting?), so that I can reproduce previous runs\
+\
+- Plot the results I am returning to the Powell algorithm. I think there may be something odd about how it\'92s behaving, and that may be affecting convergence. It seems as if tiny changes to the shifts (~1e-4) are making a reasonably large difference to the overall score actually. I should investigate why that is. e.g. changing parameter #5 by 1e-4 or less from its designated value.\
+\
+- Look a bit at the internals of Powell. Does it really need as many trial values to reach an optimum, given that I think my cost function is pretty smooth and quadratic?
+\b \
+
+\b0 \
+- Think about convergence criterion, and ensuring behaviour is similar for different input intensities. How much does it help to choose a more relaxed xtol for Powell? Actually, choosing 1e-1 instead of 1e-2 seems to take 
+\i longer
+\i0  to converge. Also, it seems to be evaluating shifts to a smaller granularity than e.g. 1e-2. Is that definitely correct, or have I got the settings wrong somehow? See comment above about tiny changes.\
+\
+- Consider expanding the PIV code to more than one z plane\
+
+\b \
+Things to investigate
+\b0 \
+- deconvRL and _PIV actually give slightly different results (deconvRL seems better). Is there an actual bug in deconvRL_PIV, or is Prevedel\'92s implementation of RL actually slightly different (and more efficient)?\
+\
+I noted a while back that forwardProjectACC returns float64. I should track down where that happens and reduce to float32, for performance reasons.\
+\
+
+\b \
 Performance
 \b0 \
-- Need to upgrade code to get performance gains when processing multiple images simultaneously, instead of just iterating over them}
+- For much of the time, my PIV code is not using multithreading. It looks as if it takes ~0.2s to fire up multiprocessing (and about 0.1s to tear down). 0.15s seems to be spent after the multithreaded part.\
+- Need to upgrade code to get performance gains when processing multiple images simultaneously, instead of just iterating over them. This would also help with the overheads I identified above, I hope.\
+- The optimizer calculates the full gradients even if some variables are bounded to a constant. I should be able to do better if I write my own gradient function. That would also have the benefit that I should be able to parallelize the computations much better. Similarly, with a bit of faffing around rewriting the code myself, I should be able to run a Powell optimizer that tweaks all individual flow components in parallel.\
+}
