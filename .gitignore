@@ -1,6 +1,8 @@
 py_symmetry/build
 py_symmetry/build/*
 py_symmetry/py_symmetry.so
+piv-raw-data
+PSFmatrix
 perf_diags
 .ipynb_checkpoints
 .DS_Store
