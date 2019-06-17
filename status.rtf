@@ -9,13 +9,17 @@
 \b0 - I am using a local optimizer, of course, so I need to choose a plausible starting point or things go crazy. That\'92s ok: I should have a decent estimate from PIV analysis of artefact-corrupted images\
 - It turns out that the naive method works surprisingly well with large blurry features - I suppose that\'92s not surprising, since effectively the resolution of the flow analysis is greater than the lenslet pitch. It struggles more when I run it with small blobs (thank goodness!).\
 - BFGS actually doesn\'92t seem to converge to the solution (it fails for some reason). Powell seems more reliable.\
-\
+- I discovered that edge effects with warp() were distorting the solution in random ways. That may well explain why BFGS was failing to find a solution!\
 \
 
 \b Flow recovery - next steps\
 
 \b0 \
+- warp() has some anomalies with the edge of the image. Specifically, pixels are either \'91in\'92 or \'91out\'92, and the switch between the two states causes jumps in the score. It\'92s not clear what the best thing to do about this is. mode=\'92edge\'92 might work, but I would worry it might introduce odd biasing behaviour. Extending the object size and then cropping it down (i.e. filling with real data) might be more realistic. I think that would be a reasonable thing to do - I can\'92t see a problem with it (aside from non-square images being slightly slower, although other issues are keeping me well away from that being the limiting factor at the moment).\
+\
 - See how the naive algorithm fares with a larger peak velocity (12 instead of 7). Does it still consistently underestimate? By more\'85? Actually no, it does ok. I should maybe investigate somewhat systematically how it fares with different shift values. And also go back to uniform shifts, because I thought I\'92d observed that it really didn\'92t perform properly in that case - but maybe I\'92ve since fixed a bug in that code.\
+\
+- I should maybe revisit BFGS now I have excluded edge effects from warp()\'85\
 \
 - Save the input image (maybe with a timestamp in the filename to avoid overwriting?), so that I can reproduce previous runs\
 \
