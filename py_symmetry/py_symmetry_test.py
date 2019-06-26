@@ -7,9 +7,10 @@ import time
 import sys
 sys.path.insert(0, 'build/lib.macosx-10.6-x86_64-2.7')
 
-fHtsFull = np.random.random((400,400)).astype(np.complex64).transpose()
+fHtsFull = np.random.random((400,500)).astype(np.complex64)
 temp = np.random.random((400)).astype(np.complex64)
 #temp = np.exp((1j * (1+padLength) * 2*np.pi / self.fshape[0]) * np.arange(self.fshape[0]))
+numRepeats = 1000
 
 t1 = time.time()
 result = np.empty(fHtsFull.shape, dtype=fHtsFull.dtype)
@@ -19,8 +20,9 @@ for i in range(1,fHtsFull.shape[1]):
 print('python took', time.time()-t1)
 
 t1 = time.time()
-result2 = ps.mirrorX(fHtsFull, temp)
-print('c took', time.time()-t1)
+for n in range(numRepeats):
+    result2 = ps.mirrorX(fHtsFull, temp)
+print('c took', (time.time()-t1)/numRepeats)
 
 print(np.max(np.abs(result - result2)));
 
@@ -34,7 +36,8 @@ for i in range(1,fHtsFull.shape[0]):
 print('python took', time.time()-t1)
 
 t1 = time.time()
-result2 = ps.mirrorY(fHtsFull, temp)
-print('c took', time.time()-t1)
+for n in range(numRepeats):
+    result2 = ps.mirrorY(fHtsFull, temp)
+print('c took', (time.time()-t1)/numRepeats)
 
 print(np.max(np.abs(result - result2)));
