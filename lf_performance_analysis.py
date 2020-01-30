@@ -1,0 +1,177 @@
+# This file contains some snippets I use for investigating the performance of my light-field deconvolution code
+import os, time
+import csv, glob
+import cProfile
+import numpy as np
+import matplotlib.pyplot as plt
+
+import jutils as util
+import lfdeconv, hmatrix, lfimage, projector
+
+def AnalyzeTestResults():
+    # Long function which analyses the data from the run that just happened
+    # (data stored in 'overall.txt'), accumulates some summary statistics on it,
+    # and appends the results to the 'stats.txt' file.
+    # Clearly this function could do with more commenting to explain what's going on!!
+    with open('overall.txt') as f:
+        csv_reader = csv.reader(f, delimiter='\t')
+        for row in csv_reader:
+            pass
+    startTime = float(row[0])
+    endTime = float(row[1])
+    userTime = float(row[4])
+    sysTime = float(row[5])
+
+    rows = []
+    for fn in glob.glob('perf_diags/*_*.txt'):
+        with open(fn) as f:
+            csv_reader = csv.reader(f, delimiter='\t')
+            for row in csv_reader:
+                pass
+            rows.append(row)
+    rows = np.array(rows).astype('float').transpose()
+    firstPid = np.min(rows[0])
+    rows[0] -= firstPid
+    rows[1:3] -= startTime
+    rows = rows[:,np.argsort(rows[1],kind='mergesort')]
+    rows = rows[:,rows[0].argsort(kind='mergesort')]
+
+    deadTimeStart = 0
+    deadTimeMid = 0
+    deadTimeEnd = 0
+    threadWorkTime = 0
+    thisThreadStartTime = 0
+    longestThreadRunTime = 0
+    longestThreadRunPid = -1
+    latestStartTime = 0
+    userTimeBreakdown = 0
+    sysTimeBreakdown = 0
+    for i in range(rows.shape[1]):
+        pid = rows[0,i]
+        t0 = rows[1,i]
+        t1 = rows[2,i]
+        userTimeBreakdown += rows[4,i]
+        sysTimeBreakdown += rows[5,i]
+        if (i == 0):
+            deadTimeStart += t0
+            thisThreadStartTime = t0
+            latestStartTime = t0
+        else:
+            if (pid == rows[0,i-1]):
+                deadTimeMid += t0 - rows[2,i-1]
+            else:
+                latestStartTime = max(latestStartTime, t0)
+                thisThreadRunTime = rows[2,i-1]-thisThreadStartTime  # For previous pid
+                if (thisThreadRunTime > longestThreadRunTime):
+                    longestThreadRunPid = rows[0,i-1]
+                    longestThreadRunTime = thisThreadRunTime
+                thisThreadStartTime = t0
+                deadTimeStart += t0
+                deadTimeEnd += (endTime-startTime) - rows[2,i-1]
+        threadWorkTime += t1-t0
+        plt.plot([t0, t1], [pid, pid])
+        plt.plot(t0, pid, 'x')
+    thisThreadRunTime = t1-thisThreadStartTime
+    if (thisThreadRunTime > longestThreadRunTime):
+        longestThreadRunPid = pid
+        longestThreadRunTime = thisThreadRunTime
+    deadTimeEnd += (endTime-startTime) - rows[2,-1]
+    print('Elapsed time', endTime-startTime)
+    print('Longest thread run time', longestThreadRunTime, 'pid', int(longestThreadRunPid))
+    print('Latest start time', latestStartTime)
+    print('Thread work time', threadWorkTime)
+    print('Dead time', deadTimeStart, deadTimeMid, deadTimeEnd)
+    print(' Total', deadTimeStart + deadTimeMid + deadTimeEnd)
+    print('User cpu time', userTime)
+    print('System cpu time', sysTime)
+    print('User cpu time for subset', userTimeBreakdown)
+    print('System cpu time for subset', sysTimeBreakdown)
+
+    with open('stats.txt', 'a') as f:
+        f.write('%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\n' % (numJobsForTesting, endTime-startTime, threadWorkTime, \
+                        longestThreadRunTime, latestStartTime, deadTimeStart, deadTimeMid, deadTimeEnd, userTime, sysTime))
+
+    plt.xlim(0, endTime-startTime)
+    plt.ylim(-0.5,np.max(rows[0])+0.5)
+    plt.show()
+    
+def decomment(csvfile):
+    # Strip comments from a CSV file
+    for row in csvfile:
+        raw = row.split('#')[0].strip()
+        if raw: yield raw
+
+def AnalyzeTestResults2(statsFilePath):
+    # Plots graphs from a file that contains summary stats from multiple runs,
+    # to understand how performance scales with number of threads
+    rows = []
+    with open(statsFilePath) as f:
+        csv_reader = csv.reader(decomment(f), delimiter='\t')
+        for row in csv_reader:
+            rows.append(row)
+    rows = np.array(rows).astype(np.float).transpose()
+
+    plt.plot(rows[0], rows[2]/rows[2,0], label='work time')
+    plt.plot(rows[0], np.sum(rows[5:8], axis=0)/(rows[0]*rows[1]), label='dead time')
+    plt.plot(rows[0], rows[5]/(rows[0]*rows[1]), label='dead start')
+    plt.plot(rows[0], rows[1]/(rows[1,0]/rows[0]), label='runtime excess')
+    plt.ylim(0,2.5)
+    plt.legend(loc=2)
+    plt.show()
+
+
+
+matPath = 'PSFmatrix/PSFmatrix_M40NA0.95MLPitch150fml3000from-13to0zspacing0.5Nnum15lambda520n1.0.mat'
+(_H, _Ht, _CAindex, hPathFormat, htPathFormat, hReducedShape, htReducedShape) = hmatrix.LoadRawMatrixData(matPath)
+hMatrix = hmatrix.LoadMatrix(matPath)
+inputImage = lfimage.LoadLightFieldTiff('Data/02_Rectified/exampleData/20131219WORM2_small_full_neg_X1_N15_cropped_uncompressed.tif')
+
+if False:
+    # Investigate performance for different numbers of parallel threads
+    for numJobsForTesting in range(1,13):
+        ru1 = util.cpuTime('both')
+        temp = lfdeconv.BackwardProjectACC(_Ht, htPathFormat, htReducedShape, inputImage, numjobs=numJobsForTesting, planes=None)
+        ru2 = util.cpuTime('both')
+        print('overall delta rusage:', ru2-ru1)
+        AnalyzeTestResults()
+
+if False:
+    # Plot some analysis based on previously-acquired performance statistics
+    plt.title('Dummy work on empty arrays')
+    AnalyzeTestResults2('stats-dummy.txt')
+    plt.title('Real work')
+    AnalyzeTestResults2('stats-realwork.txt')
+    plt.title('Smaller memory footprint - no improvement')
+    AnalyzeTestResults2('stats-no-H.txt')
+    plt.title('New code')
+    AnalyzeTestResults2('stats-new-code.txt')
+
+if True:
+    # For fun, see how long the original code and my new code takes
+    planesToProcess = None    # Can be set differently to speed things up for shorter investigations
+    t0 = time.time()
+    Htf = projector.BackwardProjectACC_old(_Ht, inputImage, _CAindex, planes=planesToProcess)
+    print('Original code took %f'%(time.time()-t0))
+    
+    # Run my code (single-threaded)
+    t0 = time.time()
+    Htf = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, numjobs=1)
+    print('New code (single threaded) took %f'%(time.time()-t0))
+
+    # Run my code multi-threaded
+    t0 = time.time()
+    Htf = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess)
+    print('New code (multithreaded) took %f'%(time.time()-t0))
+
+if False:
+    # Profile my code (single-threaded)
+    myStats = cProfile.run('temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, numjobs=1)', 'mystats')
+    p = pstats.Stats('mystats')
+    p.strip_dirs().sort_stats('cumulative').print_stats(40)
+
+if False:
+    # Profile my code (single-threaded) in the sort of scenario I would expect to run it in for my PIV experiments
+    tempInputImage = np.zeros((2,Nnum*20,Nnum*20))
+    myStats = cProfile.run('temp = lfdeconv.BackwardProjectACC(hMatrix, tempInputImage, planes=planesToProcess, numjobs=1)', 'mystats')
+    p = pstats.Stats('mystats')
+    p.strip_dirs().sort_stats('cumulative').print_stats(40)
