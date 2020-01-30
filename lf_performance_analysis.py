@@ -1,9 +1,9 @@
 # This file contains some snippets I use for investigating the performance of my light-field deconvolution code
 import os, time
 import csv, glob
-import cProfile
+import cProfile, pstats
 import numpy as np
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt   # For some reason this is crashing on my Mac Pro. Hopefully this is just a temporary glitch...!?
 
 import jutils as util
 import lfdeconv, hmatrix, lfimage, projector
@@ -120,7 +120,6 @@ def AnalyzeTestResults2(statsFilePath):
     plt.show()
 
 
-
 matPath = 'PSFmatrix/PSFmatrix_M40NA0.95MLPitch150fml3000from-13to0zspacing0.5Nnum15lambda520n1.0.mat'
 (_H, _Ht, _CAindex, hPathFormat, htPathFormat, hReducedShape, htReducedShape) = hmatrix.LoadRawMatrixData(matPath)
 hMatrix = hmatrix.LoadMatrix(matPath)
@@ -146,24 +145,38 @@ if False:
     plt.title('New code')
     AnalyzeTestResults2('stats-new-code.txt')
 
-if True:
+planesToProcess = None    # Can be set differently to speed things up for shorter investigations
+
+if False:
     # For fun, see how long the original code and my new code takes
-    planesToProcess = None    # Can be set differently to speed things up for shorter investigations
     t0 = time.time()
-    Htf = projector.BackwardProjectACC_old(_Ht, inputImage, _CAindex, planes=planesToProcess)
+    result1 = projector.BackwardProjectACC_old(_Ht, inputImage, _CAindex, planes=planesToProcess)
     print('Original code took %f'%(time.time()-t0))
     
     # Run my code (single-threaded)
     t0 = time.time()
-    Htf = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, numjobs=1)
+    result2 = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, numjobs=1)
     print('New code (single threaded) took %f'%(time.time()-t0))
+
+    util.CheckComparison(result1, result2, 1.0, 'Compare results from new and old code')
 
     # Run my code multi-threaded
     t0 = time.time()
-    Htf = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess)
+    result3 = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess)
     print('New code (multithreaded) took %f'%(time.time()-t0))
 
-if False:
+    util.CheckComparison(result2, result3, 1.0, 'Compare single- and multi-threaded')
+
+if True:
+    # Profile old code (single-threaded)
+    ru1 = util.cpuTime('both')
+    myStats = cProfile.run('temp = projector.BackwardProjectACC_old(_Ht, inputImage, _CAindex, planes=planesToProcess)', 'mystats')
+    ru2 = util.cpuTime('both')
+    print('overall delta rusage:', ru2-ru1)
+    p = pstats.Stats('mystats')
+    p.strip_dirs().sort_stats('cumulative').print_stats(40)
+
+if True:
     # Profile my code (single-threaded)
     myStats = cProfile.run('temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, numjobs=1)', 'mystats')
     p = pstats.Stats('mystats')
