@@ -2,11 +2,7 @@ import numpy as np
 from scipy.signal import fftconvolve
 import scipy.fftpack
 import time, warnings, os
-# This next import is a slightly strange construction, but allows the option of substituting
-# the second 'tqdm' with 'tqdm_notebook' if running in notebook environment.
-# TODO: does that mean it won't work as desired if my module here is imported from a notebook?
-# I will need to investigate that...
-from tqdm import tqdm as tqdm   
+from jutils import tqdm_alias as tqdm
 
 import py_symmetry as jps
 import special_fftconvolve as special
@@ -33,23 +29,23 @@ except:
 class Projector(object):
     # Note: the variable names in this class mostly imply we are doing the back-projection
     # (e.g. Ht, 'projection', etc. However, the same code also does forward-projection!)
-    def __init__(self, projection, HtCCBB, Nnum):
+    def __init__(self, projection, hMatrix, cc):
         # Note: H and Hts are not stored as class variables.
         # I had a lot of trouble with them and multithreading,
         # and eventually settled on having them in shared memory.
         # As I encapsulate more stuff in this class, I could bring them back as class variables...
-        
+
         self.cpuTime = np.zeros(2)
         
         # Nnum: number of pixels across a lenslet array (after rectification)
-        self.Nnum = Nnum
+        self.Nnum = hMatrix.Nnum(cc)
         
         # This next chunk of logic is copied from the fftconvolve source code.
         # s1, s2: shapes of the input arrays
         # fshape: shape of the (full, possibly padded) result array in Fourier space
         # fslice: slicing tuple specifying the actual result size that should be returned
         self.s1 = np.array(projection.shape)
-        self.s2 = np.array(HtCCBB[0].shape)
+        self.s2 = np.array(hMatrix.PSFShape(cc))
         shape = self.s1 + self.s2 - 1
         if False:
             # TODO: I haven't worked out if/how I can do this yet.
@@ -57,15 +53,15 @@ class Projector(object):
             # Speed up FFT by padding to optimal size for FFTPACK
             self.fshape = [_next_regular(int(d)) for d in shape]
         else:
-            self.fshape = [int(np.ceil(d/float(Nnum)))*Nnum for d in shape]
+            self.fshape = [int(np.ceil(d/float(self.Nnum)))*self.Nnum for d in shape]
         self.fslice = tuple([slice(0, int(sz)) for sz in shape])
         
         # rfslice: slicing tuple to crop down full fft array to the shape that would be output from rfftn
         self.rfslice = (slice(0,self.fshape[0]), slice(0,int(self.fshape[1]/2)+1))
         return
     
-    def MirrorXArray(self, Hts, fHtsFull):
-        padLength = self.fshape[0] - Hts.shape[0]
+    def MirrorXArray(self, fHtsFull):
+        padLength = self.fshape[0] - self.s2[0]
         if False:
             fHtsFull = fHtsFull.conj() * np.exp((1j * (1+padLength) * 2*np.pi / self.fshape[0]) * np.arange(self.fshape[0],dtype='complex64')[:,np.newaxis])
             fHtsFull[:,1::] = fHtsFull[:,1::][:,::-1]
@@ -82,8 +78,8 @@ class Projector(object):
                     result[:,i] = (fHtsFull[:,fHtsFull.shape[1]-i].conj()*temp)
             return result
 
-    def MirrorYArray(self, Hts, fHtsFull):
-        padLength = self.fshape[1] - Hts.shape[1]
+    def MirrorYArray(self, fHtsFull):
+        padLength = self.fshape[1] - self.s2[1]
         if False:
             fHtsFull = fHtsFull.conj() * np.exp(1j * (1+padLength) * 2*np.pi / self.fshape[1] * np.arange(self.fshape[1],dtype='complex64'))
             fHtsFull[1::] = fHtsFull[1::][::-1]
@@ -98,39 +94,28 @@ class Projector(object):
                 for i in range(1,fHtsFull.shape[0]):
                     result[i] = (fHtsFull[fHtsFull.shape[0]-i].conj()*temp)
             return result
-    
-    def convolvePart3(self, projection, bb, aa, Hts, fHtsFull, mirrorX, accum):
-        # TODO: to make this work, I need the full matrix for fHts and then I need to slice it
+        
+    def convolvePart3(self, projection, bb, aa, fHtsFull, mirrorX, accum):
+        # TODO: to make this work, I need the full matrix for fHts and then I need to slice it 
         # to the correct shape when I call through to special_fftconvolve here. Is fshape what I need?
         cpu0 = util.cpuTime('both')
-        (accum,_,_,_) = special.special_fftconvolve(projection,bb,aa,self.Nnum,Hts,accum,fb=fHtsFull[self.rfslice])
+        (accum,_,_,_) = special.special_fftconvolve(projection,bb,aa,self.Nnum,self.s2,accum,fb=fHtsFull[self.rfslice])
         self.cpuTime += util.cpuTime('both')-cpu0
         if mirrorX:
-            fHtsFull = self.MirrorXArray(Hts, fHtsFull)
+            fHtsFull = self.MirrorXArray(fHtsFull)
             cpu0 = util.cpuTime('both')
-            (accum,_,_,_) = special.special_fftconvolve(projection,self.Nnum-bb-1,aa,self.Nnum,Hts[::-1,:],accum,fb=fHtsFull[self.rfslice])
+            (accum,_,_,_) = special.special_fftconvolve(projection,self.Nnum-bb-1,aa,self.Nnum,self.s2,accum,fb=fHtsFull[self.rfslice]) 
             self.cpuTime += util.cpuTime('both')-cpu0
         return accum
-    
-    def convolvePart2(self, projection, bb, aa, Hts, fHtsFull, mirrorY, mirrorX, accum):
-        accum = self.convolvePart3(projection,bb,aa,Hts,fHtsFull,mirrorX,accum)
-        if mirrorY:
-            fHtsFull = self.MirrorYArray(Hts, fHtsFull)
-            accum = self.convolvePart3(projection,bb,self.Nnum-aa-1,Hts[:,::-1],fHtsFull,mirrorX,accum)
-        return accum
-    
-    def fft2(self, mat, shape):
-        # Perform a 'float' FFT on the matrix we are passed.
-        # It would probably be faster if there was a way to perform the FFT natively on the 'float' type,
-        # but scipy does not seem to support that option
-        #
-        # With my Mac Pro install, we hit a FutureWarning within scipy.
-        # This wrapper just suppresses that warning.
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            return scipy.fftpack.fft2(mat, shape).astype('complex64')
 
-    def convolve(self, projection, bb, aa, Hts, accum):
+    def convolvePart2(self, projection, bb, aa, fHtsFull, mirrorY, mirrorX, accum):
+        accum = self.convolvePart3(projection,bb,aa,fHtsFull,mirrorX,accum)
+        if mirrorY:
+            fHtsFull = self.MirrorYArray(fHtsFull)
+            accum = self.convolvePart3(projection,bb,self.Nnum-aa-1,fHtsFull,mirrorX,accum)
+        return accum
+
+    def convolve(self, projection, hMatrix, cc, bb, aa, backwards, accum):
         cent = int(self.Nnum/2)
 
         mirrorX = (bb != cent)
@@ -143,8 +128,8 @@ class Projector(object):
         # For 1D it's the reversed conjugate, but for 2D it's more complicated than that.
         # It's possible that it's actually nontrivial, in spite of the fact that
         # you can get away without it when only computing fft/ifft for real arrays)
-        fHtsFull = self.fft2(Hts, self.fshape)
-        accum = self.convolvePart2(projection,bb,aa,Hts,fHtsFull,mirrorY,mirrorX, accum)
+        fHtsFull = hMatrix.fH(cc, bb, aa, backwards, False, self.fshape)
+        accum = self.convolvePart2(projection,bb,aa,fHtsFull,mirrorY,mirrorX, accum)
         if transpose:
             if (self.fshape[0] == self.fshape[1]):
                 # For a square array, the FFT of the transpose is just the transpose of the FFT.
@@ -153,10 +138,10 @@ class Projector(object):
                 fHtsFull = fHtsFull.transpose().copy()
             else:
                 # For a non-square array, we have to compute the FFT for the transpose.
-                fHtsFull = self.fft2(Hts.transpose(), self.fshape)
+                fHtsFull = hMatrix.fH(cc, bb, aa, backwards, True, self.fshape)
 
             # Note that mx,my need to be swapped following the transpose
-            accum = self.convolvePart2(projection,aa,bb,Hts.transpose(),fHtsFull,mirrorX,mirrorY, accum)
+            accum = self.convolvePart2(projection,aa,bb,fHtsFull,mirrorX,mirrorY, accum) 
         assert(accum.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
         return accum
 
@@ -172,18 +157,13 @@ def ProjectForZY(cc, bb, source, hMatrix, backwards):
     singleJob = (len(source.shape) == 2)
     if singleJob:   # Cope with both a single 2D plane and an array of multiple 2D planes to process independently
         source = source[np.newaxis,:,:]
-    result = [None] * source.shape[0]
-    # TODO: tidy these next two lines, which are a bit of a hack to figure out Nnum.
-    # I think the best solution is to move the functionality into hMatrix by implementing HMatrix.IterableARange()
-    # (but note that I still use Hccbb)
-    Hccbb = hMatrix.Hcc(cc, transpose=backwards)[bb]
-    Nnum = hMatrix.Nnum(cc)
-    projector = Projector(source[0], Hccbb, Nnum)
+    result = None
+    projector = Projector(source[0], hMatrix, cc)
     projector.cpuTime = np.zeros(2)
-    for aa in range(bb,int((Nnum+1)/2)):
-        for n in range(source.shape[0]):
-            result[n] = projector.convolve(source[n], bb, aa, Hccbb[aa], result[n])
+    for aa in range(bb,int((hMatrix.Nnum(cc)+1)/2)):
+        result = projector.convolve(source, hMatrix, cc, bb, aa, backwards, result)
     t2 = time.time()
+    assert(result.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
     f.write('%d\t%f\t%f\t%f\t%f\t%f\n' % (os.getpid(), t1, t2, t2-t1, projector.cpuTime[0], projector.cpuTime[1]))
     f.close()
     if singleJob:
@@ -201,7 +181,7 @@ def ProjectForZ(hMatrix, backwards, cc, source):
             result += thisResult
     # Actually, for forward projection we don't need to do this separately for every z,
     # but it's easier to do it for symmetry (and this function is not used in performance-critical code anyway)
-    (fshape, fslice, s1) = special.convolutionShape(source, np.empty(hMatrix.PSFShape(cc)), hMatrix.Nnum(cc))
+    (fshape, fslice, s1) = special.convolutionShape(source, hMatrix.PSFShape(cc), hMatrix.Nnum(cc))
     return special.special_fftconvolve_part3(result, fshape, fslice, s1)
 
         
@@ -232,15 +212,15 @@ def ForwardProjectForZ_old(HCC, realspaceCC):
         return TOTALprojection[0]
     else:
         return TOTALprojection
-
-def BackwardProjectForZ_old(HtCC, projection):
+    
+def BackwardProjectForZ_old(HtCC, projection, progress=tqdm):
     singleJob = (len(projection.shape) == 2)
     if singleJob:   # Cope with both a single 2D plane and an array of multiple 2D planes to process independently
         projection = projection[np.newaxis,:,:]
     # Iterate over each lenslet pixel
     Nnum = HtCC.shape[1]
-    tempSliceBack = np.zeros(projection.shape, dtype='float32')
-    for aa in tqdm(range(Nnum), leave=False, desc='y'):
+    tempSliceBack = np.zeros(projection.shape, dtype='float32')        
+    for aa in progress(range(Nnum), leave=False, desc='y'):
         for bb in range(Nnum):
             # Extract the part of Ht that represents this lenslet pixel
             Hts = HtCC[bb, aa]
@@ -255,16 +235,16 @@ def BackwardProjectForZ_old(HtCC, projection):
     else:
         return tempSliceBack
 
-def BackwardProjectACC_old(Ht, projection, CAindex, planes=None):
+def BackwardProjectACC_old(Ht, projection, CAindex, progress=tqdm, planes=None):
     backprojection = np.zeros((Ht.shape[0], projection.shape[0], projection.shape[1]), dtype='float32')
     # Iterate over each z plane
     if planes is None:
         planes = range(Ht.shape[0])
-    for cc in tqdm(planes, desc='Back-project - z'):
+    for cc in progress(planes, desc='Back-project - z'):
         HtCC =  Ht[cc, :, :, CAindex[0,cc]-1:CAindex[1,cc], CAindex[0,cc]-1:CAindex[1,cc]]
-        backprojection[cc] = BackwardProjectForZ_old(HtCC, projection)
-    return backprojection
+        backprojection[cc] = BackwardProjectForZ_old(HtCC, projection, progress=progress)
 
+    return backprojection
 
 if __name__ == "__main__":
     #########################################################################
@@ -289,6 +269,7 @@ if __name__ == "__main__":
                 testResultOld = BackwardProjectForZ_old(testHtCC, testProjection)
             else:
                 testResultOld = ForwardProjectForZ_old(testHCC, testProjection)
+            
             testResultNew = ProjectForZ(testHMatrix, bk, 0, testProjection)
             comparison = np.max(np.abs(testResultOld - testResultNew))
             print('test result (should be <<1): %e' % comparison)

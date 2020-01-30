@@ -1,6 +1,7 @@
 import numpy as np
 import os, sys, h5py
 from jutils import tqdm_alias as tqdm
+import myfft
 
 class HMatrix:
     def __init__(self, HPathFormat, HtPathFormat, HReducedShape, numZ=None, zStart=0):
@@ -12,15 +13,36 @@ class HMatrix:
         else:
             self.numZ = len(HReducedShape)
         self.zStart = zStart
-    
-    def Hcc(self, cc, transpose):
-        if transpose:
+        self.Hcache = dict()
+        self.cacheHits = 0
+        self.cacheMisses = 0
+        self.cacheSize = 0
+  
+    def Hcc(self, cc, useHt):
+        if useHt:
             pathFormat = self.HtPathFormat
         else:
             pathFormat = self.HPathFormat
         # Note we need to cast to tuple for safety - strange errors seem to occur if we pass a numpy array instead
         result = np.memmap(pathFormat.format(z=cc+self.zStart), dtype='float32', mode='r', shape=tuple(self.HReducedShape[cc+self.zStart]))
         return result
+
+    def fH_uncached(self, cc, bb, aa, useHt, transposePSF, fshape):
+        if transposePSF:
+            return myfft.myFFT2(self.Hcc(cc, useHt)[bb, aa].transpose(), fshape)
+        else:
+            return myfft.myFFT2(self.Hcc(cc, useHt)[bb, aa], fshape)
+    
+    def fH(self, cc, bb, aa, useHt, transposePSF, fshape):
+        key = '%d,%d,%d,%d,%d'%(cc, bb, aa, int(useHt), int(transposePSF))
+        if not key in self.Hcache:
+            result = self.fH_uncached(cc, bb, aa, useHt, transposePSF, fshape)
+            self.Hcache[key] = result
+            self.cacheSize += result.nbytes
+            self.cacheMisses += 1
+        else:
+            self.cacheHits += 1
+        return self.Hcache[key]
     
     def IterableBRange(self, cc):
         return range(self.HReducedShape[cc+self.zStart][0])

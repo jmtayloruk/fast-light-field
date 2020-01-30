@@ -53,11 +53,11 @@ def BackwardProjectACC(hMatrix, projection, planes=None, numjobs=multiprocessing
     
     # Compute the FFT for each z plane
     for cc in planes:
-        # A bit complicated here to set up the correct inputs for convolutionShape...
-        (fshape, fslice, s1) = special.convolutionShape(projection, np.empty(hMatrix.PSFShape(cc)), hMatrix.Nnum(cc))
+        (fshape, fslice, s1) = special.convolutionShape(projection, hMatrix.PSFShape(cc), hMatrix.Nnum(cc))
         Backprojection[cc] = special.special_fftconvolve_part3(fourierZPlanes[cc], fshape, fslice, s1)        
     t2 = time.time()
-
+    assert(Backprojection.dtype == np.float32)   # Keep an eye out for any reversion to double-precision
+   
     # Save some diagnostics
     if logPrint:
         print('work elapsed wallclock time %f'%(t1-t0))
@@ -109,13 +109,14 @@ def ForwardProjectACC(hMatrix, realspace, planes=None, numjobs=multiprocessing.c
     TOTALprojection = None
     for cc in planes:
         # A bit complicated here to set up the correct inputs for convolutionShape...
-        (fshape, fslice, s1) = special.convolutionShape(realspace[cc], np.empty(hMatrix.PSFShape(cc)), hMatrix.Nnum(cc))
+        (fshape, fslice, s1) = special.convolutionShape(realspace[cc], hMatrix.PSFShape(cc), hMatrix.Nnum(cc))
         thisProjection = special.special_fftconvolve_part3(fourierProjection[cc], fshape, fslice, s1)        
         if TOTALprojection is None:
             TOTALprojection = thisProjection
         else:
             TOTALprojection += thisProjection
     t2 = time.time()
+    assert(TOTALprojection.dtype == np.float32)   # Keep an eye out for any reversion to double-precision
             
     # Print out some diagnostics
     if (logPrint):
@@ -156,9 +157,16 @@ if __name__ == "__main__":
     if ('basic' in sys.argv) or ('full' in sys.argv):
 	    # Run my back-projection code (single-threaded) on a cropped version of Prevedel's data
         Htf = BackwardProjectACC(hMatrix, inputImage, planes=None, numjobs=1, logPrint=False)
-        definitive = tifffile.imread('Data/03_Reconstructed/exampleData/definitive_worm_crop_X15_backproject.tif')
-        definitive = np.transpose(definitive, axes=(0,2,1))
-        util.CheckComparison(definitive[4], Htf[4]*10, 1.0, 'Compare against matlab result')
+        if True:
+            definitive = tifffile.imread('Data/03_Reconstructed/exampleData/definitive_worm_crop_X15_backproject.tif')
+            definitive = np.transpose(definitive, axes=(0,2,1))
+            util.CheckComparison(definitive[4], Htf[4]*10, 1.0, 'Compare against matlab result')
+        else:
+            # I am not totally sure what the purpose of this next code is,
+            # My guess is that this is an output I generated from my code, after first checking consistency with Matlab.
+            # I am not sure exactly what the purpose of it is, though - why is this better than using the actual matlab tiff?
+            definitive = np.load('semi-definitive.npy')
+            util.CheckComparison(definitive, Htf, 1.0, 'Compare against matlab result')
 
     if 'full' in sys.argv:
         # Run my full Richardson-Lucy code on a cropped version of Prevedel's data
@@ -166,7 +174,7 @@ if __name__ == "__main__":
         deconvolvedResult = DeconvRL(hMatrix, Htf, maxIter=8, Xguess=Htf.copy(), logPrint=False)
         definitive = tifffile.imread('Data/03_Reconstructed/exampleData/definitive_worm_crop_X15_iter8.tif')
         definitive = np.transpose(definitive, axes=(0,2,1))
-        util.CheckComparison(definitive, deconvolvedResult*10e3, 1.0, 'Compare against matlab result')
+        util.CheckComparison(definitive, deconvolvedResult*1e3, 1.0, 'Compare against matlab result')
 
     if 'parallel' in sys.argv:
         # Code to test simultaneous deconvolution of an image pair

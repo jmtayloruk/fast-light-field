@@ -13,7 +13,7 @@ def CheckComparison(arrayA, arrayB, maxAcceptableDifference, description="Test r
         print(" -> OK")
 
 def noProgressBar(work, **kwargs):
-    # Dummy function to be used in place of tqdm when we don't want to show a progress bar
+    # Dummy drop-in function to be used in place of 'tqdm' when we want to suppress a progress bar
     return work
 
 def cpuTime(kind):
