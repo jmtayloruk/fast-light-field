@@ -5,24 +5,20 @@
 \paperw11900\paperh16840\margl1440\margr1440\vieww26860\viewh21820\viewkind0
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
-\f0\fs24 \cf0 \
-\ul Jan 2020: things have gone weird\ulnone \
-because scipy.fftconvolve now seems to use a multithreaded implementation under the covers. \
-That makes the old code faster (good!) but seems to have resulted in my new code being slower even when running with a single job (but calling through to parallelised fft backend). I will need to investigate to understand what is going on there.\
+\f0\fs24 \cf0 \ul \ulc0 Jan 2020 timings\ulnone \
+I re-remembered that on my mac pro, the FFT backend is MKL, which runs multithreaded (and deadlocks with itself and with Parallel()) unless I disable MKL threading\'85!\
 \
 \ul 	Mac pro \ulnone (scipy v1.1.0, numpy 1.15.2)\
-	72s Old code calls through to mkl_fft (which is presumably what is multithreaded)\
-	232s New code is spending time in projector.py:122(fft2) which in turn is calling through to files in some file \'91basic.py\'92: fft2, fftn, _raw_fftn_dispatch, _raw_fftnd, _fake_cfftnd). It does seem to have somehow used 7 threads-worth of work behind the scenes. I need to understand how/why that is happening!\
+	72s 
+\b multithreaded.
+\b0  Old code calls through to mkl_fft\
+	33s New code (rusage ~380s)\
 	\ul Macbook air\ulnone  (scipy v1.2.2 numpy v1.16.4)\ul \
 	\ulnone 420s Old code calls through to fftpack.py:fft, rfft etc. It is definitely running single-threaded.\
-	180s New code is spending time in the same functions as above (on mac pro). It is definitely running single-threaded.\
-\
-Note: seems to be single-threaded backend on my macbook air even though that is an up-to-date scipy as well. Might be because it\'92s python 2.7, or perhaps it\'92s because I installed the MKL library on the mac pro but not on the air? I am not sure.\ul \
-\ulnone On the mac pro, my new code seems to be reporting ~700% CPU usage, so 
-\i something
-\i0  seems to be running parallel even if I am not currently sure what it actually is! Yet one more thing I will need to investigate\ul \
+	180s New code is also definitely running single-threaded.\
 \
 \
+\ul \
 \
 \ulnone All these notes are outdated - I am leaving them here for now, but all of this needs revisiting, and many of the measurements etc are probably out of date.\
 \ul \

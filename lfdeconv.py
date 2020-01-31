@@ -2,13 +2,20 @@ import numpy as np
 import multiprocessing
 from joblib import Parallel, delayed
 import tifffile
-import sys, time
+import sys, time, os
 from jutils import tqdm_alias as tqdm
 
-import hmatrix, lfimage
+import psfmatrix, lfimage
 import projector
 import special_fftconvolve as special
 import jutils as util
+
+# It has been suggested that low-level threading does not interact well with the joblib Parallel feature.
+# Certainly that matches my experience.
+# I have seen hangs, and also my code seems to take way longer to execute overall than it should.
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['MKL_DYNAMIC'] = 'FALSE'
 
 #########################################################################        
 # Functions to implement deconvolution.
@@ -22,7 +29,7 @@ def BackwardProjectACC(hMatrix, projection, planes=None, numjobs=multiprocessing
     if planes is None:
         planes = range(hMatrix.numZ)
     if progress is None:
-        progress = noProgressBar        
+        progress = util.noProgressBar
 
     ru1 = util.cpuTime('both')
 
@@ -81,7 +88,7 @@ def ForwardProjectACC(hMatrix, realspace, planes=None, numjobs=multiprocessing.c
     if planes is None:
         planes = range(hMatrix.numZ)
     if progress is None:
-        progress = noProgressBar        
+        progress = util.noProgressBar
 
     # Set up the work to iterate over each z plane
     work = []
@@ -129,19 +136,25 @@ def ForwardProjectACC(hMatrix, realspace, planes=None, numjobs=multiprocessing.c
     else:
         return TOTALprojection
 
-def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True):
+def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=multiprocessing.cpu_count()):
     # Note:
     #  Htf is the *initial* backprojection of the camera image
     #  Xguess is the initial guess for the object
+    ru1 = util.cpuTime('both')
+    t1 = time.time()
     for i in tqdm(range(maxIter), desc='RL deconv'):
         t0 = time.time()
-        HXguess = ForwardProjectACC(hMatrix, Xguess, logPrint=logPrint)
-        HXguessBack = BackwardProjectACC(hMatrix, HXguess, logPrint=logPrint)
+        HXguess = ForwardProjectACC(hMatrix, Xguess, numjobs=numjobs, logPrint=logPrint)
+        HXguessBack = BackwardProjectACC(hMatrix, HXguess, numjobs=numjobs, logPrint=logPrint)
         errorBack = Htf / HXguessBack
         Xguess = Xguess * errorBack
         Xguess[np.where(np.isnan(Xguess))] = 0
         ttime = time.time() - t0
         print('iter %d | %d, took %.1f secs. Max val %f' % (i+1, maxIter, ttime, np.max(Xguess)))
+    ru2 = util.cpuTime('both')
+    t2 = time.time()
+    print('Deconvolution elapsed wallclock time %f, rusage %f' % (t2-t1, np.sum(ru2-ru1)))
+
     return Xguess
 
 
@@ -152,11 +165,11 @@ if __name__ == "__main__":
 
     # Load the input image and matrix
     inputImage = lfimage.LoadLightFieldTiff('Data/02_Rectified/exampleData/20131219WORM2_small_full_neg_X1_N15_cropped_uncompressed.tif')
-    hMatrix = hmatrix.LoadMatrix('PSFmatrix/PSFmatrix_M40NA0.95MLPitch150fml3000from-26to0zspacing2Nnum15lambda520n1.0.mat')
+    hMatrix = psfmatrix.LoadMatrix('PSFmatrix/PSFmatrix_M40NA0.95MLPitch150fml3000from-26to0zspacing2Nnum15lambda520n1.0.mat')
     
     if ('basic' in sys.argv) or ('full' in sys.argv):
 	    # Run my back-projection code (single-threaded) on a cropped version of Prevedel's data
-        Htf = BackwardProjectACC(hMatrix, inputImage, planes=None, numjobs=1, logPrint=False)
+        Htf = BackwardProjectACC(hMatrix, inputImage, planes=None, logPrint=False)
         if True:
             definitive = tifffile.imread('Data/03_Reconstructed/exampleData/definitive_worm_crop_X15_backproject.tif')
             definitive = np.transpose(definitive, axes=(0,2,1))
@@ -183,9 +196,19 @@ if __name__ == "__main__":
         print("Testing image pair deconvolution:")
         candidate = np.tile(inputImage[np.newaxis,0,0], (2,1,1))
         candidate[1] *= 1.4
+        planesToUse = None   # Use all planes
+        if planesToUse is None:
+            numPlanesToUse = hMatrix.numZ
+        else:
+            numPlanesToUse = len(planesToUse)
+
+        print('Running (%d planes x2)'%numPlanesToUse)
+        t1 = time.time()
         temp = BackwardProjectACC(hMatrix, candidate, planes=None, numjobs=1, logPrint=False)
         dualRoundtrip = ForwardProjectACC(hMatrix, temp, planes=None, logPrint=False)
+        print('New method took', time.time()-t1)
 
+        # Run for the individual images, and check we get the same result as with the dual round-trip
         temp = BackwardProjectACC(hMatrix, candidate[0], planes=None, numjobs=1, logPrint=False)
         firstRoundtrip = ForwardProjectACC(hMatrix, temp, planes=None, numjobs=1, logPrint=False)
         comparison = np.max(np.abs(firstRoundtrip - dualRoundtrip[0]))
@@ -203,6 +226,15 @@ if __name__ == "__main__":
             print("  -> WARNING: disagreement detected")
         else:
             print("  -> OK")
+
+        # Run for 10 images in parallel.
+        # Note that 'candidate' is already 2 images, so we tile by a factor of 5 to get a total of 10 images
+        print('Running (%d planes x10)'%numPlanesToUse)
+        t1 = time.time()
+        temp = BackwardProjectACC(hMatrix, np.tile(candidate, (5,1,1)), planes=None, numjobs=1, logPrint=False)
+        tenRoundtrip = ForwardProjectACC(hMatrix, temp, planes=None, logPrint=False)
+        print('New method took', time.time()-t1)
+    
        
     if 'parallel' in sys.argv:
         # Run to test parallelization

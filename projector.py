@@ -6,7 +6,7 @@ from jutils import tqdm_alias as tqdm
 
 import py_symmetry as jps
 import special_fftconvolve as special
-import hmatrix
+import psfmatrix
 import jutils as util
 
 # Ensure existence of the directory we will use to log performance diagnostics
@@ -255,7 +255,7 @@ if __name__ == "__main__":
     # Load the H matrix
     # We need the raw _H and _Ht values, since we are using old projection code to validate the results of my new optimized code
     matPath = 'PSFmatrix/PSFmatrix_M40NA0.95MLPitch150fml3000from-13to0zspacing0.5Nnum15lambda520n1.0.mat'
-    (_H, _Ht, _CAIndex, hPathFormat, htPathFormat, hReducedShape, htReducedShape) = hmatrix.LoadRawMatrixData(matPath)
+    (_H, _Ht, _CAIndex, hPathFormat, htPathFormat, hReducedShape, htReducedShape) = psfmatrix.LoadRawMatrixData(matPath)
     testHCC = _H[13]
     testHtCC = _Ht[13]
 
@@ -263,7 +263,7 @@ if __name__ == "__main__":
     for bk in [True, False]:
         # Test both square and non-square, since they use different code
         for shape in [(200,200), (200,300), (300,200)]:
-            testHMatrix = hmatrix.LoadMatrix(matPath, numZ=1, zStart=13)   # Needs to be in the loop here, because caching is confused by changing the image shape
+            testHMatrix = psfmatrix.LoadMatrix(matPath, numZ=1, zStart=13)   # Needs to be in the loop here, because caching is confused by changing the image shape
             testProjection = np.random.random(shape).astype(np.float32)
             if bk:
                 testResultOld = BackwardProjectForZ_old(testHtCC, testProjection)

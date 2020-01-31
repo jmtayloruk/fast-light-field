@@ -106,7 +106,7 @@ def LoadRawMatrixData(matPath, forceRegeneration = False):
     np.save(mmapPath+'/HtReducedShape.npy', htReducedShape)
 
     return (_H, _Ht, _CAindex, hPathFormat, htPathFormat, hReducedShape, htReducedShape)
-    
+
 def LoadMatrix(matPath, numZ=None, zStart=0, forceRegeneration = False):
     # Obtain a HMatrix object based on a .mat file
     # (although we will jump straight to previously-generated memmap backing files if they exist)

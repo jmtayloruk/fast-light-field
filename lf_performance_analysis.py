@@ -6,7 +6,7 @@ import numpy as np
 #import matplotlib.pyplot as plt   # For some reason this is crashing on my Mac Pro. Hopefully this is just a temporary glitch...!?
 
 import jutils as util
-import lfdeconv, hmatrix, lfimage, projector
+import lfdeconv, psfmatrix, lfimage, projector
 
 def AnalyzeTestResults():
     # Long function which analyses the data from the run that just happened
@@ -121,8 +121,8 @@ def AnalyzeTestResults2(statsFilePath):
 
 
 matPath = 'PSFmatrix/PSFmatrix_M40NA0.95MLPitch150fml3000from-13to0zspacing0.5Nnum15lambda520n1.0.mat'
-(_H, _Ht, _CAindex, hPathFormat, htPathFormat, hReducedShape, htReducedShape) = hmatrix.LoadRawMatrixData(matPath)
-hMatrix = hmatrix.LoadMatrix(matPath)
+(_H, _Ht, _CAindex, hPathFormat, htPathFormat, hReducedShape, htReducedShape) = psfmatrix.LoadRawMatrixData(matPath)
+hMatrix = psfmatrix.LoadMatrix(matPath)
 inputImage = lfimage.LoadLightFieldTiff('Data/02_Rectified/exampleData/20131219WORM2_small_full_neg_X1_N15_cropped_uncompressed.tif')
 
 if False:
@@ -167,7 +167,7 @@ if False:
 
     util.CheckComparison(result2, result3, 1.0, 'Compare single- and multi-threaded')
 
-if True:
+if False:
     # Profile old code (single-threaded)
     ru1 = util.cpuTime('both')
     myStats = cProfile.run('temp = projector.BackwardProjectACC_old(_Ht, inputImage, _CAindex, planes=planesToProcess)', 'mystats')
