@@ -1,6 +1,7 @@
-{\rtf1\ansi\ansicpg1252\cocoartf1404\cocoasubrtf470
+{\rtf1\ansi\ansicpg1252\cocoartf1504\cocoasubrtf840
 {\fonttbl\f0\fswiss\fcharset0 Helvetica;}
 {\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
 \paperw11900\paperh16840\margl1440\margr1440\vieww21260\viewh16500\viewkind0
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
@@ -18,7 +19,6 @@ Flow recovery - what I\'92ve done\
 	- warp() leads to anomalies at the edge of the image. Specifically, pixels are either \'91in\'92 or \'91out\'92, and the switch between the two states causes jumps in the score. It\'92s not clear what the best thing to do about this is. mode=\'92edge\'92 might work, but I would worry it might introduce odd biasing behaviour. I tried extending the object size and then cropping it down (i.e. filling with real data).\
 	- It turned out it wasn\'92t enough to ignore the edge pixels, because the edge pixels affect a large area when I forward project. A combination of forcing zero edge shifts and specifying edge padding seems to have suppressed edge artefacts enough to stop instability in the scores I get for two virtually-identical shift values.\
 \
-\
 
 \b Flow recovery - next steps\
 
@@ -29,7 +29,13 @@ Flow recovery - what I\'92ve done\
 \
 - Save the input image (maybe with a timestamp in the filename to avoid overwriting?), so that I can reproduce previous runs\
 \
-- Think about whether Powell is behaving in what feels to me like an optimal manner (in terms of the number of trial values it needs to reach equilibrium)
+- Can I estimate the 
+\i gradients
+\i0  of the problem by just warping the 
+\i same
+\i0  recovered object and scoring it? I am pretty sure that will be imperfect, but I have a feeling it might be close enough to the truth to send the optimizer in the right direction. Worth a try! Should be pretty quick to implement, I think. I can also compare it to reality by running some full recoveries with W+dW and determining the true gradient that way.\
+\
+- Look a bit at the internals of Powell. Does it really need as many trial values to reach an optimum, given that I think my cost function is pretty smooth and quadratic?
 \b \
 
 \b0 \
@@ -44,13 +50,13 @@ Things to investigate
 \b0 \
 - deconvRL and _PIV actually give slightly different results (deconvRL seems better). Is there an actual bug in deconvRL_PIV, or is Prevedel\'92s implementation of RL actually slightly different (and more efficient)?\
 \
-I noted a while back that forwardProjectACC returns float64. I should track down where that happens and reduce to float32, for performance reasons.\
-\
 
 \b \
 Performance
 \b0 \
-- For much of the time, my PIV code is not using multithreading. It looks as if it takes ~0.2s to fire up multiprocessing (and about 0.1s to tear down). 0.15s seems to be spent after the multithreaded part.\
-- Need to upgrade code to get performance gains when processing multiple images simultaneously, instead of just iterating over them. This would also help with the overheads I identified above, I hope.\
+- Look at how well my code is using multithreading.\
+\
+- Revisit what\'92s happening on mac pro - multithreading performance seems much worse. Is it a linux benefit, or something else?\
+\
 - The optimizer calculates the full gradients even if some variables are bounded to a constant. I should be able to do better if I write my own gradient function. That would also have the benefit that I should be able to parallelize the computations much better. Similarly, with a bit of faffing around rewriting the code myself, I should be able to run a Powell optimizer that tweaks all individual flow components in parallel.\
 }
