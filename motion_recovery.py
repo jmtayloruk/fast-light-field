@@ -70,11 +70,11 @@ class ShiftHistory:
         else:
             return False   
 
-def ScoreShift(candidateShiftYX, shifter, method, imageAB, hMatrix=None, shiftHistory=None, scaling=1.0, log=True, comparator=None, maxIter=8):
+def ScoreShift(candidateShiftYX, shifter, method, imageAB, hMatrix=None, shiftHistory=None, scaling=1.0, log=True, logPrint=False, comparator=None, maxIter=8):
     # Just returns a single score evaluating the extent to which the candidate shift can “explain” the AB images that were observed
-    return ScoreShiftDetailed(candidateShiftYX, shifter, method, imageAB, hMatrix, shiftHistory, scaling, log, comparator, maxIter=maxIter)[0]
+    return ScoreShiftDetailed(candidateShiftYX, shifter, method, imageAB, hMatrix, shiftHistory, scaling, log, logPrint, comparator, maxIter=maxIter)[0]
 
-def ScoreShiftDetailed(candidateShiftYX, shifter, method, imageAB, hMatrix=None, shiftHistory=None, scaling=1.0, log=True, comparator=None, maxIter=8):
+def ScoreShiftDetailed(candidateShiftYX, shifter, method, imageAB, hMatrix=None, shiftHistory=None, scaling=1.0, log=True, logPrint=False, comparator=None, maxIter=8):
     # Returns a score evaluating the extent to which the candidate shift can “explain” the AB images that were observed,
     # along with additional detailed information that may be useful for debugging and closer visual investigation of this candidate scenario
 
@@ -89,14 +89,14 @@ def ScoreShiftDetailed(candidateShiftYX, shifter, method, imageAB, hMatrix=None,
     assert(imageAB.shape[0] == 2)
         
     if log:
-#        print('======== Score shift ========', candidateShiftYX.T)
-        print('======== Score shift ========')
+        print('======== Score shift ========', candidateShiftYX.T)
+    #        print('======== Score shift ========')
 
     if method == 'joint':
         # Perform the joint deconvolution to recover a single object
-        res = lfdeconv_piv.DeconvRL_PIV(hMatrix, imageAB, maxIter, shifter, shiftDescription=candidateShiftYX)
+        res = lfdeconv_piv.DeconvRL_PIV(hMatrix, imageAB, maxIter, shifter, shiftDescription=candidateShiftYX, logPrint=logPrint)
         # Evaluate how well the forward-projected result matches the actual camera images, using SSD
-        candidateImageAB = lfdeconv_piv.ForwardProjectACC_PIV(hMatrix, res, shifter, candidateShiftYX)
+        candidateImageAB = lfdeconv_piv.ForwardProjectACC_PIV(hMatrix, res, shifter, candidateShiftYX, logPrint=logPrint)
     elif method == 'joint-test-trivial':
         # Debugging method in which I use trivial projectors that behave like a delta function PSF
         res = DeconvRLTrivial(hMatrix, imageAB, maxIter, shifter, shiftDescription=candidateShiftYX)
@@ -144,7 +144,7 @@ def ScoreShiftDetailed(candidateShiftYX, shifter, method, imageAB, hMatrix=None,
             if shiftHistory.PlotHistory(onlyPlotEvery=50):
                 if method == 'joint':
                     dualObject = np.tile(res[:,np.newaxis,:,:] / 2.0, (1,2,1,1))
-                    dualObject[:,1,:,:] = shifter.ShiftObject(dualObject[:,1,:,:], shiftDescription)
+                    dualObject[:,1,:,:] = shifter.ShiftObject(dualObject[:,1,:,:], candidateShiftYX)
                     flow.ShowDualObjectAndFlow(dualObject, shifter, candidateShiftYX)
                 else:
                     flow.ShowDualObjectAndFlow(candidateImageAB, shifter, candidateShiftYX)
@@ -154,7 +154,7 @@ def ScoreShiftDetailed(candidateShiftYX, shifter, method, imageAB, hMatrix=None,
         print('return %e' % ssdScore)
     return (ssdScore, renormHack, np.average(candidateImageAB[0]), np.average(imageAB), candidateImageAB, res) 
 
-def OptimizeToRecoverFlowField(method, imageAB, hMatrix, shifter, trueShiftDescription, initialShiftGuess, searchRangeXY=(10,10), shiftHistory=None):
+def OptimizeToRecoverFlowField(method, imageAB, hMatrix, shifter, trueShiftDescription, initialShiftGuess, searchRangeXY=(10,10), shiftHistory=None, logPrint=False):
     # Main function which runs an optimizer to estimate the shift that occurred between two camera images.
     imageAB = imageAB.copy()    # This is just paranoia - I don't think it should get manipulated
     print('True shift:', trueShiftDescription.T)
@@ -204,7 +204,7 @@ def OptimizeToRecoverFlowField(method, imageAB, hMatrix, shifter, trueShiftDescr
 
     # Optimize to obtain the best-matching shift
     try:
-        shift = scipy.optimize.minimize(ScoreShift, initialShiftGuess, bounds=shiftSearchBounds, args=(shifter, method, imageAB, hMatrix, shiftHistory), method=optimizationAlgorithm, options=options)
+        shift = scipy.optimize.minimize(ScoreShift, initialShiftGuess, bounds=shiftSearchBounds, args=(shifter, method, imageAB, hMatrix, shiftHistory, 1.0, True, logPrint), method=optimizationAlgorithm, options=options)
         print('Optimizer finished:', str(shift.message), 'Final shift:', shift.x.T)
     except KeyboardInterrupt:
         # Catch keyboard interrupts so that we still return whatever shiftHistory we have built up so far.
@@ -218,9 +218,13 @@ def CheckConvergence(funcToCall, convergedShift, args):
     initialScore = funcToCall(convergedShift.flatten(), *args)
     print('Sanity check: perturbing certain components just to check this doesnt result is a better score')
     print(' Initial score %e' % initialScore)
-    ok = True    
-    for du in [0.5, -0.5, 1.5, -1.5]:
-        for n in [7, 8, 12, 13]:
+    ok = True
+    paramsToTweak = [7, 8, 12, 13]    # Try various tweaking a few different control points
+    if convergedShift.shape[0] < paramsToTweak[-1]:
+        # Actually we have a very short control point vector - just test the first few
+        paramsToTweak = range(np.minimum(4, convergedShift.shape[0]))
+    for du in paramsToTweak:
+        for n in paramsToTweak:
             temp = convergedShift.copy()
             temp[n] += du
             score = funcToCall(temp, *args)
