@@ -44,6 +44,9 @@ class HMatrix:
             self.cacheHits += 1
         return self.Hcache[key]
     
+    def ClearCache(self):
+        self.Hcache.clear()
+    
     def IterableBRange(self, cc):
         return range(self.HReducedShape[cc+self.zStart][0])
     

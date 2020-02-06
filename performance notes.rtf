@@ -1,120 +1,85 @@
 {\rtf1\ansi\ansicpg1252\cocoartf1404\cocoasubrtf470
-{\fonttbl\f0\fswiss\fcharset0 Helvetica;\f1\fmodern\fcharset0 Courier;\f2\fmodern\fcharset0 Courier-Bold;
-}
+{\fonttbl\f0\fswiss\fcharset0 Helvetica;\f1\fmodern\fcharset0 Courier;}
 {\colortbl;\red255\green255\blue255;}
-\paperw11900\paperh16840\margl1440\margr1440\vieww26860\viewh21820\viewkind0
+\paperw11900\paperh16840\margl1440\margr1440\vieww20440\viewh21820\viewkind0
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
-\f0\fs24 \cf0 \ul \ulc0 Jan 2020 timings\ulnone \
-I re-remembered that on my mac pro, the FFT backend is MKL, which runs multithreaded (and deadlocks with itself and with Parallel()) unless I disable MKL threading\'85!\
-\
-\ul 	Mac pro \ulnone (scipy v1.1.0, numpy 1.15.2)\
-	72s 
-\b multithreaded.
-\b0  Old code calls through to mkl_fft\
-	33s New code (rusage ~380s)\
-	\ul Macbook air\ulnone  (scipy v1.2.2 numpy v1.16.4)\ul \
-	\ulnone 420s Old code calls through to fftpack.py:fft, rfft etc. It is definitely running single-threaded.\
-	180s New code is also definitely running single-threaded.\
-\
-\
+\f0\fs24 \cf0 \ul \ulc0 Jan 2020 status\ulnone \
+I have now implemented special_fftconvolve in pure C code, and have implemented caching of the H matrices (though that does require a 
+\b lot
+\b0  of RAM, and is probably impractical for real-world scenarios with large numbers of z planes).\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 I re-remembered that on my mac pro, the FFT backend is MKL, which runs multithreaded (and deadlocks with itself and with Parallel()) unless I disable MKL threading! I have now disabled it again.\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 \
+\ul Code run times\ulnone \
+Command-line parameters are for lf_performance_analysis.py). All times are on Mac Pro.\
+Note that I use a different image size for the \'91batch\'92 runs, so times can\'92t be directly compared\
+\pard\tx7633\pardirnatural\partightenfactor0
+\cf0 \
+MATLAB (multithreaded, backprojection)	27s\
+\pard\tx7633\tx13337\pardirnatural\partightenfactor0
+\cf0 profile-old: Single video frame, old code:	123s\
+profile-new: Single video frame:	97s (76% in FFTW and mmap)\
+profile-new-2: Single video frame, cached H matrices:	18s (75% in special_fftconvolve/mirror/expand)\
+profile-new-batch: Batch of 10 video frames:	191s (47% in special_fftconvolve, 32% in FFTW)	71s with 8 threads, rusage 290. ~140s with 2 threads, rusage 258.\
+profile-new-batch2: Batch of 10 video frames, cached H matrices:	121s (75% in special_fftconvolve)\
+profile-new-batch: Batch of 30 video frames:	406s (62% in special_fftconvolve, 19% in FFTW)\
+profile-new-batch2: Batch of 30 video frames, cached H matrices:	334s (75% in special_fftconvolve)\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
+\cf0 \
+\ul Summary\
+\ulnone - My best-case scenario is now 11x faster than the original naive code (single threaded). With 8 threads, it is 17x faster. \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
+
+\i \cf0 - However, it is actually kind of depressing that I got less than a 25% single-threaded speedup in all my initial rewriting!
+\i0 \ul \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
+\cf0 \ulnone - My code is ~4x faster than the MATLAB code, if I am allowed to process batch of 10 frames. My optimized code can almost match the MATLAB run time if I run with 8 threads.\
+- Matrix caching makes a huge difference for single images. It actually still makes a small difference even with significant batch sizes (>10), though the gain is smaller.\
+- Batch processing is somewhat worth it with cached H matrices, but really comes into its own 
+\i without
+\i0  caching, where we can get >7x speedup if we batch process. Effectively we are amortising ~70s of FFTs across an additional time of ~11s per frame.\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
+\cf0 - Even in the cached scenario, I am still getting (slight) performance gains with a batch size of 30 or more. \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
+
+\b \cf0 \
+TODO
+\b0 : I am still puzzled how/why the vanilla MATLAB code manages to keep up with my optimized code. It manages to use about 4-500% CPU, so it\'92s possible that it is just making better use of the parallelism than I am managing to do from within Python.\
+
+\b TODO: 
+\b0 multithreading could clearly be more efficient (e.g. there is about 50% extra rusage, with 8 threads, and average load is only about 400% CPU. That will be hard to investigate, but this is probably where I should be investing my effort if I want to speed up the CPU implementation further.\
+
+\b TODO
+\b0 : look into writing a GPU implementation.\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 \
 \ul \
 \
-\ulnone All these notes are outdated - I am leaving them here for now, but all of this needs revisiting, and many of the measurements etc are probably out of date.\
-\ul \
-\
-Performance investigation\ulnone \
+Old notes about thread performance - may need updating/revisiting\ulnone \
 \
 Actual thread execution time seems to grow considerably with the number of threads, i.e. efficiency falls. I am not sure how to try and work out what the cause of that is. I could go back to working on dummy data (no transfers between processes) and see if that makes a difference to *that* in particular. (I think I may have looked only at the dead time overheads - which are also an issue).\
 I looked at user and system cpu time, and with Instruments. Looks like 20% of time is spent in madvise (macbook, 2 threads). I am not sure exactly why or where that is happening. It seems to be related to python memory management in some way. I should check if that grows with number of threads on mac pro, and if it is the same when I use dummy work blocks rather than passing to subprocesses\
 \
 -> revisit this now I am using mmap rather than pickle - hopefully much of this is now fixed.\
 \
+I made these later notes:\
+	Stats on mac pro across increasing numbers of threads show that dead time is no longer a significant problem.\
+	However, work time does still increase with number of threads - around 1.5x by the time I hit 8 threads.\
+	I can only imagine this is a memory bandwidth thing, whether in terms of sheer RAM bandwidth, cache performance, or overheads due to allocating memory.\
+	I imagine that doing as many in-place operations as possible (and/or working in scratch space?) can only be a good thing for this.\
+\
 \ul Performance improvements to make\ulnone \
 \
-Move transpose to final operation (since it's probably faster than reversing an array - although it may impact subsequent fft performance?), in the case of square arrays\
-\
-fft2 returns a double array (on macbook, at least) for float input. I would much prefer it to return complex64. I could well believe it might be a performance hit to do it this way (larger memory footprint). Can I improve on this? I suppose I could call through to c code that calls fftw, for example\
-\
-Code now supports a third dimension for the camera images (and object z plane), so that we can implement PIV. At the moment it just iterates - performance should be improved by only calculating FT(H) once.\
-\
-\
-\
-\
-\
-\
-\
+I could move the transpose to final operation, in the case of square arrays (since it's probably faster than reversing an array - although it may impact subsequent fft performance?). Or, I could just figure that images are not usually guaranteed to be square.\
 \
 \pard\pardeftab720\partightenfactor0
 
 \f1\fs28 \cf0 \expnd0\expndtw0\kerning0
-      112    0.373    0.003   74.463    0.665 <ipython-input-11-c37fe3b06b6e>:129(backwardProjectForZY)\
-      504    1.432    0.003   
-\f2\b 72.782
-\f1\b0     0.144 <ipython-input-11-c37fe3b06b6e>:91(convolve)\
-calls\
-     4046    0.008    0.000   
-\f2\b 48.292
-\f1\b0     0.012 basic.py:673(fft2)\
-and calls\
-      896    1.006    0.001   
-\f2\b 24.424
-\f1\b0     0.027 <ipython-input-11-c37fe3b06b6e>:84(convolvePart2)\
- which calls\
-      784    0.059    0.000    2.299    0.003 <ipython-input-11-c37fe3b06b6e>:54(MirrorYArray)\
- and calls\
-     1680    0.985    0.001   21.094    0.013 <ipython-input-11-c37fe3b06b6e>:71(convolvePart3)\
-  which calls\
-     1470    0.093    0.000    4.855    0.003 <ipython-input-11-c37fe3b06b6e>:37(MirrorXArray)\
-  and calls\
-     3150    
-\f2\b 6.667
-\f1\b0     0.002   
-\f2\b 14.953
-\f1\b0     0.005 <ipython-input-8-dbe0fb60aef9>:123(special_fftconvolve)\
-   calls\
-     3150    0.021    0.000    8.286    0.003 <ipython-input-8-dbe0fb60aef9>:112(special_fftconvolve_part1)\
-    calls\
-     3150    0.046    0.000    7.973    0.003 <ipython-input-8-dbe0fb60aef9>:80(special_rfftn)\
-     calls\
-     3150    0.449    0.000    
-\f2\b 5.314
-\f1\b0     0.002 <ipython-input-8-dbe0fb60aef9>:72(expand)\
-      which calls\
-     3150    2.589    0.001    2.627    0.001 <ipython-input-8-dbe0fb60aef9>:65(tempMul)\
-\
-By implication, 2.6s of fft2 belongs to special_fftconvolve, and all the rest is \'91large\'92 FFTs.\
-\
-I don\'92t understand how special_fftconvolve has so much time assigned to self.\
-I suppose it must be the multiply? I suppose it must be taking the hit for *something*?\
-Maybe the unpickling of \'91projection\'92!?\
-\
-\
-    10346    3.071    0.000    
-\f2\b 3.071
-\f1\b0     0.000 \{method 'astype' of 'numpy.ndarray' objects\}\
-\
-      112    1.053    0.009    1.083    0.010 memmap.py:207(__new__)\
-\
-\
-\
-63% rfftn, so using symmetries will definitely help significantly for that\
-15% fa*fb in special_fftconvolve \
-14% special_fftconvolve_part1.\
-\
-\
-Stats on mac pro across increasing numbers of threads show that dead time is no longer a significant problem.\
-However, work time does still increase with number of threads - around 1.5x by the time I hit 8 threads.\
-I can only imagine this is a memory bandwidth thing, whether in terms of sheer RAM bandwidth,\
-cache performance, or overheads due to allocating memory.\
-I imagine that doing as many in-place operations as possible (and/or working in scratch space?) can only be a good thing for this.\
 \
 \
 I should try:\
-- doing fft2 natively with float (calling through to FFTW myself, perhaps?)\
-- improving code to properly deal with >1 parallel convolution, instead of just iterating over n\
-- try doing the transpose as the final operation, rather than a mirror\
 - would it help to change the axis order in rfftn? Raw speed, but also could be better for tiling to complete the matrix with conjugate\
-- fusing any more maths operations I can find. Make sure function calls don\'92t prevent fused multiply/add\
 - am I tiling in the most efficient order? \
 - investigate whether fft performance is impacted by the prime factors of the input array}

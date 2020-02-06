@@ -159,6 +159,7 @@ class Projector(object):
 #########################################################################        
     
 def ProjectForZY(cc, bb, source, hMatrix, backwards):
+    assert(source.dtype == np.float32)   # Keep an eye out for if we are provided with double-precision inputs
     f = open('perf_diags/%d_%d.txt'%(cc,bb), "w")
     t1 = time.time()
     singleJob = (len(source.shape) == 2)
