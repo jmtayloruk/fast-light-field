@@ -99,11 +99,9 @@ def special_rfftn(in1, bb, aa, Nnum, fshape, partial=False):
         assert((d % Nnum) == 0)
         reducedShape = reducedShape + (int(d/Nnum),)
     reduced = in1[...,bb::Nnum,aa::Nnum]
-
-    # Compute an array giving rfft(mask(in1))
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        reducedF = myfft.myFFT2(reduced, reducedShape)
+    # Compute an array giving rfft(mask(in1)), i.e. the FFT for a smaller array consisting only of the pixels selected by the mask
+    reducedF = myfft.myFFT2(reduced, reducedShape)
+    # Expand this up to obtain the equivalent fourier transform for the full masked array (with intervening zeroes).
     return expand(reducedF, bb, aa, Nnum, fshape, partial=partial)
 
 def convolutionShape(in1, in2Shape, Nnum):
@@ -126,15 +124,15 @@ def convolutionShape(in1, in2Shape, Nnum):
 def special_fftconvolve_part1(in1, bb, aa, Nnum, in2Shape, partial=False):
     assert((len(in1.shape) == 2) or (len(in1.shape) == 3))
     assert(len(in2Shape) == 2)
-    (fshape, fslice, s1) = convolutionShape(in1, in2Shape, Nnum)
+    (fshape, _, _) = convolutionShape(in1, in2Shape, Nnum)
     # Pre-1.9 NumPy FFT routines are not threadsafe - this code requires numpy 1.9 or greater
     assert(_rfft_mt_safe)
     fa = special_rfftn(in1, bb, aa, Nnum, fshape, partial=partial)
-    return (fa, fshape, fslice, s1)
+    return (fa, fshape)
 
 def special_fftconvolve_part3b(fab, fshape, fslice, s1):
     assert(len(fab.shape) == 2)
-    ret = myfft.myIFFT2(fab, fshape)[fslice].copy()
+    ret = myfft.myIFFT2(fab, fshape)[fslice].copy()    # TODO: what was the purpose of the copy() here? Is it necessary? Perhaps if fslice does something nontrivial, it makes the result compact? But even if so, is that important?
     return _centered(ret, s1)
 
 def special_fftconvolve_part3(fab, fshape, fslice, s1):
@@ -155,7 +153,7 @@ def special_fftconvolve(in1, bb, aa, Nnum, in2Shape, accum, fb):
         tempSlice[bb::Nnum, aa::Nnum] = in1[bb::Nnum, aa::Nnum]
     This allows us to take a significant shortcut in computing the FFT for in1.
     '''
-    (fa, fshape, fslice, s1) = special_fftconvolve_part1(in1, bb, aa, Nnum, in2Shape)
+    (fa, _) = special_fftconvolve_part1(in1, bb, aa, Nnum, in2Shape)
     assert(fa.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
     assert(fb.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
 
@@ -164,13 +162,14 @@ def special_fftconvolve(in1, bb, aa, Nnum, in2Shape, accum, fb):
     else:
         accum += fa*fb
     assert(accum.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
-    return (accum, fshape, fslice, s1)
+    return accum
 
 ################################
 # This next function is an experimental work in progress, trying to cover more of the performance-sensitive bits with fast C code
-def special_fftconvolve2(in1, bb, aa, Nnum, in2Shape, accum, fb_unmirrored, mirrorYMultiplier):
-    (fa_partial, fshape, fslice, s1) = special_fftconvolve_part1(in1, bb, aa, Nnum, in2Shape, partial=True)
+def special_fftconvolve2(in1, bb, aa, Nnum, in2Shape, accum, fb_unmirrored, validWidth, mirrorXMultiplier):
+    (fa_partial, fshape) = special_fftconvolve_part1(in1, bb, aa, Nnum, in2Shape, partial=True)
     assert(fa_partial.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
     assert(fb_unmirrored.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
     expandMultiplier = expand2Multiplier(bb, fshape, fshape)
-    return jps.special_fftconvolve(accum, fa_partial, fb_unmirrored, expandMultiplier, mirrorYMultiplier)
+    return jps.special_fftconvolve(accum, fa_partial, fb_unmirrored, expandMultiplier, validWidth, mirrorXMultiplier)
+

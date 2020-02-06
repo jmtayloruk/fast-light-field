@@ -58,53 +58,58 @@ class Projector(object):
         
         # rfslice: slicing tuple to crop down full fft array to the shape that would be output from rfftn
         self.rfslice = (slice(0,self.fshape[0]), slice(0,int(self.fshape[1]/2)+1))
+        
+        # Precalculate arrays that are needed as part of the process of converting from FFT(H) to FFT(mirrorImage(H))
+        padLength = self.fshape[0] - self.s2[0]
+        self.mirrorXMultiplier = np.exp((1j * (1+padLength) * 2*np.pi / self.fshape[0]) * np.arange(self.fshape[0])).astype('complex64')
+        padLength = self.fshape[1] - self.s2[1]
+        self.mirrorYMultiplier = np.exp((1j * (1+padLength) * 2*np.pi / self.fshape[1]) * np.arange(self.fshape[1])).astype('complex64')
+
         return
     
+    
+    #########################################################################
+    # Convolve a projection with a H matrix (PSF), taking advantage of all
+    # the mirror symmetries that are present in the H matrix
+    #########################################################################
     def MirrorXArray(self, fHtsFull):
-        padLength = self.fshape[0] - self.s2[0]
+        # Utility function to convert the FFT of a PSF to the FFT of the X mirror of that same PSF
         if False:
-            fHtsFull = fHtsFull.conj() * np.exp((1j * (1+padLength) * 2*np.pi / self.fshape[0]) * np.arange(self.fshape[0],dtype='complex64')[:,np.newaxis])
+            # Old code that does this in pure python
+            fHtsFull = fHtsFull.conj() * self.mirrorXMultiplier[:,np.newaxis]
             fHtsFull[:,1::] = fHtsFull[:,1::][:,::-1]
             return fHtsFull
         else:
-            temp = np.exp((1j * (1+padLength) * 2*np.pi / self.fshape[0]) * np.arange(self.fshape[0])).astype('complex64')
-            if False:
-                # TODO: this jps feature is a new one that I need to check in!
-                result = jps.mirrorX(fHtsFull, temp)
-            else:
-                result = np.empty(fHtsFull.shape, dtype=fHtsFull.dtype)
-                result[:,0] = fHtsFull[:,0].conj()*temp
-                for i in range(1,fHtsFull.shape[1]):
-                    result[:,i] = (fHtsFull[:,fHtsFull.shape[1]-i].conj()*temp)
-            return result
+            # New, faster code written in C
+            return jps.mirrorX(fHtsFull, self.mirrorXMultiplier)
 
     def MirrorYArray(self, fHtsFull):
-        padLength = self.fshape[1] - self.s2[1]
+        # Utility function to convert the FFT of a PSF to the FFT of the Y mirror of that same PSF
         if False:
-            fHtsFull = fHtsFull.conj() * np.exp(1j * (1+padLength) * 2*np.pi / self.fshape[1] * np.arange(self.fshape[1],dtype='complex64'))
+            # Old code that does this in pure python
+            fHtsFull = fHtsFull.conj() * self.mirrorYMultiplier
             fHtsFull[1::] = fHtsFull[1::][::-1]
             return fHtsFull
         else:
-            temp = np.exp((1j * (1+padLength) * 2*np.pi / self.fshape[1]) * np.arange(self.fshape[1])).astype('complex64')
-            if False:
-                result = jps.mirrorY(fHtsFull, temp)
-            else:
-                result = np.empty(fHtsFull.shape, dtype=fHtsFull.dtype)
-                result[0] = fHtsFull[0].conj()*temp
-                for i in range(1,fHtsFull.shape[0]):
-                    result[i] = (fHtsFull[fHtsFull.shape[0]-i].conj()*temp)
-            return result
+            # New, faster code written in C
+            return jps.mirrorY(fHtsFull, self.mirrorYMultiplier)
         
     def convolvePart3(self, projection, bb, aa, fHtsFull, mirrorX, accum):
-        # TODO: to make this work, I need the full matrix for fHts and then I need to slice it 
-        # to the correct shape when I call through to special_fftconvolve here. Is fshape what I need?
         cpu0 = util.cpuTime('both')
-        (accum,_,_,_) = special.special_fftconvolve(projection,bb,aa,self.Nnum,self.s2,accum,fb=fHtsFull[self.rfslice])
+        if True:
+            accum = special.special_fftconvolve2(projection,bb,aa,self.Nnum,self.s2,accum,fHtsFull,int(self.fshape[1]/2)+1,None)
+        else:
+            # Old pure-python code still here for reference, for now
+            accum = special.special_fftconvolve(projection,bb,aa,self.Nnum,self.s2,accum,fb=fHtsFull[self.rfslice])
         self.cpuTime += util.cpuTime('both')-cpu0
         if mirrorX:
-            fHtsFull = self.MirrorXArray(fHtsFull)
             cpu0 = util.cpuTime('both')
-            (accum,_,_,_) = special.special_fftconvolve(projection,self.Nnum-bb-1,aa,self.Nnum,self.s2,accum,fb=fHtsFull[self.rfslice]) 
+            if True:
+                accum = special.special_fftconvolve2(projection,self.Nnum-bb-1,aa,self.Nnum,self.s2,accum,fHtsFull,int(self.fshape[1]/2)+1,self.mirrorXMultiplier)
+            else:
+                # Old pure-python code still here for reference, for now
+                fHtsMirror = self.MirrorXArray(fHtsFull)[self.rfslice]
+                accum = special.special_fftconvolve(projection,self.Nnum-bb-1,aa,self.Nnum,self.s2,accum,fb=fHtsMirror)
             self.cpuTime += util.cpuTime('both')-cpu0
         return accum
 
@@ -116,6 +121,9 @@ class Projector(object):
         return accum
 
     def convolve(self, projection, hMatrix, cc, bb, aa, backwards, accum):
+        # The main function to be called from external code.
+        # Convolves projection with hMatrix, returning a result that is still in Fourier space
+        # (caller will accumulate in Fourier space and do the inverse FFT just once at the end)
         cent = int(self.Nnum/2)
 
         mirrorX = (bb != cent)
@@ -139,8 +147,7 @@ class Projector(object):
             else:
                 # For a non-square array, we have to compute the FFT for the transpose.
                 fHtsFull = hMatrix.fH(cc, bb, aa, backwards, True, self.fshape)
-
-            # Note that mx,my need to be swapped following the transpose
+            # Note that mx,my have been swapped here, which is necessary following the transpose
             accum = self.convolvePart2(projection,aa,bb,fHtsFull,mirrorX,mirrorY, accum) 
         assert(accum.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
         return accum

@@ -1,5 +1,5 @@
 # This file contains some snippets I use for investigating the performance of my light-field deconvolution code
-import os, time
+import os, sys, time
 import csv, glob
 import cProfile, pstats
 import numpy as np
@@ -122,10 +122,14 @@ def AnalyzeTestResults2(statsFilePath):
 
 matPath = 'PSFmatrix/PSFmatrix_M40NA0.95MLPitch150fml3000from-13to0zspacing0.5Nnum15lambda520n1.0.mat'
 (_H, _Ht, _CAindex, hPathFormat, htPathFormat, hReducedShape, htReducedShape) = psfmatrix.LoadRawMatrixData(matPath)
-hMatrix = psfmatrix.LoadMatrix(matPath)
+if ('smaller-matrix' in sys.argv):
+    # This matrix is small enough to allow matrix caching (for backprojection only) with 8GB of RAM available
+    hMatrix = psfmatrix.LoadMatrix(matPath, numZ=16)
+else:
+    hMatrix = psfmatrix.LoadMatrix(matPath)
 inputImage = lfimage.LoadLightFieldTiff('Data/02_Rectified/exampleData/20131219WORM2_small_full_neg_X1_N15_cropped_uncompressed.tif')
 
-if False:
+if ('parallel-scaling' in sys.argv):
     # Investigate performance for different numbers of parallel threads
     for numJobsForTesting in range(1,13):
         ru1 = util.cpuTime('both')
@@ -134,7 +138,7 @@ if False:
         print('overall delta rusage:', ru2-ru1)
         AnalyzeTestResults()
 
-if False:
+if ('analyze-saved-data' in sys.argv):
     # Plot some analysis based on previously-acquired performance statistics
     plt.title('Dummy work on empty arrays')
     AnalyzeTestResults2('stats-dummy.txt')
@@ -147,12 +151,13 @@ if False:
 
 planesToProcess = None    # Can be set differently to speed things up for shorter investigations
 
-if False:
+if ('time-old' in sys.argv):
     # For fun, see how long the original code and my new code takes
     t0 = time.time()
     result1 = projector.BackwardProjectACC_old(_Ht, inputImage, _CAindex, planes=planesToProcess)
     print('Original code took %f'%(time.time()-t0))
     
+if ('time-new' in sys.argv):
     # Run my code (single-threaded)
     t0 = time.time()
     result2 = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, numjobs=1)
@@ -167,7 +172,7 @@ if False:
 
     util.CheckComparison(result2, result3, 1.0, 'Compare single- and multi-threaded')
 
-if False:
+if ('profile-old' in sys.argv):
     # Profile old code (single-threaded)
     ru1 = util.cpuTime('both')
     myStats = cProfile.run('temp = projector.BackwardProjectACC_old(_Ht, inputImage, _CAindex, planes=planesToProcess)', 'mystats')
@@ -176,13 +181,21 @@ if False:
     p = pstats.Stats('mystats')
     p.strip_dirs().sort_stats('cumulative').print_stats(40)
 
-if True:
+if ('profile-new' in sys.argv):
     # Profile my code (single-threaded)
     myStats = cProfile.run('temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, numjobs=1)', 'mystats')
     p = pstats.Stats('mystats')
+    print('hMatrix hits {0} misses {1}. Cache size {2}GB'.format(hMatrix.cacheHits, hMatrix.cacheMisses, hMatrix.cacheSize/1e9))
     p.strip_dirs().sort_stats('cumulative').print_stats(40)
 
-if False:
+if ('profile-new2' in sys.argv):
+    # Profile the same code code for a second run, now that the matrices ought to be cached. (single-threaded)
+    myStats = cProfile.run('temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, numjobs=1)', 'mystats')
+    p = pstats.Stats('mystats')
+    print('hMatrix hits {0} misses {1}. Cache size {2}GB'.format(hMatrix.cacheHits, hMatrix.cacheMisses, hMatrix.cacheSize/1e9))
+    p.strip_dirs().sort_stats('cumulative').print_stats(40)
+
+if ('profile-new-piv' in sys.argv):
     # Profile my code (single-threaded) in the sort of scenario I would expect to run it in for my PIV experiments
     tempInputImage = np.zeros((2,Nnum*20,Nnum*20))
     myStats = cProfile.run('temp = lfdeconv.BackwardProjectACC(hMatrix, tempInputImage, planes=planesToProcess, numjobs=1)', 'mystats')

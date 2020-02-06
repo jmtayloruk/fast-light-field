@@ -1,6 +1,7 @@
 py_symmetry/build
 py_symmetry/build/*
 py_symmetry/py_symmetry.so
+*.pyc
 piv-raw-data
 PSFmatrix
 perf_diags

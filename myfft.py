@@ -3,10 +3,11 @@
 # (although it might also be useful to help me disable that usage while investigating performance!)
 
 import scipy.fftpack
+import numpy as np
 from numpy.fft import fft, fftn, rfft, rfftn, irfftn
 import warnings
 
-if True:
+if False:
     # Old FFT code
     def myFFT2(mat, shape):
         # Perform a 'float' FFT on the matrix we are passed.
@@ -15,12 +16,18 @@ if True:
         #
         # With my Mac Pro install, we hit a FutureWarning within scipy.
         # This wrapper just suppresses that warning.
+        assert(mat.dtype == np.float32)    # This is what we expect. If not, our cast on the next line may be wrong
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             return scipy.fftpack.fft2(mat, shape).astype('complex64')
 
+    # TODO: is there a reason that I use irfftn instead of the scipy version? It's inconsistent with the above call.
+    # I wonder if it might possibly be something to do with being able to do a 2D FFT on a 3D array?
+    # I use the non-real forward FFT because I want the full array so that I can mirror it (add more detail to comment...)
+    # but since the data is actually real I can use the (faster) irfftn.
     def myIFFT2(mat, shape):
-        return irfftn(mat, shape)
+        assert(mat.dtype == np.complex64)    # Because otherwise our cast on the next line will be wrong
+        return irfftn(mat, shape).astype('float32')
 else:
     # New FFT code based on FFTW.
     # It may be possible to speed this up slightly be using their "proper" interface
