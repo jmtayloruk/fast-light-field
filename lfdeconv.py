@@ -67,10 +67,10 @@ def BackwardProjectACC(hMatrix, projection, planes=None, numjobs=multiprocessing
    
     # Save some diagnostics
     if logPrint:
-        print('work elapsed wallclock time %f'%(t1-t0))
-        print('work elapsed thread time %f'%elapsedTime)
-        print('work delta rusage:', ru2-ru1)
-        print('FFTs took %f'%(t2-t1))
+        print('Parallel work elapsed wallclock time %f'%(t1-t0))
+        print('Parallel work elapsed thread time %f'%elapsedTime)
+        print('Parallel work delta rusage:', ru2-ru1)
+        print('Plus, final FFTs took %f'%(t2-t1))
     
     f = open('overall.txt', 'w')
     f.write('%f\t%f\t%f\t%f\t%f\t%f\n' % (t0, t1, t1-t0, t2-t1, (ru2-ru1)[0], (ru2-ru1)[1]))
