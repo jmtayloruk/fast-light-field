@@ -133,11 +133,13 @@ if __name__ == "__main__":
         print('Warning - we will not load the raw H matrices. Not all command line options will be usable - some (old code) will hit errors')
     else:
         (_H, _Ht, _CAindex, hPathFormat, htPathFormat, hReducedShape, htReducedShape) = psfmatrix.LoadRawMatrixData(matPath)
+    cacheH = ('cache-H' in sys.argv)
     if ('smaller-matrix' in sys.argv):
         # This matrix is small enough to allow matrix caching (for backprojection only) with 8GB of RAM available
-        hMatrix = psfmatrix.LoadMatrix(matPath, numZ=16)
+        # Note that it does not affect the 'old' code, which uses the full PSF regardless
+        hMatrix = psfmatrix.LoadMatrix(matPath, numZ=16, cacheH=cacheH)
     else:
-        hMatrix = psfmatrix.LoadMatrix(matPath)
+        hMatrix = psfmatrix.LoadMatrix(matPath, cacheH=cacheH)
     inputImage = lfimage.LoadLightFieldTiff('Data/02_Rectified/exampleData/20131219WORM2_small_full_neg_X1_N15_cropped_uncompressed.tif')
     inputImage_x30 = np.tile(inputImage[np.newaxis,:,:], (30,1,1))
     inputImage_x10 = inputImage_x30[0:10]
@@ -182,6 +184,17 @@ if __name__ == "__main__":
             util.CheckComparison(result1, result2, 1.0, 'Compare results from new and old code')
         except:
             print('Old code was probably not run, so we cannot compare results')
+
+        print('Running a second time (disk cache for mmap is now definitely resident)')
+        t0 = time.time()
+        result2 = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, numjobs=1)
+        print('New code (single threaded) took %f'%(time.time()-t0))
+        
+        try:
+            util.CheckComparison(result1, result2, 1.0, 'Compare results from new and old code')
+        except:
+            print('Old code was probably not run, so we cannot compare results')
+
 
         # Run my code multi-threaded
         t0 = time.time()

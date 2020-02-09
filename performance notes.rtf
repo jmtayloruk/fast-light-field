@@ -1,17 +1,16 @@
-{\rtf1\ansi\ansicpg1252\cocoartf1404\cocoasubrtf470
+{\rtf1\ansi\ansicpg1252\cocoartf1504\cocoasubrtf840
 {\fonttbl\f0\fswiss\fcharset0 Helvetica;\f1\fmodern\fcharset0 Courier;}
 {\colortbl;\red255\green255\blue255;}
-\paperw11900\paperh16840\margl1440\margr1440\vieww20440\viewh21820\viewkind0
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww20440\viewh16500\viewkind0
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
 \f0\fs24 \cf0 \ul \ulc0 Jan 2020 status\ulnone \
 I have now implemented special_fftconvolve in pure C code, and have implemented caching of the H matrices (though that does require a 
 \b lot
 \b0  of RAM, and is probably impractical for real-world scenarios with large numbers of z planes).\
-\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
-\cf0 I re-remembered that on my mac pro, the FFT backend is MKL, which runs multithreaded (and deadlocks with itself and with Parallel()) unless I disable MKL threading! I have now disabled it again.\
-\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
-\cf0 \
+I re-remembered that on my mac pro, the FFT backend is MKL, which runs multithreaded (and deadlocks with itself and with Parallel()) unless I disable MKL threading! I have now disabled it again.\
+\
 \ul Code run times\ulnone \
 Command-line parameters are for lf_performance_analysis.py). All times are on Mac Pro.\
 Note that I use a different image size for the \'91batch\'92 runs, so times can\'92t be directly compared\
@@ -28,7 +27,14 @@ profile-new-batch: Batch of 30 video frames:	406s (62% in special_fftconvolve, 1
 profile-new-batch2: Batch of 30 video frames, cached H matrices:	334s (75% in special_fftconvolve)\
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
 \cf0 \
-\ul Summary\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
+
+\i \cf0 What I measure on macbook air is 107s new code, of which 70% in FFTW and mmap, which is fairly consistent with what I had on the mac pro (slightly slower)\
+However, the old code takes 403s, which is insanely slow (even with FFTW). Could it be an issue of the cache size on the Air?
+\i0 \
+\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
+\cf0 \ul Summary\
 \ulnone - My best-case scenario is now 11x faster than the original naive code (single threaded). With 8 threads, it is 17x faster. \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
 
@@ -40,8 +46,7 @@ profile-new-batch2: Batch of 30 video frames, cached H matrices:	334s (75% in sp
 - Batch processing is somewhat worth it with cached H matrices, but really comes into its own 
 \i without
 \i0  caching, where we can get >7x speedup if we batch process. Effectively we are amortising ~70s of FFTs across an additional time of ~11s per frame.\
-\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
-\cf0 - Even in the cached scenario, I am still getting (slight) performance gains with a batch size of 30 or more. \
+- Even in the cached scenario, I am still getting (slight) performance gains with a batch size of 30 or more. \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
 
 \b \cf0 \

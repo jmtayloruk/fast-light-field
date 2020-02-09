@@ -132,7 +132,7 @@ def special_fftconvolve_part1(in1, bb, aa, Nnum, in2Shape, partial=False):
 
 def special_fftconvolve_part3b(fab, fshape, fslice, s1):
     assert(len(fab.shape) == 2)
-    ret = myfft.myIFFT2(fab, fshape)[fslice].copy()    # TODO: what was the purpose of the copy() here? Is it necessary? Perhaps if fslice does something nontrivial, it makes the result compact? But even if so, is that important?
+    ret = myfft.myIFFT2(fab, fshape)[fslice].copy()    # TODO: what was the purpose of the copy() here? I think I have just copied this from the fftconvolve source code. Perhaps if fslice does something nontrivial, it makes the result compact..?
     return _centered(ret, s1)
 
 def special_fftconvolve_part3(fab, fshape, fslice, s1):

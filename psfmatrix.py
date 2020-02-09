@@ -4,7 +4,7 @@ from jutils import tqdm_alias as tqdm
 import myfft
 
 class HMatrix:
-    def __init__(self, HPathFormat, HtPathFormat, HReducedShape, numZ=None, zStart=0):
+    def __init__(self, HPathFormat, HtPathFormat, HReducedShape, numZ=None, zStart=0, cacheMMap=True, cacheH=False):
         self.HPathFormat = HPathFormat
         self.HtPathFormat = HtPathFormat
         self.HReducedShape = HReducedShape   # Same for Ht
@@ -13,18 +13,31 @@ class HMatrix:
         else:
             self.numZ = len(HReducedShape)
         self.zStart = zStart
+        self.cacheH = cacheH
         self.Hcache = dict()
         self.cacheHits = 0
         self.cacheMisses = 0
         self.cacheSize = 0
+        self.cacheMMap = cacheMMap
+        self.mappedH = dict()
+        self.mappedHt = dict()
   
     def Hcc(self, cc, useHt):
         if useHt:
+            if (self.cacheMMap and (str(cc) in self.mappedHt)):
+                return self.mappedHt[str(cc)]
             pathFormat = self.HtPathFormat
         else:
+            if (self.cacheMMap and (str(cc) in self.mappedH)):
+                return self.mappedH[str(cc)]
             pathFormat = self.HPathFormat
         # Note we need to cast to tuple for safety - strange errors seem to occur if we pass a numpy array instead
         result = np.memmap(pathFormat.format(z=cc+self.zStart), dtype='float32', mode='r', shape=tuple(self.HReducedShape[cc+self.zStart]))
+        if self.cacheMMap:
+            if useHt:
+                self.mappedHt[str(cc)] = result
+            else:
+                self.mappedH[str(cc)] = result
         return result
 
     def fH_uncached(self, cc, bb, aa, useHt, transposePSF, fshape):
@@ -35,14 +48,15 @@ class HMatrix:
     
     def fH(self, cc, bb, aa, useHt, transposePSF, fshape):
         key = '%d,%d,%d,%d,%d'%(cc, bb, aa, int(useHt), int(transposePSF))
-        if not key in self.Hcache:
-            result = self.fH_uncached(cc, bb, aa, useHt, transposePSF, fshape)
+        if (self.cacheH and key in self.Hcache):
+            self.cacheHits += 1
+            return self.Hcache[key]
+        result = self.fH_uncached(cc, bb, aa, useHt, transposePSF, fshape)
+        if self.cacheH:
             self.Hcache[key] = result
             self.cacheSize += result.nbytes
             self.cacheMisses += 1
-        else:
-            self.cacheHits += 1
-        return self.Hcache[key]
+        return result
     
     def ClearCache(self):
         self.Hcache.clear()
@@ -93,6 +107,7 @@ def LoadRawMatrixData(matPath, forceRegeneration = False):
             hReducedShape.append(HCC.shape)
             a = np.memmap(hPathFormat.format(z=cc), dtype='float32', mode='w+', shape=HCC.shape)
             a[:,:,:,:] = HCC[:,:,:,:]
+            a.flush()
             del a
         
         print('Load Ht')
@@ -103,6 +118,7 @@ def LoadRawMatrixData(matPath, forceRegeneration = False):
             htReducedShape.append(HtCC.shape)
             a = np.memmap(htPathFormat.format(z=cc), dtype='float32', mode='w+', shape=HtCC.shape)
             a[:,:,:,:] = HtCC[:,:,:,:]
+            a.flush()
             del a
 
     np.save(mmapPath+'/HReducedShape.npy', hReducedShape)
