@@ -134,13 +134,17 @@ if __name__ == "__main__":
     else:
         (_H, _Ht, _CAindex, hPathFormat, htPathFormat, hReducedShape, htReducedShape) = psfmatrix.LoadRawMatrixData(matPath)
     cacheH = ('cache-H' in sys.argv)
-    if ('smaller-matrix' in sys.argv):
+    if ('smaller-H' in sys.argv):
         # This matrix is small enough to allow matrix caching (for backprojection only) with 8GB of RAM available
         # Note that it does not affect the 'old' code, which uses the full PSF regardless
         hMatrix = psfmatrix.LoadMatrix(matPath, numZ=16, cacheH=cacheH)
     else:
         hMatrix = psfmatrix.LoadMatrix(matPath, cacheH=cacheH)
+
     inputImage = lfimage.LoadLightFieldTiff('Data/02_Rectified/exampleData/20131219WORM2_small_full_neg_X1_N15_cropped_uncompressed.tif')
+    if ('smaller-image' in sys.argv):
+        inputImage = inputImage[0:20*15,0:15*15]
+
     inputImage_x30 = np.tile(inputImage[np.newaxis,:,:], (30,1,1))
     inputImage_x10 = inputImage_x30[0:10]
 
