@@ -9,6 +9,7 @@ import psfmatrix, lfimage
 import projector
 import special_fftconvolve as special
 import jutils as util
+import py_symmetry as jps
 
 # It has been suggested that low-level threading does not interact well with the joblib Parallel feature.
 # Certainly that matches my experience.
@@ -22,7 +23,7 @@ os.environ['MKL_DYNAMIC'] = 'FALSE'
 # This code uses Parallel() to run multithreaded for speed
 #########################################################################        
 
-def BackwardProjectACC(hMatrix, projection, planes=None, numjobs=multiprocessing.cpu_count(), progress=tqdm, logPrint=True):
+def BackwardProjectACC(hMatrix, projection, planes=None, numjobs=multiprocessing.cpu_count(), progress=tqdm, logPrint=True, useCCode=True):
     singleJob = (len(projection.shape) == 2)
     if singleJob:   # Cope with both a single 2D plane and an array of multiple 2D planes to process independently
         projection = projection[np.newaxis,:,:]
@@ -34,17 +35,42 @@ def BackwardProjectACC(hMatrix, projection, planes=None, numjobs=multiprocessing
     ru1 = util.cpuTime('both')
 
     Backprojection = np.zeros((hMatrix.numZ, projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
-        
-    # Set up the work to iterate over each z plane
-    work = []
-    for cc in planes:
-        for bb in hMatrix.IterableBRange(cc):
-            work.append((cc, bb, projection, hMatrix, True))
 
-    # Run the multithreaded work
-    t0 = time.time()
-    results = Parallel(n_jobs=numjobs)\
-            (delayed(projector.ProjectForZY)(*args) for args in progress(work, desc='Back-project - z', leave=False))
+    if useCCode:
+        # Call through to my new projection code
+        pos = 0
+        results = []
+        t0 = time.time()
+        for cc in planes:
+            (fshape, fslice, s1) = special.convolutionShape(projection[0], hMatrix.PSFShape(cc), hMatrix.Nnum(cc))
+            proj = projector.Projector(projection[0], hMatrix, cc)
+            Hcc = hMatrix.Hcc(cc, True)
+            #print('calling with', projection.shape, Hcc.shape, proj.fshape[-2], proj.fshape[-1], proj.rfshape[-2], proj.rfshape[-1], proj.xAxisMultipliers.shape, proj.yAxisMultipliers.shape)
+            t1 = time.time()
+            testResultNew2 = jps.ProjectForZ(projection, Hcc, hMatrix.Nnum(cc), \
+                                             proj.fshape[-2], proj.fshape[-1], \
+                                             proj.rfshape[-2], proj.rfshape[-1], \
+                                             proj.xAxisMultipliers, proj.yAxisMultipliers)
+            t2 = time.time()
+            #print('Took', t2-t1)
+            results.append((testResultNew2, cc, 0, 0))
+    else:
+        # Set up the work to iterate over each z plane
+        work = []
+        for cc in planes:
+            for bb in hMatrix.IterableBRange(cc):
+                work.append((cc, bb, projection, hMatrix, True, useCCode))
+
+        # Run the multithreaded work
+        t0 = time.time()
+        if True:
+            results = Parallel(n_jobs=numjobs)\
+                    (delayed(projector.ProjectForZY)(*args) for args in progress(work, desc='Back-project - z', leave=False))
+        else:
+            print("Running without the parallel library at all")
+            results = []
+            for args in work:
+                results.append(projector.ProjectForZY(*args))
     ru2 = util.cpuTime('both')
 
     # Gather together and sum the results for each z plane
@@ -169,7 +195,7 @@ if __name__ == "__main__":
     
     if ('basic' in sys.argv) or ('full' in sys.argv):
 	    # Run my back-projection code (single-threaded) on a cropped version of Prevedel's data
-        Htf = BackwardProjectACC(hMatrix, inputImage, planes=None, logPrint=False)
+        Htf = BackwardProjectACC(hMatrix, inputImage, planes=None, numjobs=1, logPrint=False)
         if True:
             definitive = tifffile.imread('Data/03_Reconstructed/exampleData/definitive_worm_crop_X15_backproject.tif')
             definitive = np.transpose(definitive, axes=(0,2,1))

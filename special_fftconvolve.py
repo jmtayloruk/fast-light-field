@@ -117,7 +117,7 @@ def convolutionShape(in1, in2Shape, Nnum):
         # Speed up FFT by padding to optimal size for FFTPACK
         fshape = [_next_regular(int(d)) for d in shape]
     else:
-        fshape = [int(np.ceil(d/float(Nnum)))*Nnum for d in shape]
+        fshape = [int(np.ceil(d/float(Nnum)))*Nnum for d in shape]   # TODO: comment why I need this to be a multiple of Nnum. It may well be because of my tiling tricks?
     fslice = tuple([slice(0, int(sz)) for sz in shape])
     return (fshape, fslice, s1)
     
@@ -136,7 +136,8 @@ def special_fftconvolve_part3b(fab, fshape, fslice, s1):
     return _centered(ret, s1)
 
 def special_fftconvolve_part3(fab, fshape, fslice, s1):
-    # TODO: This gymnastics is probably unnecessary now I call ifft2 rather than fftn
+    # TODO: This gymnastics is probably unnecessary now I call ifft2 rather than fftn,
+    # although if I literally just do it in one call then it fails. I would need to work out why that is - it seems to be the [fslice] bit in part3b
     if (len(fab.shape) == 2):
         return special_fftconvolve_part3b(fab, fshape, fslice, s1)
     else:
@@ -167,9 +168,18 @@ def special_fftconvolve(in1, bb, aa, Nnum, in2Shape, accum, fb):
 ################################
 # This next function is an experimental work in progress, trying to cover more of the performance-sensitive bits with fast C code
 def special_fftconvolve2(in1, bb, aa, Nnum, in2Shape, accum, fb_unmirrored, validWidth, mirrorXMultiplier):
-    (fa_partial, fshape) = special_fftconvolve_part1(in1, bb, aa, Nnum, in2Shape, partial=True)
+    if True:
+        # Old code
+        (fa_partial, fshape) = special_fftconvolve_part1(in1, bb, aa, Nnum, in2Shape, partial=True)
+    else:
+        # New code using my C implementation of part1
+        assert((len(in1.shape) == 2) or (len(in1.shape) == 3))
+        assert(len(in2Shape) == 2)
+        (fshape, _, _) = convolutionShape(in1, in2Shape, Nnum)
+        expandXMultiplier = np.exp(-1j * aa * 2*np.pi / fshape[-1] * np.arange(int(fshape[-1]/2+1), dtype='complex64'))
+        fa_partial = jps.special_fftconvolve_part1(in1, bb, aa, Nnum, fshape[-2], fshape[-1], expandXMultiplier)
+
     assert(fa_partial.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
     assert(fb_unmirrored.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
-    expandMultiplier = expand2Multiplier(bb, fshape, fshape)
-    return jps.special_fftconvolve(accum, fa_partial, fb_unmirrored, expandMultiplier, validWidth, mirrorXMultiplier)
-
+    expandYMultiplier = expand2Multiplier(bb, fshape, fshape)
+    return jps.special_fftconvolve(accum, fa_partial, fb_unmirrored, expandYMultiplier, validWidth, mirrorXMultiplier)

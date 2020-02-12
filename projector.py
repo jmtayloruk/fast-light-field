@@ -57,6 +57,7 @@ class Projector(object):
         self.fslice = tuple([slice(0, int(sz)) for sz in shape])
         
         # rfslice: slicing tuple to crop down full fft array to the shape that would be output from rfftn
+        self.rfshape = (self.fshape[0], int(self.fshape[1]/2)+1)
         self.rfslice = (slice(0,self.fshape[0]), slice(0,int(self.fshape[1]/2)+1))
         
         # Precalculate arrays that are needed as part of the process of converting from FFT(H) to FFT(mirrorImage(H))
@@ -64,6 +65,16 @@ class Projector(object):
         self.mirrorXMultiplier = np.exp((1j * (1+padLength) * 2*np.pi / self.fshape[0]) * np.arange(self.fshape[0])).astype('complex64')
         padLength = self.fshape[1] - self.s2[1]
         self.mirrorYMultiplier = np.exp((1j * (1+padLength) * 2*np.pi / self.fshape[1]) * np.arange(self.fshape[1])).astype('complex64')
+
+        # Precalculate various arrays used as lookups by my c code
+        expandXMultiplier = np.empty((self.Nnum, self.fshape[-1]), dtype='complex64')
+        for a in range(self.Nnum):
+            expandXMultiplier[a] = np.exp(-1j * a * 2*np.pi / self.fshape[-1] * np.arange(self.fshape[-1], dtype='complex64'))
+        expandYMultiplier = np.empty((self.Nnum, self.fshape[-2]), dtype='complex64')
+        for b in range(self.Nnum):
+            expandYMultiplier[b] = np.exp(-1j * b * 2*np.pi / self.fshape[-2] * np.arange(self.fshape[-2],dtype='complex64'))
+        self.xAxisMultipliers = np.append(self.mirrorYMultiplier[np.newaxis,:], expandXMultiplier, axis=0)
+        self.yAxisMultipliers = np.array([expandYMultiplier, expandYMultiplier * self.mirrorXMultiplier])
 
         return
     
@@ -74,7 +85,7 @@ class Projector(object):
     #########################################################################
     def MirrorXArray(self, fHtsFull):
         # Utility function to convert the FFT of a PSF to the FFT of the X mirror of that same PSF
-        if False:
+        if True:
             # Old code that does this in pure python
             fHtsFull = fHtsFull.conj() * self.mirrorXMultiplier[:,np.newaxis]
             fHtsFull[:,1::] = fHtsFull[:,1::][:,::-1]
@@ -85,7 +96,7 @@ class Projector(object):
 
     def MirrorYArray(self, fHtsFull):
         # Utility function to convert the FFT of a PSF to the FFT of the Y mirror of that same PSF
-        if False:
+        if True:
             # Old code that does this in pure python
             fHtsFull = fHtsFull.conj() * self.mirrorYMultiplier
             fHtsFull[1::] = fHtsFull[1::][::-1]
@@ -96,7 +107,7 @@ class Projector(object):
         
     def convolvePart3(self, projection, bb, aa, fHtsFull, mirrorX, accum):
         cpu0 = util.cpuTime('both')
-        if True:
+        if False:
             accum = special.special_fftconvolve2(projection,bb,aa,self.Nnum,self.s2,accum,fHtsFull,int(self.fshape[1]/2)+1,None)
         else:
             # Old pure-python code still here for reference, for now
@@ -104,20 +115,25 @@ class Projector(object):
         self.cpuTime += util.cpuTime('both')-cpu0
         if mirrorX:
             cpu0 = util.cpuTime('both')
-            if True:
+            if False:
                 accum = special.special_fftconvolve2(projection,self.Nnum-bb-1,aa,self.Nnum,self.s2,accum,fHtsFull,int(self.fshape[1]/2)+1,self.mirrorXMultiplier)
             else:
                 # Old pure-python code still here for reference, for now
-                fHtsMirror = self.MirrorXArray(fHtsFull)[self.rfslice]
-                accum = special.special_fftconvolve(projection,self.Nnum-bb-1,aa,self.Nnum,self.s2,accum,fb=fHtsMirror)
+                fHtsMirror = self.MirrorXArray(fHtsFull)
+                accum = special.special_fftconvolve(projection,self.Nnum-bb-1,aa,self.Nnum,self.s2,accum,fb=fHtsMirror[self.rfslice])
             self.cpuTime += util.cpuTime('both')-cpu0
         return accum
 
     def convolvePart2(self, projection, bb, aa, fHtsFull, mirrorY, mirrorX, accum):
-        accum = self.convolvePart3(projection,bb,aa,fHtsFull,mirrorX,accum)
-        if mirrorY:
-            fHtsFull = self.MirrorYArray(fHtsFull)
-            accum = self.convolvePart3(projection,bb,self.Nnum-aa-1,fHtsFull,mirrorX,accum)
+        if self.useCCodeForConvolve:
+            # New c code, currently being tested
+            accum = jps.Convolve(projection, fHtsFull, bb, aa, self.Nnum, self.xAxisMultipliers, self.yAxisMultipliers, accum)
+        else:
+            # Old python code
+            accum = self.convolvePart3(projection,bb,aa,fHtsFull,mirrorX,accum)
+            if mirrorY:
+                fHtsFull = self.MirrorYArray(fHtsFull)
+                accum = self.convolvePart3(projection,bb,self.Nnum-aa-1,fHtsFull,mirrorX,accum)
         return accum
 
     def convolve(self, projection, hMatrix, cc, bb, aa, backwards, accum):
@@ -158,16 +174,19 @@ class Projector(object):
 # These are the functions I expect external code to call.
 #########################################################################        
     
-def ProjectForZY(cc, bb, source, hMatrix, backwards):
+def ProjectForZY(cc, bb, source, hMatrix, backwards, useCCode=True):
     assert(source.dtype == np.float32)   # Keep an eye out for if we are provided with double-precision inputs
     f = open('perf_diags/%d_%d.txt'%(cc,bb), "w")
     t1 = time.time()
     singleJob = (len(source.shape) == 2)
     if singleJob:   # Cope with both a single 2D plane and an array of multiple 2D planes to process independently
         source = source[np.newaxis,:,:]
-    result = None
     projector = Projector(source[0], hMatrix, cc)
-    projector.cpuTime = np.zeros(2)
+    projector.useCCodeForConvolve = useCCode
+    if singleJob:
+        result = np.zeros((1, projector.rfshape[0], projector.rfshape[1]), dtype='complex64')
+    else:
+        result = np.zeros((source.shape[0], projector.rfshape[0], projector.rfshape[1]), dtype='complex64')
     for aa in range(bb,int((hMatrix.Nnum(cc)+1)/2)):
         result = projector.convolve(source, hMatrix, cc, bb, aa, backwards, result)
     t2 = time.time()
@@ -179,10 +198,10 @@ def ProjectForZY(cc, bb, source, hMatrix, backwards):
     else:
         return (np.array(result), cc, bb, t2-t1)
 
-def ProjectForZ(hMatrix, backwards, cc, source):
+def ProjectForZ(hMatrix, backwards, cc, source, useCCode=True, progress=tqdm):
     result = None
-    for bb in tqdm(hMatrix.IterableBRange(cc), leave=False, desc='Project - y'):
-        (thisResult, _, _, _) = ProjectForZY(cc, bb, source, hMatrix, backwards)
+    for bb in progress(hMatrix.IterableBRange(cc), leave=False, desc='Project - y'):
+        (thisResult, _, _, _) = ProjectForZY(cc, bb, source, hMatrix, backwards, useCCode)
         if (result is None):
             result = thisResult
         else:

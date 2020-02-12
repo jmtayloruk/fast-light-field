@@ -62,12 +62,17 @@ class HMatrix:
         self.Hcache.clear()
     
     def IterableBRange(self, cc):
+        # TODO: surely the b range that we iterate over will not in fact depend on which z plane we are looking at!?
         return range(self.HReducedShape[cc+self.zStart][0])
     
     def PSFShape(self, cc):
         return (self.HReducedShape[cc+self.zStart][2], self.HReducedShape[cc+self.zStart][3])
     
     def Nnum(self, cc):
+        # TODO: I am not even sure why this formula works.
+        # It is a strange and convoluted way of obtaining the result.
+        # Nnum is a constant for a given PSF, it does not depend on cc!
+        # I have no idea why I have coded it this way. It does seem to return the correct answer though!
         return self.HReducedShape[cc+self.zStart][0]*2-1
 
 def GetPathFormats(matPath):

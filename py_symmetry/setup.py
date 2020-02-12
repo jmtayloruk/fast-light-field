@@ -24,9 +24,9 @@ if (result != 0):
 BUILD_MODULES = []
 
 py_symmetry = Extension('py_symmetry',
-	include_dirs = ['/usr/local/include', numpy.get_include()],
+	include_dirs = ['fftw-3.3.8/.libs', '/usr/local/include', numpy.get_include()],
 	sources = ['py_symmetry.cpp', 'common/jPythonArray.cpp', 'common/PIVImageWindow.cpp', 'common/jPythonCommon.cpp', 'common/jAssert.cpp', 'common/DebugPrintf_Unix.cpp'],
-	extra_link_args = ARCH,
+	extra_link_args = ARCH + ['-Lfftw-3.3.8/.libs', '-lfftw3f'],
 	extra_compile_args = ['-O4', '-mssse3'] + ARCH
 )
 BUILD_MODULES.append(py_symmetry)
