@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 
 import jutils as util
 import lfdeconv, psfmatrix, lfimage, projector
+import py_symmetry as jps
 
 def AnalyzeTestResults(numJobsUsed):
     # Long function which analyses the data from the run that just happened
@@ -218,7 +219,9 @@ if __name__ == "__main__":
 
     if ('profile-new' in sys.argv):
         # Profile my code (single-threaded)
+        jps.ResetStats()
         myStats = cProfile.run('temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, numjobs=1)', 'mystats')
+        jps.PrintStats()
         p = pstats.Stats('mystats')
         print('hMatrix hits {0} misses {1}. Cache size {2}GB'.format(hMatrix.cacheHits, hMatrix.cacheMisses, hMatrix.cacheSize/1e9))
         p.strip_dirs().sort_stats('cumulative').print_stats(40)
@@ -246,14 +249,18 @@ if __name__ == "__main__":
 
     if ('profile-new-batch' in sys.argv):
         # Profile my code (single-threaded) in the sort of scenario I would expect to run it in when batch-processing video
+        jps.ResetStats()
         myStats = cProfile.run('temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage_x30, planes=planesToProcess, numjobs=1)', 'mystats')
+        jps.PrintStats()
         p = pstats.Stats('mystats')
         print('hMatrix hits {0} misses {1}. Cache size {2}GB'.format(hMatrix.cacheHits, hMatrix.cacheMisses, hMatrix.cacheSize/1e9))
         p.strip_dirs().sort_stats('cumulative').print_stats(40)
 
     if ('profile-new-batch2' in sys.argv):
         # Repeat again (with cache already primed)
+        jps.ResetStats()
         myStats = cProfile.run('temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage_x30, planes=planesToProcess, numjobs=1)', 'mystats')
+        jps.PrintStats()
         p = pstats.Stats('mystats')
         print('hMatrix hits {0} misses {1}. Cache size {2}GB'.format(hMatrix.cacheHits, hMatrix.cacheMisses, hMatrix.cacheSize/1e9))
         p.strip_dirs().sort_stats('cumulative').print_stats(40)

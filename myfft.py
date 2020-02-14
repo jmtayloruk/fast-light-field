@@ -40,4 +40,8 @@ else:
         return pyfftw.interfaces.scipy_fftpack.fft2(mat, shape)
     
     def myIFFT2(mat, shape):
+        # Note: supplying threads=8 does not seem to help - it actually seems to *increase* run time by about 6x.
+        # I have not tried to understand why that is. Also specifying FFTW_ESTIMATE does not seem to change anything,
+        # but I don't feel I have *definitely* ruled out it being some sort of planning issue...
+        # TODO: I suspect I don't do anything clever with 'shape', and should probably not accept it as a parameter since my C code wouldn't know what to do with it.
         return pyfftw.interfaces.numpy_fft.irfft2(mat, shape)

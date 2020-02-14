@@ -15,6 +15,7 @@
 		FB62DF1D23F313C100DCC6BB /* libfftw3f.a in Frameworks */ = {isa = PBXBuildFile; fileRef = FB62DF1C23F313C100DCC6BB /* libfftw3f.a */; };
 		FB62DF1F23F313CB00DCC6BB /* jAssert.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FB62DF1E23F313CB00DCC6BB /* jAssert.cpp */; };
 		FB62DF2123F313DC00DCC6BB /* DebugPrintf_Unix.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FB62DF2023F313DC00DCC6BB /* DebugPrintf_Unix.cpp */; };
+		FB62DF2823F5AC7A00DCC6BB /* libfftw3f_threads.a in Frameworks */ = {isa = PBXBuildFile; fileRef = FB62DF2723F5AC7A00DCC6BB /* libfftw3f_threads.a */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -42,6 +43,7 @@
 		FB62DF1C23F313C100DCC6BB /* libfftw3f.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libfftw3f.a; path = "../../fftw-3.3.8/.libs/libfftw3f.a"; sourceTree = "<group>"; };
 		FB62DF1E23F313CB00DCC6BB /* jAssert.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = jAssert.cpp; path = ../../common/jAssert.cpp; sourceTree = "<group>"; };
 		FB62DF2023F313DC00DCC6BB /* DebugPrintf_Unix.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = DebugPrintf_Unix.cpp; path = ../../common/DebugPrintf_Unix.cpp; sourceTree = "<group>"; };
+		FB62DF2723F5AC7A00DCC6BB /* libfftw3f_threads.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libfftw3f_threads.a; path = "../../fftw-3.3.8/threads/.libs/libfftw3f_threads.a"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -50,6 +52,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				FB62DF1B23F3132F00DCC6BB /* libpython3.5m.a in Frameworks */,
+				FB62DF2823F5AC7A00DCC6BB /* libfftw3f_threads.a in Frameworks */,
 				FB62DF1D23F313C100DCC6BB /* libfftw3f.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -81,6 +84,7 @@
 				FB62DF0F23F310C900DCC6BB /* py_symmetry.cpp */,
 				FB62DF1A23F3132F00DCC6BB /* libpython3.5m.a */,
 				FB62DF1C23F313C100DCC6BB /* libfftw3f.a */,
+				FB62DF2723F5AC7A00DCC6BB /* libfftw3f_threads.a */,
 			);
 			path = "test-py-symmetry";
 			sourceTree = "<group>";
@@ -272,6 +276,7 @@
 					"$(inherited)",
 					/Users/jonny/anaconda/lib,
 					"/Volumes/Development/light-field-flow/py_symmetry/fftw-3.3.8/.libs",
+					"/Volumes/Development/light-field-flow/py_symmetry/fftw-3.3.8/threads/.libs",
 				);
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -284,6 +289,7 @@
 					"$(inherited)",
 					/Users/jonny/anaconda/lib,
 					"/Volumes/Development/light-field-flow/py_symmetry/fftw-3.3.8/.libs",
+					"/Volumes/Development/light-field-flow/py_symmetry/fftw-3.3.8/threads/.libs",
 				);
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};

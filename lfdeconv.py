@@ -45,15 +45,20 @@ def BackwardProjectACC(hMatrix, projection, planes=None, numjobs=multiprocessing
             (fshape, fslice, s1) = special.convolutionShape(projection[0], hMatrix.PSFShape(cc), hMatrix.Nnum(cc))
             proj = projector.Projector(projection[0], hMatrix, cc)
             Hcc = hMatrix.Hcc(cc, True)
-            #print('calling with', projection.shape, Hcc.shape, proj.fshape[-2], proj.fshape[-1], proj.rfshape[-2], proj.rfshape[-1], proj.xAxisMultipliers.shape, proj.yAxisMultipliers.shape)
             t1 = time.time()
-            testResultNew2 = jps.ProjectForZ(projection, Hcc, hMatrix.Nnum(cc), \
+            fourierZPlane = jps.ProjectForZ(projection, Hcc, hMatrix.Nnum(cc), \
                                              proj.fshape[-2], proj.fshape[-1], \
                                              proj.rfshape[-2], proj.rfshape[-1], \
                                              proj.xAxisMultipliers, proj.yAxisMultipliers)
             t2 = time.time()
             #print('Took', t2-t1)
-            results.append((testResultNew2, cc, 0, 0))
+
+
+            # Compute the FFT for each z plane
+            (fshape, fslice, s1) = special.convolutionShape(projection, hMatrix.PSFShape(cc), hMatrix.Nnum(cc))
+            Backprojection[cc] = special.special_fftconvolve_part3(fourierZPlane, fshape, fslice, s1, useCCode=True)
+        elapsedTime = 0
+        ru2 = util.cpuTime('both')
     else:
         # Set up the work to iterate over each z plane
         work = []
@@ -71,26 +76,26 @@ def BackwardProjectACC(hMatrix, projection, planes=None, numjobs=multiprocessing
             results = []
             for args in work:
                 results.append(projector.ProjectForZY(*args))
-    ru2 = util.cpuTime('both')
+        ru2 = util.cpuTime('both')
 
-    # Gather together and sum the results for each z plane
-    t1 = time.time()
-    fourierZPlanes = [None]*hMatrix.numZ
-    elapsedTime = 0
-    for (result, cc, bb, t) in results:
-        elapsedTime += t
-        if fourierZPlanes[cc] is None:
-            fourierZPlanes[cc] = result
-        else:
-            fourierZPlanes[cc] += result
-    
-    # Compute the FFT for each z plane
-    for cc in planes:
-        (fshape, fslice, s1) = special.convolutionShape(projection, hMatrix.PSFShape(cc), hMatrix.Nnum(cc))
-        Backprojection[cc] = special.special_fftconvolve_part3(fourierZPlanes[cc], fshape, fslice, s1)        
+        # Gather together and sum the results for each z plane
+        t1 = time.time()
+        fourierZPlanes = [None]*hMatrix.numZ
+        elapsedTime = 0
+        for (result, cc, bb, t) in results:
+            elapsedTime += t
+            if fourierZPlanes[cc] is None:
+                fourierZPlanes[cc] = result
+            else:
+                fourierZPlanes[cc] += result
+        
+        # Compute the FFT for each z plane
+        for cc in planes:
+            (fshape, fslice, s1) = special.convolutionShape(projection, hMatrix.PSFShape(cc), hMatrix.Nnum(cc))
+            Backprojection[cc] = special.special_fftconvolve_part3(fourierZPlanes[cc], fshape, fslice, s1)        
     t2 = time.time()
     assert(Backprojection.dtype == np.float32)   # Keep an eye out for any reversion to double-precision
-   
+
     # Save some diagnostics
     if logPrint:
         print('Parallel work elapsed wallclock time %f'%(t1-t0))

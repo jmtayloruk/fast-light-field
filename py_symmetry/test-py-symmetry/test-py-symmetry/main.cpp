@@ -12,10 +12,7 @@ double GetTime(void);
 int main(int argc, const char * argv[])
 {
     void *TestMe(void);
-    double t1 = GetTime();
     TestMe();
-    double t2 = GetTime();
-    printf("Took %lf\n", t2-t1);
     
     return 0;
 }

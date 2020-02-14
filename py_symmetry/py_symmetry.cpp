@@ -8,6 +8,14 @@
 
 // Note: the TESTING macro is set when we build within Xcode, but not when we build using setup.py
 
+const int kMaxThreads = 16;
+const int gNumThreadsToUse = 8;
+const int fftPlanMethod = FFTW_MEASURE;
+/* TODO: decide which planning method to use.
+    FFTW_ESTIMATE took 5.46
+    FFTW_MEASURE took 5.01   (after 2s the first time, and <1ms on the later times)
+    FFTW_PATIENT took 4.58   (after 29s the first time) */
+
 template<class TYPE> void SetImageWindowForPythonWindow(ImageWindow<TYPE> &imageWindow, JPythonArray2D<TYPE> &pythonWindow)
 {
     imageWindow.baseAddr = pythonWindow.Data();
@@ -29,6 +37,48 @@ enum
     kYAxisMultiplierNoMirror = 0,   /* expandMultiplier[bb][y] */
     kYAxisMultiplierMirrorX         /* expandMultiplier[bb][y] * mirrorXMultiplier[y] */
 };
+
+double GetTime(void)
+{
+    // Standard BSD function
+    struct timeval t;
+    struct timezone tz;
+    gettimeofday(&t, &tz);
+    return t.tv_sec + t.tv_usec * 1e-6;
+}
+
+void PauseFor(double secs)
+{
+    // Block for the specified number of seconds before returning
+    struct timeval timeout;
+    timeout.tv_sec = (int)secs;
+    timeout.tv_usec = (int)((secs - (int)secs) * 1000000);
+    select(0, NULL, NULL, NULL, &timeout);
+}
+
+double gFFTWPlanTime = 0, gFFTWInitializeTime1 = 0, gFFTWInitializeTime2 = 0, gFFTExecuteTime = 0, gFFTWTime2 = 0, gTotalHTime = 0, gSpecialTime = 0, gMirrorTime = 0;
+
+extern "C" PyObject *PrintStats(PyObject *self, PyObject *args)
+{
+    double total = gTotalHTime + gSpecialTime + gMirrorTime;
+    printf("Times: Total H %.2lf (plan %.2lf, initialize %.2lf+%.2lf, execute %.2lf). Special %.2lf (of which FFT %.2lf). Mirror %.2lf\n", gTotalHTime, gFFTWPlanTime, gFFTWInitializeTime1, gFFTWInitializeTime2, gFFTExecuteTime, gSpecialTime, gFFTWTime2, gMirrorTime);
+    printf("(plan %.1lf%%, initialize %.1lf%%, execute %.1lf%%)\n", gFFTWPlanTime/gTotalHTime*100, (gFFTWInitializeTime1+gFFTWInitializeTime2)/gTotalHTime*100, gFFTExecuteTime/gTotalHTime*100);
+    printf("(H %.1lf%%, special %.1lf%%)\n", gTotalHTime/total*100, gSpecialTime/total*100);
+    Py_RETURN_NONE;
+}
+
+extern "C" PyObject *ResetStats(PyObject *self, PyObject *args)
+{
+    gFFTWPlanTime = 0;
+    gFFTWInitializeTime1 = 0;
+    gFFTWInitializeTime2 = 0;
+    gFFTExecuteTime = 0;
+    gFFTWTime2 = 0;
+    gSpecialTime = 0;
+    gTotalHTime = 0;
+    gMirrorTime = 0;
+    Py_RETURN_NONE;
+}
 
 PyArrayObject *MirrorYArray(JPythonArray2D<TYPE> fHtsFull, JPythonArray1D<TYPE> mirrorYMultiplier)
 {
@@ -143,25 +193,16 @@ void CalculateRowMirror(TYPE *ac, const TYPE *fap, const TYPE *fbu, const TYPE e
     }
 }
 
-double GetTime(void)
-{
-    // Standard BSD function
-    struct timeval t;
-    struct timezone tz;
-    gettimeofday(&t, &tz);
-    return t.tv_sec + t.tv_usec * 1e-6;
-}
-
-double gFFTWTime = 0, gFFTWTime2 = 0;
-
-void special_fftconvolve_part1(JPythonArray2D<RTYPE> inputArray, JPythonArray2D<TYPE> result, JPythonArray1D<TYPE> expandXMultiplier, int bb, int aa, int Nnum, int fullYSize, int fullXSize)
+void special_fftconvolve_part1(JPythonArray2D<RTYPE> inputArray, JPythonArray2D<TYPE> result, JPythonArray1D<TYPE> expandXMultiplier, int bb, int aa, int Nnum, int fullYSize, int fullXSize, fftwf_plan inPlan = NULL)
 {
     // Select the pixels indexed by bb,aa, and pad to the size we need based on what we will eventually tile up to (fullYSize x fullXSize)
     npy_intp smallDims[2] = { fullYSize/Nnum, fullXSize/Nnum };
     JPythonArray2D<TYPE> fftArray(smallDims);
     
     double t1 = GetTime();
-    fftwf_plan plan = fftwf_plan_dft_2d((int)smallDims[0], (int)smallDims[1], (fftwf_complex *)fftArray.Data(), (fftwf_complex *)fftArray.Data(), FFTW_FORWARD, FFTW_ESTIMATE);     // This does need to be done before the data is initialized, especially if using FFTW_MEASURE
+    fftwf_plan planToUse = inPlan;
+    if (planToUse == NULL)
+        planToUse = fftwf_plan_dft_2d((int)smallDims[0], (int)smallDims[1], (fftwf_complex *)fftArray.Data(), (fftwf_complex *)fftArray.Data(), FFTW_FORWARD, fftPlanMethod);     // This does need to be done before the data is initialized, especially if using FFTW_MEASURE
     double t2 = GetTime();
     fftArray.SetZero();
 
@@ -171,10 +212,17 @@ void special_fftconvolve_part1(JPythonArray2D<RTYPE> inputArray, JPythonArray2D<
     double t3 = GetTime();
 
     // Compute the full 2D FFT (i.e. not just the RFFT)
-    fftwf_execute(plan);
+    if (inPlan != NULL)
+    {
+        // Adapt it to our data
+        fftwf_execute_dft(planToUse, (fftwf_complex *)fftArray.Data(), (fftwf_complex *)fftArray.Data());
+    }
+    else
+        fftwf_execute(planToUse);
     double t4 = GetTime();
     gFFTWTime2 += t4-t3;
-    fftwf_destroy_plan(plan);
+    if (inPlan == NULL)
+        fftwf_destroy_plan(planToUse);
     double t5 = GetTime();
 
     // Tile the result up to the length that is implied by expandXMultiplier (using that length saves us figuring out the length for ourselves)
@@ -205,8 +253,20 @@ JPythonArray3D<TYPE> PartialFourierOfInputArray(JPythonArray3D<RTYPE> inputArray
     return result;
 }
 
+JPythonArray2D<TYPE> PartialFourierOfInputArray(JPythonArray2D<RTYPE> inputArray, int bb, int aa, int fullYSize, int fullXSize, int Nnum, JPythonArray1D<TYPE> expandXMultiplier, fftwf_plan plan)
+{
+    // Allocate an array to hold the results (after tiling expansion along the X direction).
+    // I do not use a real python array (just my own class, allocating its own data) to avoid the potential overheads of the actual python runtime code.
+    npy_intp output_dims[2] = { fullYSize / Nnum, expandXMultiplier.Dims(0) };
+    JPythonArray2D<TYPE> result(output_dims);
+    special_fftconvolve_part1(inputArray, result, expandXMultiplier, bb, aa, Nnum, fullYSize, fullXSize, plan);
+    return result;
+}
+
 extern "C" PyObject *special_fftconvolve_part1(PyObject *self, PyObject *args)
 {
+    // TODO: I have disabled this as I have been working on the Convolve() function as a replacement,
+    // but I should reinstate these after updating them to match my recent code and API changes.
 #if 0
     // Parameters: inputArray, bb, aa, Nnum, in2Shape [asserted to be 2d], expandXMultiplier
     // Obtains fshape by calling convolutionShape, passing in2Shape
@@ -237,7 +297,7 @@ extern "C" PyObject *special_fftconvolve_part1(PyObject *self, PyObject *args)
         JPythonArray2D<RTYPE> inputArray(_inputArray);
         npy_intp output_dims[2] = { fullYSize / Nnum, expandXMultiplier.Dims(0) };
         _result = (PyArrayObject *)PyArray_EMPTY(2, output_dims, NPY_CFLOAT, 0);
-        JPythonArray2D<TYPE> result = JPythonArray2D<TYPE>(_result);
+        JPythonArray2D<TYPE> result(_result);
         special_fftconvolve_part1(inputArray, result, expandXMultiplier, bb, aa, Nnum, fullYSize, fullXSize);
     }
     return PyArray_Return(_result);
@@ -247,6 +307,8 @@ extern "C" PyObject *special_fftconvolve_part1(PyObject *self, PyObject *args)
 
 extern "C" PyObject *special_fftconvolve(PyObject *self, PyObject *args)
 {
+    // TODO: I have disabled this as I have been working on the Convolve() function as a replacement,
+    // but I should reinstate these after updating them to match my recent code and API changes.
 #if 0
     PyArrayObject *_accum, *_fa_partial, *_fb_unmirrored, *_expandMultiplier, *_mirrorXMultiplier;
     int validWidth;
@@ -313,30 +375,108 @@ extern "C" PyObject *special_fftconvolve(PyObject *self, PyObject *args)
     return NULL;
 }
 
-void ConvolvePart4(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, bool mirrorX, JPythonArray2D<TYPE> fHTsFull_unmirrored, JPythonArray2D<TYPE> xAxisMultipliers, JPythonArray2D<TYPE> yAxisMultipliers, JPythonArray3D<TYPE> accum)
+struct ThreadInfo
 {
-    // This plays the role that special_fftconvolve2 does in the python code.
-    // We take advantage of the fact that we have been passed fHTsFull, to tell us what the padded array dimensions should be for the FFT.
-    JPythonArray3D<TYPE> partialFourierOfProjection = PartialFourierOfInputArray(projection, bb, aa, fHTsFull_unmirrored.Dims(0), fHTsFull_unmirrored.Dims(1), Nnum, xAxisMultipliers[kXAxisMultiplierExpandXStart+aa]);
-    
-    // Now do the actual multiplication in Fourier space
-    double t0 = GetTime();
-    for (int i = 0; i < accum.Dims(0); i++)
+    int imageCounter;
+    double t1[kMaxThreads];
+    double t2[kMaxThreads];
+    JPythonArray3D<RTYPE> projection;
+    int bb;
+    int aa;
+    int Nnum;
+    bool mirrorX;
+    JPythonArray2D<TYPE> fHTsFull_unmirrored;
+    JPythonArray2D<TYPE> xAxisMultipliers;
+    JPythonArray2D<TYPE> yAxisMultipliers;
+    JPythonArray3D<TYPE> accum;
+    fftwf_plan plan;
+};
+
+void RunThreads(void *(*threadFunc)(void *), void *parms, int numThreadsToUse)
+{
+    pthread_t			ourThreads[kMaxThreads];
+    ALWAYS_ASSERT(numThreadsToUse <= kMaxThreads);
+    for (long i = 0; i < numThreadsToUse; i++)
+        pthread_create(&ourThreads[i], NULL, threadFunc, parms);
+    for (long i = 0; i < numThreadsToUse; i++)
+        pthread_join(ourThreads[i], NULL);
+}
+
+void *ThreadFunc(void *params)
+{
+    ThreadInfo *t = (ThreadInfo *)params;
+    JPythonArray3D<RTYPE> projection = t->projection;
+    int bb = t->bb;
+    int aa = t->aa;
+    int Nnum = t->Nnum;
+    bool mirrorX = t->mirrorX;
+    JPythonArray2D<TYPE> fHTsFull_unmirrored = t->fHTsFull_unmirrored;
+    JPythonArray2D<TYPE> xAxisMultipliers = t->xAxisMultipliers;
+    JPythonArray2D<TYPE> yAxisMultipliers = t->yAxisMultipliers;
+    JPythonArray3D<TYPE> accum = t->accum;
+    fftwf_plan plan = t->plan;
+    ALWAYS_ASSERT(plan != NULL);
+
+    int thisThreadID = 0;
+    while (1)
     {
+        int i = __sync_fetch_and_add(&t->imageCounter, 1);
+        if (i < 8)
+        {
+            thisThreadID = i;
+            t->t1[i] = GetTime();
+        }
+        if (i >= accum.Dims(0))
+            break;
+        JPythonArray2D<TYPE> partialFourierOfProjection = PartialFourierOfInputArray(projection[i], bb, aa, fHTsFull_unmirrored.Dims(0), fHTsFull_unmirrored.Dims(1), Nnum, xAxisMultipliers[kXAxisMultiplierExpandXStart+aa], plan);
         for (int y = 0; y < accum.Dims(1); y++)
         {
-            int ya = y % partialFourierOfProjection.Dims(1);
+            int ya = y % partialFourierOfProjection.Dims(0);
             // Note that the array accessors take time, so should be lifted out of CalculateRow.
             // By directly accessing the pointers, I bypass range checks and implicitly assume contiguous arrays (the latter makes a difference to speed).
             // What I'd really like to do is to profile this code and see how well it does, because there may be other things I can improve.
             if (!mirrorX)
-                CalculateRow(&accum[i][y][0], &partialFourierOfProjection[i][ya][0], &fHTsFull_unmirrored[y][0], yAxisMultipliers[bb][y], accum.Dims(2));
+                CalculateRow(&accum[i][y][0], &partialFourierOfProjection[ya][0], &fHTsFull_unmirrored[y][0], yAxisMultipliers[bb][y], accum.Dims(2));
             else
-                CalculateRowMirror(&accum[i][y][0], &partialFourierOfProjection[i][ya][0], &fHTsFull_unmirrored[y][0], yAxisMultipliers[bb][y], accum.Dims(2), fHTsFull_unmirrored.Dims(1));
+                CalculateRowMirror(&accum[i][y][0], &partialFourierOfProjection[ya][0], &fHTsFull_unmirrored[y][0], yAxisMultipliers[bb][y], accum.Dims(2), fHTsFull_unmirrored.Dims(1));
         }
     }
-    double t1 = GetTime();
-//    printf("Time %.2lf\n", (t1-t0)*1e6);
+    t->t2[thisThreadID] = GetTime();
+    return NULL;
+}
+
+void ConvolvePart4(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, bool mirrorX, JPythonArray2D<TYPE> fHTsFull_unmirrored, JPythonArray2D<TYPE> xAxisMultipliers, JPythonArray2D<TYPE> yAxisMultipliers, JPythonArray3D<TYPE> accum)
+{
+    // This plays the role that special_fftconvolve2 does in the python code.
+    // We take advantage of the fact that we have been passed fHTsFull, to tell us what the padded array dimensions should be for the FFT.
+    double t0 = GetTime();
+    
+    t0 = GetTime();
+
+    // Define the FFTW plan that we will use in each of our multiple wor threads that will perform this task
+    int fullYSize = fHTsFull_unmirrored.Dims(0);
+    int fullXSize = fHTsFull_unmirrored.Dims(1);
+    npy_intp smallDims[2] = { fullYSize/Nnum, fullXSize/Nnum };
+    JPythonArray2D<TYPE> fftArray(smallDims);
+    fftwf_plan plan = fftwf_plan_dft_2d((int)smallDims[0], (int)smallDims[1], (fftwf_complex *)fftArray.Data(), (fftwf_complex *)fftArray.Data(), FFTW_FORWARD, fftPlanMethod);     // This does need to be done before the data is initialized, especially if using FFTW_MEASURE
+    
+    ThreadInfo threadInfo = { 0, {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}, {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}, projection, bb, aa, Nnum, mirrorX, fHTsFull_unmirrored, xAxisMultipliers, yAxisMultipliers, accum, plan};
+    RunThreads(ThreadFunc, &threadInfo, gNumThreadsToUse);
+  #if 0
+    double t3 = GetTime();
+    double totalDead = 0, totalWork = 0;
+    for (int i = 0; i < numThreadsToUse; i++)
+    {
+        double deadStart = (threadInfo.t1[i]-t0)*1e3;
+        double deadEnd = (t3-threadInfo.t2[i])*1e3;
+        double work = (threadInfo.t2[i]-threadInfo.t1[i])*1e3;
+        totalDead += deadStart + deadEnd;
+        totalWork += work;
+        printf("Thread %d start %.3lf end %.3lf (took %.3lf). Dead time %.3lf\n", i, deadStart, (threadInfo.t2[i]-t0)*1e3, work, deadEnd);
+    }
+    printf("Total dead %.3lf, total work %.3lf (%.1lfx load)\n", totalDead, totalWork, totalWork / ((t3-t0)*1e3));
+  #endif
+    gSpecialTime += GetTime()-t0;
 }
 
 void ConvolvePart3(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, JPythonArray2D<TYPE> fHtsFull, bool mirrorX, JPythonArray2D<TYPE> xAxisMultipliers, JPythonArray3D<TYPE> yAxisMultipliers, JPythonArray3D<TYPE> accum)
@@ -352,7 +492,9 @@ void ConvolvePart2(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, b
     ConvolvePart3(projection, bb, aa, Nnum, fHtsFull, mirrorX, xAxisMultipliers, yAxisMultipliers, accum);
     if (mirrorY)
     {
+        double t0 = GetTime();
         PyArrayObject *fHtsFull_mirror = MirrorYArray(fHtsFull, xAxisMultipliers[kXAxisMultiplierMirrorY]);
+        gMirrorTime += GetTime()-t0;
         // TODO: it is probably inefficient to be working with a PyArrayObject here (reliant on python's memory management etc),
         // but it's probably the easiest way to do it if I want to keep the ability to call MirrorYArray as a standalone function.
         ConvolvePart3(projection, bb, Nnum-aa-1, Nnum, JPythonArray2D<TYPE>(fHtsFull_mirror), mirrorX, xAxisMultipliers, yAxisMultipliers, accum);
@@ -407,28 +549,22 @@ JPythonArray2D<TYPE> CalcFH(JPythonArray2D<RTYPE> Hts, int fshapeY, int fshapeX,
     npy_intp dims[2] = { fshapeY, fshapeX };
     npy_intp strides[2] = { int((fshapeX + 15)/16)*16, 1 };     // Ensure 16-byte alignment of each row, which seems to make things *slightly* faster
     double t0 = GetTime();
-    JPythonArray2D<TYPE> result = JPythonArray2D<TYPE>(NULL, dims, strides);
+    JPythonArray2D<TYPE> result(NULL, dims, strides);
     
-    /* TODO: decide which planning method to use.
-       TODO: I think I am not able to *create* a plan from within a multithreaded environment [though I could check that],
-       so when I start multithreading I will need to move this code elsewhere.
-        FFTW_ESTIMATE took 5.46
-        FFTW_MEASURE took 5.01   (after 2s the first time, and <1ms on the later times)
-        FFTW_PATIENT took 4.58   (after 29s the first time) */
-    int method = FFTW_MEASURE;
     double t1 = GetTime();
     // We do need to define the plan *before* the data is initialized, especially if using FFTW_MEASURE (which will overwrite the contents of the buffers)
 
     // Note that we manually split up the 2D FFT into horizontal and vertical 1D FFTs, to enable us to skip the rows that we know are all zeroes.
-    // Compute the horizontal 1D FFTs, for only the nonzero rows
     int nx[1] = { result.Dims(1) };
     ALWAYS_ASSERT(!(((size_t)result.Data()) & 0xF));        // Check alignment. Just plain malloc seems to give sufficient alignment.
+    // Compute the horizontal 1D FFTs, for only the nonzero rows
+    fftwf_plan_with_nthreads(gNumThreadsToUse);
     fftwf_plan plan = fftwf_plan_many_dft(1, nx, Hts.Dims(0),
                                              (fftwf_complex *)result.Data(), NULL,
                                              result.Strides(1), result.Strides(0),
                                              (fftwf_complex *)result.Data(), NULL,
                                              result.Strides(1), result.Strides(0),
-                                             FFTW_FORWARD, method);
+                                             FFTW_FORWARD, fftPlanMethod);
     // Compute the vertical 1D FFTs
     int ny[1] = { result.Dims(0) };
     fftwf_plan plan2 = fftwf_plan_many_dft(1, ny, result.Dims(1),
@@ -436,31 +572,42 @@ JPythonArray2D<TYPE> CalcFH(JPythonArray2D<RTYPE> Hts, int fshapeY, int fshapeX,
                                             result.Strides(0), result.Strides(1),
                                             (fftwf_complex *)result.Data(), NULL,
                                             result.Strides(0), result.Strides(1),
-                                            FFTW_FORWARD, method);
+                                            FFTW_FORWARD, fftPlanMethod);
+    fftwf_plan_with_nthreads(1);
     double t2 = GetTime();
-    
     result.SetZero();
+    double t2a = GetTime();
     assert(Hts.Dims(0) == Hts.Dims(1));     // Sanity check - this should be true. If it is not, then among other things our whole transpose logic gets messed up.
     if (transpose)
         for (int y = 0; y < Hts.Dims(0); y++)
+        {
+            auto _result = result[y];
             for (int x = 0; x < Hts.Dims(1); x++)
-                result[y][x] = Hts[x][y];
+                _result[x] = Hts[x][y];
+        }
     else
         for (int y = 0; y < Hts.Dims(0); y++)
+        {
+            auto _result = result[y];
+            auto _Hts = Hts[y];
             for (int x = 0; x < Hts.Dims(1); x++)
-                result[y][x] = Hts[y][x];
+                _result[x] = _Hts[x];
+        }
     double t3 = GetTime();
     
     // Compute the full 2D FFT (i.e. not just the RFFT)
     fftwf_execute(plan);
     fftwf_execute(plan2);
     double t4 = GetTime();
-    gFFTWTime += t4-t3;
+    gFFTWPlanTime += t2-t1;
+    gFFTWInitializeTime1 += t2a-t2;
+    gFFTWInitializeTime2 += t3-t2a;
+    gFFTExecuteTime += t4-t3;
     fftwf_destroy_plan(plan);
     fftwf_destroy_plan(plan2);
     double t5 = GetTime();
     
-//    printf("FFT times %.2lf %.2lf %.2lf %.2lf %.2lf\n", (t1-t0)*1e6, (t2-t1)*1e6, (t3-t2)*1e6, (t4-t3)*1e6, (t5-t4)*1e6);
+    //printf("FFT times %.2lf plan %.2lf init {%.2lf, %.2lf} ex %.2lf %.2lf\n", (t1-t0)*1e6, (t2-t1)*1e6, (t2a-t2)*1e6, (t3-t2a)*1e6, (t4-t3)*1e6, (t5-t4)*1e6);
     
     return result;
 }
@@ -523,12 +670,16 @@ extern "C" PyObject *ProjectForZ(PyObject *self, PyObject *args)
             // At the moment, we process the case with the transpose, but simply by recalculating the appropriate FFT(H) from scratch
             bool transpose = ((aa != bb) && (aa != (Nnum-bb-1)));
 
+            double t0 = GetTime();
             JPythonArray2D<TYPE> fHtsFull = CalcFH(HtsFull[bb][aa], fshapeY, fshapeX, false);
+            gTotalHTime += GetTime() - t0;
             ConvolvePart2(projection, bb, aa, Nnum, mirrorY, mirrorX, fHtsFull, xAxisMultipliers, yAxisMultipliers, accum);
 
             if (transpose)
             {
+                t0 = GetTime();
                 JPythonArray2D<TYPE> fHtsFull2 = CalcFH(HtsFull[bb][aa], fshapeY, fshapeX, true);
+                gTotalHTime += GetTime() - t0;
                 // Note that mx,my have been swapped here, which is necessary following the transpose. And bb,aa have been as well.
                 ConvolvePart2(projection, aa, bb, Nnum, mirrorX, mirrorY, fHtsFull2, xAxisMultipliers, yAxisMultipliers, accum);
             }
@@ -538,11 +689,89 @@ extern "C" PyObject *ProjectForZ(PyObject *self, PyObject *args)
     
     double t3 = GetTime();
 #if TESTING
-    printf("Took %lf %lf\n", t3-t1, t3-t2);
-    printf("FFTs took %lf, %lf\n", gFFTWTime, gFFTWTime2);
+    printf("Took %lf (+ test setup %lf)\n", t3-t2, t2-t1);
+    PrintStats(NULL, NULL);
+    ResetStats(NULL, NULL);
 #endif
     
     return ret;
+}
+
+extern "C" PyObject *InverseRFFT(PyObject *self, PyObject *args)
+{
+    PyArrayObject *_mat;
+    int inputShapeY, inputShapeX;
+    if (!PyArg_ParseTuple(args, "O!ii",
+                          &PyArray_Type, &_mat,
+                          &inputShapeY, &inputShapeX))
+    {
+        PyErr_Format(PyErr_NewException((char*)"exceptions.TypeError", NULL, NULL), "Unable to parse input parameters!");
+        return NULL;
+    }
+
+    double t0 = GetTime();
+    JPythonArray2D<TYPE> mat(_mat);
+
+    npy_intp paddedInputDims[2] = { inputShapeY, int(inputShapeX/2)+1 };
+    JPythonArray2D<TYPE> paddedMatrix(NULL, paddedInputDims, NULL);
+    
+    npy_intp output_dims[2] = { inputShapeY, inputShapeX };
+    PyArrayObject *_result = (PyArrayObject *)PyArray_EMPTY(2, output_dims, NPY_FLOAT, 0);
+    JPythonArray2D<RTYPE> result(_result);
+    
+    // We do need to define the plan *before* the data is initialized, especially if using FFTW_MEASURE (which will overwrite the contents of the buffers)
+    
+    ALWAYS_ASSERT(!(((size_t)result.Data()) & 0xF));        // Check alignment. Just plain malloc seems to give sufficient alignment.
+    double t1 = GetTime();
+    
+    fftwf_plan_with_nthreads(gNumThreadsToUse);
+
+    int dims[2] = { result.Dims(0), result.Dims(1) };
+    int inFullShape[2] = { paddedMatrix.Dims(0), paddedMatrix.Strides(0) };
+    int outFullShape[2] = { result.Dims(0), result.Strides(0) };
+    ALWAYS_ASSERT(mat.Strides(1) == 1);     // We assume contiguous
+    ALWAYS_ASSERT(paddedMatrix.Strides(1) == 1);     // We assume contiguous
+    ALWAYS_ASSERT(result.Strides(1) == 1);  // We assume contiguous
+    fftwf_plan plan = fftwf_plan_many_dft_c2r(2/*2D FFT*/, dims, 1/*howmany*/,
+                                     (fftwf_complex *)paddedMatrix.Data(), inFullShape,
+                                     1/*stride*/, 0/*unused*/,
+                                     result.Data(), outFullShape,
+                                     1/*stride*/, 0/*unused*/,
+                                     fftPlanMethod);
+    fftwf_plan_with_nthreads(1);
+
+    double t2 = GetTime();
+    result.SetZero();
+    double t2a = GetTime();
+    // TODO: need to confirm whether I use result.Dims() or the dims of something else, if I consider a case with extra padding.
+    // The answer seems to be result.Dims since my code works like this, but I should check for sure and write a definitive comment here.
+    float inverseTotalSize = 1.0f / (float(result.Dims(0)) * float(result.Dims(1)));
+    ALWAYS_ASSERT(paddedMatrix.Dims(0) >= mat.Dims(0)); // This assertion is because we don't support cropping the input matrix, only padding
+    ALWAYS_ASSERT(paddedMatrix.Dims(1) >= mat.Dims(1));
+    paddedMatrix.SetZero();     // Inefficient, but I will do this for now. TODO: update this code to only zero out the (small number of) values we won't be overwriting in the loop
+    for (int y = 0; y < mat.Dims(0); y++)
+    {
+        auto _mat = mat[y];
+        auto _paddedMatrix = paddedMatrix[y];
+        for (int x = 0; x < mat.Dims(1); x++)
+            _paddedMatrix[x] = _mat[x] * inverseTotalSize;
+    }
+    double t3 = GetTime();
+    
+    // Compute the full 2D FFT (i.e. not just the RFFT)
+    fftwf_execute_dft_c2r(plan, (fftwf_complex *)paddedMatrix.Data(), result.Data());
+
+    double t4 = GetTime();
+    gFFTWPlanTime += t2-t1;
+    gFFTWInitializeTime1 += t2a-t2;
+    gFFTWInitializeTime2 += t3-t2a;
+    gFFTExecuteTime += t4-t3;
+    fftwf_destroy_plan(plan);
+    double t5 = GetTime();
+    
+    //printf("iFFT times %.2lf plan %.2lf init {%.2lf, %.2lf} ex %.2lf %.2lf\n", (t1-t0)*1e6, (t2-t1)*1e6, (t2a-t2)*1e6, (t3-t2a)*1e6, (t4-t3)*1e6, (t5-t4)*1e6);
+    
+    return PyArray_Return(_result);
 }
 
 void *TestMe(void)
@@ -568,7 +797,9 @@ void *TestMe(void)
     Py_Initialize();
     import_array()
     
-    for (int n = 0; n < 1; n++)
+    fftwf_init_threads();
+    
+    for (int n = 0; n < 2; n++)
     {
         PyObject *pArgs = PyTuple_New(9);
         ALWAYS_ASSERT(pArgs != NULL);
@@ -597,7 +828,8 @@ void *TestMe(void)
         npy_intp ydims[3] = { 2, 15, 510 };
     #endif
 
-        npy_intp pdims[3] = { 1, 450, 675 };
+//        npy_intp pdims[3] = { 1, 450, 675 };
+        npy_intp pdims[3] = { 30, 450, 675 };
         PyObject *projection = PyArray_ZEROS(3, pdims, NPY_FLOAT, 0);
         PyObject *HtsFull = PyArray_ZEROS(4, hdims, NPY_FLOAT, 0);
         PyObject *xAxisMultipliers = PyArray_ZEROS(2, xdims, NPY_CFLOAT, 0);
@@ -618,6 +850,7 @@ void *TestMe(void)
     return NULL;
 }
 
+
 /* Define a methods table for the module */
 
 static PyMethodDef symm_methods[] = {
@@ -627,6 +860,9 @@ static PyMethodDef symm_methods[] = {
     {"special_fftconvolve_part1", special_fftconvolve_part1, METH_VARARGS},
     {"Convolve", Convolve, METH_VARARGS},
     {"ProjectForZ", ProjectForZ, METH_VARARGS},
+    {"InverseRFFT", InverseRFFT, METH_VARARGS},
+    {"PrintStats", PrintStats, METH_NOARGS},
+    {"ResetStats", ResetStats, METH_NOARGS},
 	{NULL,NULL} };
 
 

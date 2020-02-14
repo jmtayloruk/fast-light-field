@@ -130,20 +130,24 @@ def special_fftconvolve_part1(in1, bb, aa, Nnum, in2Shape, partial=False):
     fa = special_rfftn(in1, bb, aa, Nnum, fshape, partial=partial)
     return (fa, fshape)
 
-def special_fftconvolve_part3b(fab, fshape, fslice, s1):
+def special_fftconvolve_part3b(fab, fshape, fslice, s1, useCCode=False):
     assert(len(fab.shape) == 2)
-    ret = myfft.myIFFT2(fab, fshape)[fslice].copy()    # TODO: what was the purpose of the copy() here? I think I have just copied this from the fftconvolve source code. Perhaps if fslice does something nontrivial, it makes the result compact..?
-    return _centered(ret, s1)
+    if useCCode:
+        ret = jps.InverseRFFT(fab, fshape[0], fshape[1])
+    else:
+        ret = myfft.myIFFT2(fab, fshape)
+    # TODO: what was the purpose of the copy() here? I think I have just copied this from the fftconvolve source code. Perhaps if fslice does something nontrivial, it makes the result compact..? But fslice seems to be the same as fshape for me, here
+    return _centered(ret[fslice].copy(), s1)
 
-def special_fftconvolve_part3(fab, fshape, fslice, s1):
+def special_fftconvolve_part3(fab, fshape, fslice, s1, useCCode=False):
     # TODO: This gymnastics is probably unnecessary now I call ifft2 rather than fftn,
     # although if I literally just do it in one call then it fails. I would need to work out why that is - it seems to be the [fslice] bit in part3b
     if (len(fab.shape) == 2):
-        return special_fftconvolve_part3b(fab, fshape, fslice, s1)
+        return special_fftconvolve_part3b(fab, fshape, fslice, s1, useCCode)
     else:
         results = []
         for n in range(fab.shape[0]):
-            results.append(special_fftconvolve_part3(fab[n], fshape, fslice, s1))
+            results.append(special_fftconvolve_part3(fab[n], fshape, fslice, s1, useCCode))
         return np.array(results)
 
 def special_fftconvolve(in1, bb, aa, Nnum, in2Shape, accum, fb):
