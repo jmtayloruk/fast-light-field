@@ -44,12 +44,16 @@ class ShiftHistory:
             shiftShape = self.shiftHistory[0].shape
             selectedItem = np.minimum(int(np.sqrt(shiftShape[0])/2), shiftShape[0]-1)
             selectedShift = np.array(self.shiftHistory)[:, selectedItem, -1]
+            plt.title('Value of item {0} in the set of vectors'.format(selectedItem))
+            plt.xlabel('Iteration')
             plt.plot(selectedShift)
             plt.show()
             # Plot scores, with a suitable y axis scaling to see the interesting parts.
             # We limit the y axis to avoid stupid guesses distorting the plot.
             improvement = self.scoreHistory[0] - np.min(self.scoreHistory)
             plt.ylim(np.min(self.scoreHistory), self.scoreHistory[0]+2*improvement)
+            plt.title('Score history')
+            plt.xlabel('Iteration')
             plt.plot(self.scoreHistory)
             plt.show()
             # Plot an indication of which values are being updated on which iteration
@@ -57,6 +61,8 @@ class ShiftHistory:
                 changes = np.array(np.where((self.shiftHistory[n] == self.shiftHistory[n-1]).flatten() == False))
                 if (changes.size > 0):
                     plt.plot(n, changes, 'x', color='red')
+            plt.title('Which item in vector set is being updated?')
+            plt.xlabel('Iteration')
             plt.show()
 
             with open('scores.txt', 'a') as f:

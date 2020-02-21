@@ -189,6 +189,7 @@ def ShowDualObjectAndFlow(dualObject, shifter, shiftDescription, otherObject=Non
     plt.ylim(dualObject.shape[-2], 0)
     if destFilename is not None:
         plt.savefig(destFilename, dpi=200)
+    plt.title('Object with flow estimate superimposed')
     plt.show()
     if (histogram > 0):
         plt.hist(velocities, range=(0,histogram), bins=20)
