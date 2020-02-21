@@ -37,7 +37,7 @@ class UniformSKShifter(UniformRollShifter):
     # Applies a uniform shift, implemented using skimage.warp
     # This behaves otherwise like UniformRollShifter, so I just override the ShiftObject function in that class.
     def ShiftObject(self, obj, shiftYX):
-        # Note that this has a fair amount of code duplication from PIVShifter, but I will not attempt to consolidate that for now…
+        # Note that this has a fair amount of code duplication from PIVShifter, but I will not attempt to consolidate that for now...
         # Generate control points in the corners of the image
         src_cols = np.arange(0, obj.shape[-1]+1, obj.shape[-1])
         src_rows = np.arange(0, obj.shape[-2]+1, obj.shape[-2])

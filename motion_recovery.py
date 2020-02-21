@@ -1,3 +1,4 @@
+from __future__ import print_function
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.ndimage, scipy.optimize, scipy.io
@@ -71,11 +72,11 @@ class ShiftHistory:
             return False   
 
 def ScoreShift(candidateShiftYX, shifter, method, imageAB, hMatrix=None, shiftHistory=None, scaling=1.0, log=True, logPrint=False, comparator=None, maxIter=8):
-    # Just returns a single score evaluating the extent to which the candidate shift can “explain” the AB images that were observed
+    # Just returns a single score evaluating the extent to which the candidate shift can "explain" the AB images that were observed
     return ScoreShiftDetailed(candidateShiftYX, shifter, method, imageAB, hMatrix, shiftHistory, scaling, log, logPrint, comparator, maxIter=maxIter)[0]
 
 def ScoreShiftDetailed(candidateShiftYX, shifter, method, imageAB, hMatrix=None, shiftHistory=None, scaling=1.0, log=True, logPrint=False, comparator=None, maxIter=8):
-    # Returns a score evaluating the extent to which the candidate shift can “explain” the AB images that were observed,
+    # Returns a score evaluating the extent to which the candidate shift can "explain" the AB images that were observed,
     # along with additional detailed information that may be useful for debugging and closer visual investigation of this candidate scenario
 
     # Our input parameters get flattened, so we need to reshape them to Nx2 like my code is expecting
