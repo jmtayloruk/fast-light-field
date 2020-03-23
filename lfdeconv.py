@@ -9,7 +9,7 @@ import psfmatrix, lfimage
 import projector
 import special_fftconvolve as special
 import jutils as util
-import py_symmetry as jps
+import py_light_field as plf
 
 # It has been suggested that low-level threading does not interact well with the joblib Parallel feature.
 # Certainly that matches my experience.
@@ -46,7 +46,7 @@ def BackwardProjectACC(hMatrix, projection, planes=None, numjobs=multiprocessing
             proj = projector.Projector(projection[0], hMatrix, cc)
             Hcc = hMatrix.Hcc(cc, True)
             t1 = time.time()
-            fourierZPlane = jps.ProjectForZ(projection, Hcc, hMatrix.Nnum(cc), \
+            fourierZPlane = plf.ProjectForZ(projection, Hcc, hMatrix.Nnum(cc), \
                                              proj.fshape[-2], proj.fshape[-1], \
                                              proj.rfshape[-2], proj.rfshape[-1], \
                                              proj.xAxisMultipliers, proj.yAxisMultipliers)

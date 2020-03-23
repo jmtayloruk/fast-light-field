@@ -4,7 +4,7 @@ import scipy.fftpack
 import time, warnings, os
 from jutils import tqdm_alias as tqdm
 
-import py_symmetry as jps
+import py_light_field as plf
 import special_fftconvolve as special
 import psfmatrix
 import jutils as util
@@ -92,7 +92,7 @@ class Projector(object):
             return fHtsFull
         else:
             # New, faster code written in C
-            return jps.mirrorX(fHtsFull, self.mirrorXMultiplier)
+            return plf.mirrorX(fHtsFull, self.mirrorXMultiplier)
 
     def MirrorYArray(self, fHtsFull):
         # Utility function to convert the FFT of a PSF to the FFT of the Y mirror of that same PSF
@@ -103,7 +103,7 @@ class Projector(object):
             return fHtsFull
         else:
             # New, faster code written in C
-            return jps.mirrorY(fHtsFull, self.mirrorYMultiplier)
+            return plf.mirrorY(fHtsFull, self.mirrorYMultiplier)
         
     def convolvePart3(self, projection, bb, aa, fHtsFull, mirrorX, accum):
         cpu0 = util.cpuTime('both')
@@ -127,7 +127,7 @@ class Projector(object):
     def convolvePart2(self, projection, bb, aa, fHtsFull, mirrorY, mirrorX, accum):
         if self.useCCodeForConvolve:
             # New c code, currently being tested
-            accum = jps.Convolve(projection, fHtsFull, bb, aa, self.Nnum, self.xAxisMultipliers, self.yAxisMultipliers, accum)
+            accum = plf.Convolve(projection, fHtsFull, bb, aa, self.Nnum, self.xAxisMultipliers, self.yAxisMultipliers, accum)
         else:
             # Old python code
             accum = self.convolvePart3(projection,bb,aa,fHtsFull,mirrorX,accum)

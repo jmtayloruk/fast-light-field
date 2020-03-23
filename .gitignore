@@ -1,6 +1,7 @@
 py_symmetry/build
 py_symmetry/build/*
-py_symmetry/py_symmetry.so
+py_light_field/test-py-light-field/test-py-light-field.xcodeproj/project.xcworkspace/xcshareddata
+py_light_field/test-py-light-field/test-py-light-field.xcodeproj/project.xcworkspace/xcuserdata
 *.pyc
 piv-raw-data
 PSFmatrix

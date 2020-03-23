@@ -1,5 +1,5 @@
 import numpy as np
-import py_symmetry as jps
+import py_light_field as plf
 import warnings
 import scipy.fftpack
 import myfft
@@ -133,7 +133,7 @@ def special_fftconvolve_part1(in1, bb, aa, Nnum, in2Shape, partial=False):
 def special_fftconvolve_part3b(fab, fshape, fslice, s1, useCCode=False):
     assert(len(fab.shape) == 2)
     if useCCode:
-        ret = jps.InverseRFFT(fab, fshape[0], fshape[1])
+        ret = plf.InverseRFFT(fab, fshape[0], fshape[1])
     else:
         ret = myfft.myIFFT2(fab, fshape)
     # TODO: what was the purpose of the copy() here? I think I have just copied this from the fftconvolve source code. Perhaps if fslice does something nontrivial, it makes the result compact..? But fslice seems to be the same as fshape for me, here
@@ -181,9 +181,9 @@ def special_fftconvolve2(in1, bb, aa, Nnum, in2Shape, accum, fb_unmirrored, vali
         assert(len(in2Shape) == 2)
         (fshape, _, _) = convolutionShape(in1, in2Shape, Nnum)
         expandXMultiplier = np.exp(-1j * aa * 2*np.pi / fshape[-1] * np.arange(int(fshape[-1]/2+1), dtype='complex64'))
-        fa_partial = jps.special_fftconvolve_part1(in1, bb, aa, Nnum, fshape[-2], fshape[-1], expandXMultiplier)
+        fa_partial = plf.special_fftconvolve_part1(in1, bb, aa, Nnum, fshape[-2], fshape[-1], expandXMultiplier)
 
     assert(fa_partial.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
     assert(fb_unmirrored.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
     expandYMultiplier = expand2Multiplier(bb, fshape, fshape)
-    return jps.special_fftconvolve(accum, fa_partial, fb_unmirrored, expandYMultiplier, validWidth, mirrorXMultiplier)
+    return plf.special_fftconvolve(accum, fa_partial, fb_unmirrored, expandYMultiplier, validWidth, mirrorXMultiplier)

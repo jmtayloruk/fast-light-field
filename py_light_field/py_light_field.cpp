@@ -1,10 +1,11 @@
 #include "common/jAssert.h"
 #include "common/VectorFunctions.h"
+#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include "Python.h"
 #include "numpy/arrayobject.h"
 #include "common/jPythonCommon.h"
 #include "common/PIVImageWindow.h"
-#include <fftw3.h>
+#include "fftw-3.3.8/api/fftw3.h"
 
 // Note: the TESTING macro is set when we build within Xcode, but not when we build using setup.py
 
@@ -784,7 +785,7 @@ void *TestMe(void)
      
     // For reasons I don't yet understand, I seem to have to do this python initialization in the same source file where I am using the numpy arrays.
     // As a result, I cannot do this setup from my test code, and have to embed it in this module here...
-    const char *anacondaFolder = "/Users/jonny/anaconda";
+    const char *anacondaFolder = "/Users/jonny/opt/anaconda3";
     // Remember to set up LD_LIBRARY_PATH under Scheme/Environment variables, when running under Xcode.
     
     wchar_t *tempString = Py_DecodeLocale(anacondaFolder, NULL);
@@ -853,7 +854,7 @@ void *TestMe(void)
 
 /* Define a methods table for the module */
 
-static PyMethodDef symm_methods[] = {
+static PyMethodDef plf_methods[] = {
 	{"mirrorX", mirrorX, METH_VARARGS},
     {"mirrorY", mirrorY, METH_VARARGS},
     {"special_fftconvolve", special_fftconvolve, METH_VARARGS},
@@ -871,26 +872,26 @@ static PyMethodDef symm_methods[] = {
 
 #if PY_MAJOR_VERSION >= 3
 
-static struct PyModuleDef py_symmetry =
+static struct PyModuleDef py_light_field =
 {
     PyModuleDef_HEAD_INIT,
-    "py_symmetry", /* name of module */
+    "py_light_field", /* name of module */
     "",          /* module documentation, may be NULL */
     -1,          /* size of per-interpreter state of the module, or -1 if the module keeps state in global variables. */
-    symm_methods
+    plf_methods
 };
 
-PyMODINIT_FUNC PyInit_py_symmetry(void)
+PyMODINIT_FUNC PyInit_py_light_field(void)
 {
     import_array();
-    return PyModule_Create(&py_symmetry);
+    return PyModule_Create(&py_light_field);
 }
 
 #else
 
-extern "C" void initpy_symmetry(void)
+extern "C" void initpy_light_field(void)
 {
-    (void) Py_InitModule("py_symmetry", symm_methods);
+    (void) Py_InitModule("py_light_field", plf_methods);
     import_array();
 }
 
