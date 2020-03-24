@@ -1,3 +1,4 @@
+#include <unistd.h>
 #include "common/jAssert.h"
 #include "common/VectorFunctions.h"
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
@@ -9,13 +10,21 @@
 
 // Note: the TESTING macro is set when we build within Xcode, but not when we build using setup.py
 
-const int kMaxThreads = 16;
-const int gNumThreadsToUse = 8;
-const int fftPlanMethod = FFTW_MEASURE;
-/* TODO: decide which planning method to use.
+/* Define the FFTW planning strategy we will use. Run times:
     FFTW_ESTIMATE took 5.46
     FFTW_MEASURE took 5.01   (after 2s the first time, and <1ms on the later times)
-    FFTW_PATIENT took 4.58   (after 29s the first time) */
+    FFTW_PATIENT took 4.58   (after 29s the first time)
+   In other words, there is a further gain available from FFTW_PATIENT, but it's too slow to be convenient until I really am running in anger with large datasets
+ */
+const int fftPlanMethod = FFTW_MEASURE;
+/*  Define the number of threads we will use for parallel processing.
+    Frustratingly, I haven't found a good way (in C or Python) to identify that we are running with hyperthreaded CPUs.
+    Performance is best when *not* using extra hyperthreads, so I just divide the reported number of processors by 2.
+    TODO: if this is run on a machine where no hyperthreading is available, it will not use the optimum number of processors.
+    An ideal solution might be to actually have a function that runs timing tests on dummy data and decides how many processors to use,
+    but that is probably overkill for now!  */
+const int kMaxThreads = 16;
+const int gNumThreadsToUse = sysconf(_SC_NPROCESSORS_ONLN) / 2;
 
 template<class TYPE> void SetImageWindowForPythonWindow(ImageWindow<TYPE> &imageWindow, JPythonArray2D<TYPE> &pythonWindow)
 {
@@ -143,7 +152,7 @@ extern "C" PyObject *mirrorXY(PyObject *self, PyObject *args, bool x)
         
         // result[:,0] = fHtsFull[:,0].conj()*temp
         for (int y = 0; y < height; y++)
-        result.SetXY(0, y, conj(fHtsFull.PixelXY(0,y)) * multiplier[y]);
+            result.SetXY(0, y, conj(fHtsFull.PixelXY(0,y)) * multiplier[y]);
         // for i in range(1,fHtsFull.shape[1]):
         //     result[:,i] = (fHtsFull[:,fHtsFull.shape[1]-i].conj()*temp)
         for (int y = 0; y < height; y++)
@@ -157,7 +166,7 @@ extern "C" PyObject *mirrorXY(PyObject *self, PyObject *args, bool x)
 #endif
             
             for (; x < width; x++)
-            result.SetXY(x, y, conj(fHtsFull.PixelXY(width-x,y)) * multiplier[y]);
+                result.SetXY(x, y, conj(fHtsFull.PixelXY(width-x,y)) * multiplier[y]);
         }
     }
     else
@@ -264,118 +273,6 @@ JPythonArray2D<TYPE> PartialFourierOfInputArray(JPythonArray2D<RTYPE> inputArray
     return result;
 }
 
-extern "C" PyObject *special_fftconvolve_part1(PyObject *self, PyObject *args)
-{
-    // TODO: I have disabled this as I have been working on the Convolve() function as a replacement,
-    // but I should reinstate these after updating them to match my recent code and API changes.
-#if 0
-    // Parameters: inputArray, bb, aa, Nnum, in2Shape [asserted to be 2d], expandXMultiplier
-    // Obtains fshape by calling convolutionShape, passing in2Shape
-    // Calls special_rfftn (partial=True)
-    // Returns fa[partial] and fshape (which is later used to get expand2multiplier)
-
-    // Parse the input arrays from *args
-    PyArrayObject *_inputArray, *_expandXMultiplier;
-    int bb, aa, Nnum, fullYSize, fullXSize;
-    if (!PyArg_ParseTuple(args, "O!iiiiiO!",
-                          &PyArray_Type, &_inputArray,
-                          &bb, &aa, &Nnum, &fullYSize, &fullXSize,
-                          &PyArray_Type, &_expandXMultiplier))
-    {
-        PyErr_Format(PyErr_NewException((char*)"exceptions.TypeError", NULL, NULL), "Unable to parse input parameters!");
-        return NULL;
-    }
-    
-    JPythonArray1D<TYPE> expandXMultiplier(_expandXMultiplier);
-    PyArrayObject *_result;
-    if (PyArray_NDIM(_inputArray) == 3)
-    {
-        JPythonArray3D<RTYPE> inputArray(_inputArray);
-        _result = PartialFourierOfInputArray(inputArray, bb, aa, fullYSize, fullXSize, Nnum, expandXMultiplier);
-    }
-    else
-    {
-        JPythonArray2D<RTYPE> inputArray(_inputArray);
-        npy_intp output_dims[2] = { fullYSize / Nnum, expandXMultiplier.Dims(0) };
-        _result = (PyArrayObject *)PyArray_EMPTY(2, output_dims, NPY_CFLOAT, 0);
-        JPythonArray2D<TYPE> result(_result);
-        special_fftconvolve_part1(inputArray, result, expandXMultiplier, bb, aa, Nnum, fullYSize, fullXSize);
-    }
-    return PyArray_Return(_result);
-#endif
-    return NULL;
-}
-
-extern "C" PyObject *special_fftconvolve(PyObject *self, PyObject *args)
-{
-    // TODO: I have disabled this as I have been working on the Convolve() function as a replacement,
-    // but I should reinstate these after updating them to match my recent code and API changes.
-#if 0
-    PyArrayObject *_accum, *_fa_partial, *_fb_unmirrored, *_expandMultiplier, *_mirrorXMultiplier;
-    int validWidth;
-    
-    // Parse the input arrays from *args
-    if (!PyArg_ParseTuple(args, "OO!O!O!iO!",
-                          &_accum,
-                          &PyArray_Type, &_fa_partial,
-                          &PyArray_Type, &_fb_unmirrored,
-                          &PyArray_Type, &_expandMultiplier,
-                          &validWidth,
-                          &PyArray_Type, &_mirrorXMultiplier))
-    {
-        PyErr_Format(PyErr_NewException((char*)"exceptions.TypeError", NULL, NULL), "Unable to parse input parameters!");
-        return NULL;
-    }
-
-    if ((PyArray_TYPE(_fa_partial) != NPY_CFLOAT) ||
-        (PyArray_TYPE(_fb_unmirrored) != NPY_CFLOAT))
-    {
-        PyErr_Format(PyErr_NewException((char*)"exceptions.TypeError", NULL, NULL), "Unsuitable array types %d %d passed in", (int)PyArray_TYPE(_fa_partial), (int)PyArray_TYPE(_fb_unmirrored));
-        return NULL;
-    }
-
-    JPythonArray3D<TYPE> fa_partial(_fa_partial);
-    JPythonArray2D<TYPE> fb_unmirrored(_fb_unmirrored);
-    JPythonArray1D<TYPE> expandMultiplier(_expandMultiplier);
-    JPythonArray1D<TYPE> *mirrorXMultiplier = NULL;
-    if (_mirrorXMultiplier != (PyArrayObject *)Py_None)
-    {
-        mirrorXMultiplier = new JPythonArray1D<TYPE>(_mirrorXMultiplier);
-    }
-    if (!gPythonArraysOK)
-    {
-        printf("Returning NULL due to python error\n");
-        return NULL;        // When flag was cleared, a PyErr should have been set up with the details.
-    }
-
-    if ((fa_partial.Strides(2) != 1) ||
-        (fb_unmirrored.Strides(1) != 1) ||
-        (expandMultiplier.Strides(0) != 1) ||
-        ((mirrorXMultiplier != NULL) && (mirrorXMultiplier->Strides(0) != 1)))
-    {
-        delete mirrorXMultiplier;
-        PyErr_Format(PyErr_NewException((char*)"exceptions.TypeError", NULL, NULL), "One of the input arrays does not have unit stride (%zd %zd %zd)", fa_partial.Strides(2), fb_unmirrored.Strides(1), expandMultiplier.Strides(0));
-        return NULL;
-    }
-
-    // Create a new array for accum, if we were not passed in an existing one
-    npy_intp output_dims[3] = { fa_partial.Dims(0), fb_unmirrored.Dims(0), validWidth };
-    PyArrayObject *__accum = _accum;
-    if (__accum == (PyArrayObject *)Py_None)
-        __accum = (PyArrayObject *)PyArray_ZEROS(3, output_dims, NPY_CFLOAT, 0);
-    else
-        Py_INCREF(__accum);      // Although I haven't found a definite statement to this effect, I suspect I need to incref on an input variable because pyarray_return presumably decrefs it?
-    JPythonArray3D<TYPE> accum(__accum);
-    
-    special_fftconvolve(fa_partial, fb_unmirrored, expandMultiplierY, mirrorXMultiplier);
-    
-    if (mirrorXMultiplier != NULL)
-        delete mirrorXMultiplier;
-    return PyArray_Return(__accum);
-#endif
-    return NULL;
-}
-
 struct ThreadInfo
 {
     int imageCounter;
@@ -454,7 +351,7 @@ void ConvolvePart4(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, b
     
     t0 = GetTime();
 
-    // Define the FFTW plan that we will use in each of our multiple wor threads that will perform this task
+    // Define the FFTW plan that we will use in each of our multiple work threads that will perform this task
     int fullYSize = fHTsFull_unmirrored.Dims(0);
     int fullXSize = fHTsFull_unmirrored.Dims(1);
     npy_intp smallDims[2] = { fullYSize/Nnum, fullXSize/Nnum };
@@ -485,7 +382,7 @@ void ConvolvePart3(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, J
     
     ConvolvePart4(projection, bb, aa, Nnum, false, fHtsFull, xAxisMultipliers, yAxisMultipliers[kYAxisMultiplierNoMirror], accum);
     if (mirrorX)
-        ConvolvePart4(projection, Nnum-bb-1, aa, Nnum, mirrorX, fHtsFull, xAxisMultipliers, yAxisMultipliers[kYAxisMultiplierMirrorX], accum);
+        ConvolvePart4(projection, Nnum-bb-1, aa, Nnum, true, fHtsFull, xAxisMultipliers, yAxisMultipliers[kYAxisMultiplierMirrorX], accum);
 }
 
 void ConvolvePart2(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, bool mirrorY, bool mirrorX, JPythonArray2D<TYPE> fHtsFull, JPythonArray2D<TYPE> xAxisMultipliers, JPythonArray3D<TYPE> yAxisMultipliers, JPythonArray3D<TYPE> accum)
@@ -538,9 +435,54 @@ extern "C" PyObject *Convolve(PyObject *self, PyObject *args)
     // Perform the convolution
     ConvolvePart2(projection, bb, aa, Nnum, mirrorY, mirrorX, fHtsFull, xAxisMultipliers, yAxisMultipliers, accum);
 
-    // Although I haven't found a definite statement to this effect, I suspect I need to incref on an input variable because pyarray_return presumably decrefs it?
-    // TODO: I probably don't need to return it at all (since it was passed in to us), but it feels to me like it's tidier and clearer that way.
-    Py_INCREF(_accum);
+    // TODO: I probably don't need to return this at all (since it was passed in to us), but it feels to me like it's tidier and clearer that way.
+    Py_INCREF(_accum);      // Although I haven't found a definite statement to this effect, we need to incref on an input variable because pyarray_return decrefs it (leading to later crash, otherwise)
+    return PyArray_Return(_accum);
+}
+
+extern "C" PyObject *special_fftconvolve(PyObject *self, PyObject *args)
+{
+    PyArrayObject *_projection, *_fHtsFull, *_xAxisMultipliers, *_yAxisMultipliers, *_accum;
+    int bb, aa, Nnum, mirrorX;
+    if (!PyArg_ParseTuple(args, "O!O!iiiiO!O!O!",
+                          &PyArray_Type, &_projection,
+                          &PyArray_Type, &_fHtsFull,
+                          &bb, &aa, &Nnum, &mirrorX,
+                          &PyArray_Type, &_xAxisMultipliers,
+                          &PyArray_Type, &_yAxisMultipliers,
+                          &PyArray_Type, &_accum))
+    {
+        PyErr_Format(PyErr_NewException((char*)"exceptions.TypeError", NULL, NULL), "Unable to parse input parameters!");
+        return NULL;
+    }
+    
+    JPythonArray3D<RTYPE> projection(_projection);
+    JPythonArray2D<TYPE> fHtsFull(_fHtsFull);
+    JPythonArray2D<TYPE> xAxisMultipliers(_xAxisMultipliers);
+    JPythonArray3D<TYPE> yAxisMultipliers(_yAxisMultipliers);
+    JPythonArray3D<TYPE> accum(_accum);
+    
+    if ((PyArray_TYPE(_projection) != NPY_FLOAT) ||
+        (PyArray_TYPE(_fHtsFull) != NPY_CFLOAT))
+    {
+        PyErr_Format(PyErr_NewException((char*)"exceptions.TypeError", NULL, NULL), "Unsuitable array types %d %d passed in", (int)PyArray_TYPE(_projection), (int)PyArray_TYPE(_fHtsFull));
+        return NULL;
+    }
+    
+    if ((projection.Strides(2) != 1) ||
+        (fHtsFull.Strides(1) != 1) ||
+        (xAxisMultipliers.Strides(1) != 1) ||
+        (yAxisMultipliers.Strides(2) != 1))
+    {
+        PyErr_Format(PyErr_NewException((char*)"exceptions.TypeError", NULL, NULL), "One of the input arrays does not have unit stride (%zd %zd %zd %zd)", projection.Strides(2), fHtsFull.Strides(1), xAxisMultipliers.Strides(1), yAxisMultipliers.Strides(2));
+        return NULL;
+    }
+    
+    ALWAYS_ASSERT(_accum != (PyArrayObject *)Py_None);  // TODO: is there any risk, these days, that we would not be passed it in? I think I've simplified things so that is the only option now.
+    Py_INCREF(_accum);      // Although I haven't found a definite statement to this effect, we need to incref on an input variable because pyarray_return decrefs it (leading to later crash, otherwise)
+    
+    ConvolvePart4(projection, bb, aa, Nnum, mirrorX, fHtsFull, xAxisMultipliers, yAxisMultipliers[mirrorX], accum);
+    
     return PyArray_Return(_accum);
 }
 
@@ -858,7 +800,6 @@ static PyMethodDef plf_methods[] = {
 	{"mirrorX", mirrorX, METH_VARARGS},
     {"mirrorY", mirrorY, METH_VARARGS},
     {"special_fftconvolve", special_fftconvolve, METH_VARARGS},
-    {"special_fftconvolve_part1", special_fftconvolve_part1, METH_VARARGS},
     {"Convolve", Convolve, METH_VARARGS},
     {"ProjectForZ", ProjectForZ, METH_VARARGS},
     {"InverseRFFT", InverseRFFT, METH_VARARGS},

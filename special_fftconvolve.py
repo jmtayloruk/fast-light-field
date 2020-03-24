@@ -73,24 +73,6 @@ def _centered(arr, newsize):
 def expand2Multiplier(bb, fshape, resultShape):
     return np.exp(-1j * bb * 2*np.pi / fshape[-2] * np.arange(resultShape[-2],dtype='complex64'))
 
-def tempMul(bb,fshape,result):
-    result *= expand2Multiplier(bb, fshape, result.shape)[...,np.newaxis]
-    return result
-
-def expand2(result, bb, aa, Nnum, fshape):
-    tileFactor = (1,) * (len(result.shape)-2) + (Nnum, 1)
-    return np.tile(result, tileFactor)
-
-def expand(reducedF, bb, aa, Nnum, fshape, partial=False):
-    tileFactor = (1,) * (len(reducedF.shape)-1) + (int(Nnum/2+1),)
-    result = np.tile(reducedF, tileFactor)
-    result = result[...,:int(fshape[-1]/2+1)]
-    result *= np.exp(-1j * aa * 2*np.pi / fshape[-1] * np.arange(result.shape[-1],dtype='complex64'))
-    if partial:
-        return result
-    result = expand2(result, bb, aa, Nnum, fshape)
-    return tempMul(bb,fshape,result)
-
 def special_rfftn(in1, bb, aa, Nnum, fshape, partial=False):
     # Compute the fft of elements in1[bb::Nnum,aa::Nnum], after in1 has been zero-padded out to fshape
     # We exploit the fact that fft(masked-in1) is fft(arr[::Nnum,::Nnum]) replicated Nnum times.
@@ -102,7 +84,16 @@ def special_rfftn(in1, bb, aa, Nnum, fshape, partial=False):
     # Compute an array giving rfft(mask(in1)), i.e. the FFT for a smaller array consisting only of the pixels selected by the mask
     reducedF = myfft.myFFT2(reduced, reducedShape)
     # Expand this up to obtain the equivalent fourier transform for the full masked array (with intervening zeroes).
-    return expand(reducedF, bb, aa, Nnum, fshape, partial=partial)
+    tileFactor = (1,) * (len(reducedF.shape)-1) + (int(Nnum/2+1),)
+    result = np.tile(reducedF, tileFactor)
+    result = result[...,:int(fshape[-1]/2+1)]
+    result *= np.exp(-1j * aa * 2*np.pi / fshape[-1] * np.arange(result.shape[-1],dtype='complex64'))
+    if partial:
+        return result
+    tileFactor = (1,) * (len(result.shape)-2) + (Nnum, 1)
+    result = np.tile(result, tileFactor)
+    result *= expand2Multiplier(bb, fshape, result.shape)[...,np.newaxis]
+    return result
 
 def convolutionShape(in1, in2Shape, Nnum):
     # Logic copied from fftconvolve source code
@@ -150,7 +141,7 @@ def special_fftconvolve_part3(fab, fshape, fslice, s1, useCCode=False):
             results.append(special_fftconvolve_part3(fab[n], fshape, fslice, s1, useCCode))
         return np.array(results)
 
-def special_fftconvolve(in1, bb, aa, Nnum, in2Shape, accum, fb):
+def special_fftconvolve(in1, fb, bb, aa, Nnum, in2Shape, accum):
     '''
     in1 consists of subapertures of size Nnum x Nnum pixels.
     We are being asked to convolve only pixel (bb,aa) within each subaperture, i.e.
@@ -168,22 +159,3 @@ def special_fftconvolve(in1, bb, aa, Nnum, in2Shape, accum, fb):
         accum += fa*fb
     assert(accum.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
     return accum
-
-################################
-# This next function is an experimental work in progress, trying to cover more of the performance-sensitive bits with fast C code
-def special_fftconvolve2(in1, bb, aa, Nnum, in2Shape, accum, fb_unmirrored, validWidth, mirrorXMultiplier):
-    if True:
-        # Old code
-        (fa_partial, fshape) = special_fftconvolve_part1(in1, bb, aa, Nnum, in2Shape, partial=True)
-    else:
-        # New code using my C implementation of part1
-        assert((len(in1.shape) == 2) or (len(in1.shape) == 3))
-        assert(len(in2Shape) == 2)
-        (fshape, _, _) = convolutionShape(in1, in2Shape, Nnum)
-        expandXMultiplier = np.exp(-1j * aa * 2*np.pi / fshape[-1] * np.arange(int(fshape[-1]/2+1), dtype='complex64'))
-        fa_partial = plf.special_fftconvolve_part1(in1, bb, aa, Nnum, fshape[-2], fshape[-1], expandXMultiplier)
-
-    assert(fa_partial.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
-    assert(fb_unmirrored.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
-    expandYMultiplier = expand2Multiplier(bb, fshape, fshape)
-    return plf.special_fftconvolve(accum, fa_partial, fb_unmirrored, expandYMultiplier, validWidth, mirrorXMultiplier)
