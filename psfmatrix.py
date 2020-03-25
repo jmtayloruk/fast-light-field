@@ -13,6 +13,11 @@ class HMatrix:
         else:
             self.numZ = len(HReducedShape)
         self.zStart = zStart
+        # We can deduce Nnum indirectly from looking at the dimensions of the H matrix we are loading.
+        # We only store one quadrant of the H matrix, since we know the other quadrants are just mirror images
+        self.Nnum = self.HReducedShape[0][0]*2-1
+        self.iterableBRange = range(self.HReducedShape[0][0])
+
         self.cacheH = cacheH
         self.Hcache = dict()
         self.cacheHits = 0
@@ -60,20 +65,9 @@ class HMatrix:
     
     def ClearCache(self):
         self.Hcache.clear()
-    
-    def IterableBRange(self, cc):
-        # TODO: surely the b range that we iterate over will not in fact depend on which z plane we are looking at!?
-        return range(self.HReducedShape[cc+self.zStart][0])
-    
+
     def PSFShape(self, cc):
         return (self.HReducedShape[cc+self.zStart][2], self.HReducedShape[cc+self.zStart][3])
-    
-    def Nnum(self, cc):
-        # TODO: I am not even sure why this formula works.
-        # It is a strange and convoluted way of obtaining the result.
-        # Nnum is a constant for a given PSF, it does not depend on cc!
-        # I have no idea why I have coded it this way. It does seem to return the correct answer though!
-        return self.HReducedShape[cc+self.zStart][0]*2-1
 
 def GetPathFormats(matPath):
     # Use the .mat filename, but without that extension, as a folder name to store our memory-mapped data

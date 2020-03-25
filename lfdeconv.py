@@ -41,21 +41,20 @@ def BackwardProjectACC(hMatrix, projection, planes=None, numjobs=multiprocessing
         pos = 0
         results = []
         t0 = time.time()
-        for cc in planes:
-            (fshape, fslice, s1) = special.convolutionShape(projection[0], hMatrix.PSFShape(cc), hMatrix.Nnum(cc))
-            proj = projector.Projector(projection[0], hMatrix, cc)
+        for cc in tqdm(planes):
+            (fshape, fslice, s1) = special.convolutionShape(projection[0], hMatrix.PSFShape(cc), hMatrix.Nnum)
+            proj = projector.ProjectorForZ_allC(projection[0], hMatrix, cc)
             Hcc = hMatrix.Hcc(cc, True)
             t1 = time.time()
-            fourierZPlane = plf.ProjectForZ(projection, Hcc, hMatrix.Nnum(cc), \
+            fourierZPlane = plf.ProjectForZ(projection, Hcc, hMatrix.Nnum, \
                                              proj.fshape[-2], proj.fshape[-1], \
                                              proj.rfshape[-2], proj.rfshape[-1], \
                                              proj.xAxisMultipliers, proj.yAxisMultipliers)
             t2 = time.time()
             #print('Took', t2-t1)
 
-
             # Compute the FFT for each z plane
-            (fshape, fslice, s1) = special.convolutionShape(projection, hMatrix.PSFShape(cc), hMatrix.Nnum(cc))
+            (fshape, fslice, s1) = special.convolutionShape(projection, hMatrix.PSFShape(cc), hMatrix.Nnum)
             Backprojection[cc] = special.special_fftconvolve_part3(fourierZPlane, fshape, fslice, s1, useCCode=True)
         elapsedTime = 0
         ru2 = util.cpuTime('both')
@@ -63,7 +62,7 @@ def BackwardProjectACC(hMatrix, projection, planes=None, numjobs=multiprocessing
         # Set up the work to iterate over each z plane
         work = []
         for cc in planes:
-            for bb in hMatrix.IterableBRange(cc):
+            for bb in hMatrix.iterableBRange:
                 work.append((cc, bb, projection, hMatrix, True, useCCode))
 
         # Run the multithreaded work
@@ -91,7 +90,7 @@ def BackwardProjectACC(hMatrix, projection, planes=None, numjobs=multiprocessing
         
         # Compute the FFT for each z plane
         for cc in planes:
-            (fshape, fslice, s1) = special.convolutionShape(projection, hMatrix.PSFShape(cc), hMatrix.Nnum(cc))
+            (fshape, fslice, s1) = special.convolutionShape(projection, hMatrix.PSFShape(cc), hMatrix.Nnum)
             Backprojection[cc] = special.special_fftconvolve_part3(fourierZPlanes[cc], fshape, fslice, s1)        
     t2 = time.time()
     assert(Backprojection.dtype == np.float32)   # Keep an eye out for any reversion to double-precision
@@ -124,7 +123,7 @@ def ForwardProjectACC(hMatrix, realspace, planes=None, numjobs=multiprocessing.c
     # Set up the work to iterate over each z plane
     work = []
     for cc in planes:
-        for bb in hMatrix.IterableBRange(cc):
+        for bb in hMatrix.iterableBRange:
             work.append((cc, bb, realspace[cc], hMatrix, False))
 
     # Run the multithreaded work
@@ -147,7 +146,7 @@ def ForwardProjectACC(hMatrix, realspace, planes=None, numjobs=multiprocessing.c
     TOTALprojection = None
     for cc in planes:
         # A bit complicated here to set up the correct inputs for convolutionShape...
-        (fshape, fslice, s1) = special.convolutionShape(realspace[cc], hMatrix.PSFShape(cc), hMatrix.Nnum(cc))
+        (fshape, fslice, s1) = special.convolutionShape(realspace[cc], hMatrix.PSFShape(cc), hMatrix.Nnum)
         thisProjection = special.special_fftconvolve_part3(fourierProjection[cc], fshape, fslice, s1)        
         if TOTALprojection is None:
             TOTALprojection = thisProjection

@@ -9,6 +9,16 @@ import special_fftconvolve as special
 import psfmatrix
 import jutils as util
 
+try:
+    #import pycuda.gpuarray as gpuarray
+    #import pycuda.driver as cuda
+    #import pycuda.autoinit
+    #from pycuda.compiler import SourceModule
+    import cupy as cp
+except:
+    print('Unable to import cupy - no GPU support will be available')
+
+
 # Ensure existence of the directory we will use to log performance diagnostics
 try:
     os.mkdir('perf_diags')
@@ -38,7 +48,7 @@ class ProjectorForZ_base(object):
         self.cpuTime = np.zeros(2)
         
         # Nnum: number of pixels across a lenslet array (after rectification)
-        self.Nnum = hMatrix.Nnum(cc)
+        self.Nnum = hMatrix.Nnum
         
         # This next chunk of logic is copied from the fftconvolve source code.
         # s1, s2: shapes of the input arrays
@@ -172,6 +182,169 @@ class ProjectorForZ_allC(ProjectorForZ_base):
         return plf.Convolve(projection, fHtsFull, bb, aa, self.Nnum, self.xAxisMultipliers, self.yAxisMultipliers, accum)
 
 
+#########################################################################
+# Helper functions implemented on GPU
+#########################################################################
+def prime_factors(n):
+    # From the internet
+    i = 2
+    factors = []
+    while i * i <= n:
+        if n % i:
+            i += 1
+        else:
+            n //= i
+            factors.append(i)
+    if n > 1:
+        factors.append(n)
+    return factors
+
+def CallKernel(kernel, workShape, blockShape, params):
+    workShape = np.asarray(workShape)
+    blockShape = np.asarray(blockShape)
+    gridShape = workShape//blockShape
+    # Check that the block shape we were given is an exact factor of the total work shape
+    if not np.all(gridShape*blockShape == workShape):
+        print('Block shape {0} incompatible with work shape {1}'.format(blockShape, workShape))
+        print('Prime factors for work dimensions:')
+        for d in workShape:
+            print(' {0}: {1}', d, prime_factors(d))
+        assert(False)
+    # Call through to the kernel
+    kernel(tuple(gridShape), tuple(blockShape), params)
+
+def element_strides(a):
+    return np.asarray(a.strides) / a.itemsize
+
+class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
+    def __init__(self):
+        self.mirrorX_kernel = cp.RawKernel(r'''
+            #include <cupy/complex.cuh>
+            extern "C" __global__ void mirrorX(const complex<float>* x, const complex<float>* mirrorXMultiplier, complex<float>* result)
+            {
+                int i = threadIdx.x + blockIdx.x * blockDim.x;
+                int j = threadIdx.y + blockIdx.y * blockDim.y;
+                int k = threadIdx.z + blockIdx.z * blockDim.z;
+                int i_width = blockDim.x * gridDim.x;
+                int j_width = blockDim.y * gridDim.y;
+                int k_width = blockDim.z * gridDim.z;
+                int jk_width = j_width * k_width;
+                // We need to reverse the order of all elements in the final dimension EXCEPT the first one.
+                int kDest = k_width - k;  // Will give correct indexing for all except k=0
+                if (k == 0)               // ... which we fix here
+                    kDest = 0;
+                result[i*jk_width + j*k_width + kDest] = conj(x[i*jk_width + j*k_width + k]) * mirrorXMultiplier[j];
+            }
+            ''', 'mirrorX')
+        self.mirrorY_kernel = cp.RawKernel(r'''
+            #include <cupy/complex.cuh>
+            extern "C" __global__ void mirrorY(const complex<float>* x, const complex<float>* mirrorXMultiplier, complex<float>* result)
+            {
+                int i = threadIdx.x + blockIdx.x * blockDim.x;
+                int j = threadIdx.y + blockIdx.y * blockDim.y;
+                int k = threadIdx.z + blockIdx.z * blockDim.z;
+                int i_width = blockDim.x * gridDim.x;
+                int j_width = blockDim.y * gridDim.y;
+                int k_width = blockDim.z * gridDim.z;
+                int jk_width = j_width * k_width;
+                // We need to reverse the order of all elements in the final dimension EXCEPT the first one.
+                int kDest = k_width - k;  // Will give correct indexing for all except k=0
+                if (k == 0)               // ... which we fix here
+                    kDest = 0;
+                result[i*jk_width + j*k_width + kDest] = conj(x[i*jk_width + j*k_width + k]) * mirrorXMultiplier[j];
+            }
+            ''', 'mirrorY')
+
+        self.calculateRows_kernel = cp.RawKernel(r'''
+            #include <cupy/complex.cuh>
+            extern "C" __global__
+            void calculateRows(const complex<float>* partialFourierOfProjection, const complex<float>* fHTsFull_unmirrored,
+            const complex<float>* yAxisMultipliers, int smallDimY, int smallDimX, complex<float>* accum)
+            {
+                int i = threadIdx.x + blockIdx.x * blockDim.x;
+                int j = threadIdx.y + blockIdx.y * blockDim.y;
+                int k = threadIdx.z + blockIdx.z * blockDim.z;
+                int i_width = blockDim.x * gridDim.x;
+                int j_width = blockDim.y * gridDim.y;
+                int k_width = blockDim.z * gridDim.z;
+                
+                int pos3 = i*j_width*k_width + j*k_width + k;
+                int pos3_partial = i*smallDimY*smallDimX + (j%smallDimY)*smallDimX + k;
+                int pos2 = j*k_width + k;
+                complex<float> emy = yAxisMultipliers[j];
+                accum[pos3] += partialFourierOfProjection[pos3_partial] * fHTsFull_unmirrored[pos2] * emy;
+            }
+            ''', 'calculateRows')
+
+        self.calculateRowsMirrored_kernel = cp.RawKernel(r'''
+            #include <cupy/complex.cuh>
+            extern "C" __global__
+            void calculateRowsMirrored(const complex<float>* partialFourierOfProjection, const complex<float>* fHTsFull_unmirrored,
+            const complex<float>* yAxisMultipliers, int smallDimXY, complex<float>* accum)
+            {
+                int i = threadIdx.x + blockIdx.x * blockDim.x;
+                int j = threadIdx.y + blockIdx.y * blockDim.y;
+                int k = threadIdx.z + blockIdx.z * blockDim.z;
+                int i_width = blockDim.x * gridDim.x;
+                int j_width = blockDim.y * gridDim.y;
+                int k_width = blockDim.z * gridDim.z;
+                
+                int pos3 = i*j_width*k_width + j*k_width + k;
+                int pos3_partial = i*smallDimY*smallDimX + (j%smallDimY)*smallDimX + k;
+                // For accessing fHTs, we need to reverse the order of all elements in the final dimension EXCEPT the first element.
+                // ***** TODO: I need to think about whether k_width is correct here - I want to use width of fHTsFull_unmirrored.
+                int k2 = k_width - k;  // Will give correct indexing for all except j=0
+                if (k == 0)            // ... which we fix here
+                k2 = 0;
+                int pos2 = j*k_width + k2;
+                complex<float> emy = yAxisMultipliers[j];
+                accum[pos3] += partialFourierOfProjection[pos3_partial] * conj(fHTsFull_unmirrored[pos2]) * emy;
+            }
+            ''', 'calculateRowsMirrored')
+
+    def MirrorXArray(self, fHtsFull):
+        # Utility function to convert the FFT of a PSF to the FFT of the X mirror of that same PSF
+        return plf.mirrorX(fHtsFull, self.mirrorXMultiplier)
+    
+    def MirrorYArray(self, fHtsFull):
+        # Utility function to convert the FFT of a PSF to the FFT of the Y mirror of that same PSF
+        return plf.mirrorY(fHtsFull, self.mirrorYMultiplier)
+
+    def special_fftconvolve(projection, fHtsFull, bb, aa, Nnum, mirrorX, xAxisMultipliers, yAxisMultipliers, accum):
+        # First compute the FFT of 'projection'
+        subset = projection[...,bb::Nnum,aa::Nnum]
+        fftArray = cp.fft.fftn(subset,axes=(1,2))
+        cp.cuda.runtime.deviceSynchronize()
+        # Now expand it in the horizontal direction
+        expandXMultiplier = xAxisMultipliers[1+aa]
+        partialFourierOfProjection = cp.empty((projection.shape[0], fftArray.shape[1], xAxisMultipliers.shape[1]), dtype='complex64')
+        CallKernel(expandX_kernel, partialFourierOfProjection.shape, (1,1,1),
+                   (fftArray, expandXMultiplier, np.int32(element_strides(fftArray)[0]), np.int32(element_strides(fftArray)[1]), partialFourierOfProjection))
+        cp.cuda.runtime.deviceSynchronize()
+        # Now expand it in the vertical direction and do the multiplication
+        print('shapes - check fHtsFull width for mirror scenario:', accum.shape, fHtsFull.shape)
+        CallKernel(calculateRows_kernel, accum.shape, (1,1,1),
+                   (partialFourierOfProjection, fHtsFull, yAxisMultipliers[bb],
+                    np.int32(partialFourierOfProjection.shape[1]), np.int32(partialFourierOfProjection.shape[2]), accum))
+        cp.cuda.runtime.deviceSynchronize()
+        return accum
+
+    def convolvePart3(self, projection, bb, aa, fHtsFull, mirrorX, accum):
+        cpu0 = util.cpuTime('both')
+        
+        temp = accum.copy()
+        accum = plf.special_fftconvolve(projection, fHtsFull, bb, aa, self.Nnum, 0, self.xAxisMultipliers, self.yAxisMultipliers, accum)
+        temp = self.special_fftconvolve(cu.asarray(projection), cu.asarray(fHtsFull), bb, aa, self.Nnum, 0, cu.asarray(self.xAxisMultipliers), cu.asarray(self.yAxisMultipliers), cu.asarray(temp))
+        relErr = np.abs((cp.asnumpy(temp) - accum)/accum)
+        print("Maximum relative error:", np.max(relErr))
+        print("Maximum at:", np.unravel_index(np.argmax(relErr), accum.shape))
+        sdfg
+        
+        
+        if mirrorX:
+            accum = plf.special_fftconvolve(projection, fHtsFull, self.Nnum-bb-1, aa, self.Nnum, 1, self.xAxisMultipliers, self.yAxisMultipliers, accum)
+        self.cpuTime += util.cpuTime('both')-cpu0
+        return accum
 
 
 
@@ -192,7 +365,7 @@ def ProjectForZY(cc, bb, source, hMatrix, backwards, projectorClass=ProjectorFor
         result = np.zeros((1, projector.rfshape[0], projector.rfshape[1]), dtype='complex64')
     else:
         result = np.zeros((source.shape[0], projector.rfshape[0], projector.rfshape[1]), dtype='complex64')
-    for aa in range(bb,int((hMatrix.Nnum(cc)+1)/2)):
+    for aa in range(bb,int((hMatrix.Nnum+1)/2)):
         result = projector.convolve(source, hMatrix, cc, bb, aa, backwards, result)
     t2 = time.time()
     assert(result.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
@@ -205,7 +378,7 @@ def ProjectForZY(cc, bb, source, hMatrix, backwards, projectorClass=ProjectorFor
 
 def ProjectForZ(hMatrix, backwards, cc, source, projectorClass=ProjectorForZ_allC, progress=tqdm):
     result = None
-    for bb in progress(hMatrix.IterableBRange(cc), leave=False, desc='Project - y'):
+    for bb in progress(hMatrix.iterableBRange, leave=False, desc='Project - y'):
         (thisResult, _, _, _) = ProjectForZY(cc, bb, source, hMatrix, backwards, projectorClass)
         if (result is None):
             result = thisResult
@@ -213,7 +386,7 @@ def ProjectForZ(hMatrix, backwards, cc, source, projectorClass=ProjectorForZ_all
             result += thisResult
     # Actually, for forward projection we don't need to do this separately for every z,
     # but it's easier to do it for symmetry (and this function is not used in performance-critical code anyway)
-    (fshape, fslice, s1) = special.convolutionShape(source, hMatrix.PSFShape(cc), hMatrix.Nnum(cc))
+    (fshape, fslice, s1) = special.convolutionShape(source, hMatrix.PSFShape(cc), hMatrix.Nnum)
     return special.special_fftconvolve_part3(result, fshape, fslice, s1)
 
         
