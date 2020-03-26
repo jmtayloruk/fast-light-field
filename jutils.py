@@ -12,7 +12,7 @@ def CheckComparison(arrayA, arrayB, maxAcceptableDifference, description="Test r
     else:
         print(" -> OK")
 
-def noProgressBar(work, **kwargs):
+def noProgressBar(work, desc=None, leave=True, **kwargs):
     # Dummy drop-in function to be used in place of 'tqdm' when we want to suppress a progress bar
     return work
 

@@ -7,6 +7,11 @@ import numpy as np
 from numpy.fft import fft, fftn, rfft, rfftn, irfftn
 import warnings
 
+try:
+    import cupy as cp
+except:
+    print('Unable to import cupy - no GPU support will be available')
+
 if False:
     # Old FFT code
     def myFFT2(mat, shape):
@@ -45,3 +50,10 @@ else:
         # but I don't feel I have *definitely* ruled out it being some sort of planning issue...
         # TODO: I suspect I don't do anything clever with 'shape', and should probably not accept it as a parameter since my C code wouldn't know what to do with it.
         return pyfftw.interfaces.numpy_fft.irfft2(mat, shape)
+
+
+def myFFT2_gpu(mat, shape):
+    return cp.fft.fft2(mat, shape)
+
+def myIFFT2_gpu(mat, shape):
+    return cp.fft.ifft2(mat, shape)

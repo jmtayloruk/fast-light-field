@@ -3,7 +3,12 @@ import os, sys, h5py
 from jutils import tqdm_alias as tqdm
 import myfft
 
-class HMatrix:
+try:
+    import cupy as cp
+except:
+    print('Unable to import cupy - no GPU support will be available')
+
+class HMatrix(object):
     def __init__(self, HPathFormat, HtPathFormat, HReducedShape, numZ=None, zStart=0, cacheMMap=True, cacheH=False):
         self.HPathFormat = HPathFormat
         self.HtPathFormat = HtPathFormat
@@ -26,7 +31,15 @@ class HMatrix:
         self.cacheMMap = cacheMMap
         self.mappedH = dict()
         self.mappedHt = dict()
+        self._fftFunc = myfft.myFFT2
   
+    def UpdateFFTFunc(self, fftFunc):
+        if self._fftFunc is not fftFunc:
+            self.HCache = dict()
+            self.mappedH = dict()
+            self.mappedHt = dict()
+            self._fftFunc = fftFunc
+    
     def Hcc(self, cc, useHt):
         if useHt:
             if (self.cacheMMap and (str(cc) in self.mappedHt)):
@@ -38,6 +51,10 @@ class HMatrix:
             pathFormat = self.HPathFormat
         # Note we need to cast to tuple for safety - strange errors seem to occur if we pass a numpy array instead
         result = np.memmap(pathFormat.format(z=cc+self.zStart), dtype='float32', mode='r', shape=tuple(self.HReducedShape[cc+self.zStart]))
+
+        if self._fftFunc is myfft.myFFT2_gpu:
+            result = cp.asarray(np.array(result))
+        
         if self.cacheMMap:
             if useHt:
                 self.mappedHt[str(cc)] = result
@@ -47,10 +64,11 @@ class HMatrix:
 
     def fH_uncached(self, cc, bb, aa, useHt, transposePSF, fshape):
         if transposePSF:
-            return myfft.myFFT2(self.Hcc(cc, useHt)[bb, aa].transpose(), fshape)
+            Hcc = self.Hcc(cc, useHt)[bb, aa].transpose()
         else:
-            return myfft.myFFT2(self.Hcc(cc, useHt)[bb, aa], fshape)
-    
+            Hcc = self.Hcc(cc, useHt)[bb, aa]
+        return self._fftFunc(Hcc, fshape)
+
     def fH(self, cc, bb, aa, useHt, transposePSF, fshape):
         key = '%d,%d,%d,%d,%d'%(cc, bb, aa, int(useHt), int(transposePSF))
         if (self.cacheH and key in self.Hcache):
