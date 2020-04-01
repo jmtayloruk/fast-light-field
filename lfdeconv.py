@@ -84,7 +84,7 @@ def ForwardProjectACC(hMatrix, realspace, planes=None, progress=tqdm, logPrint=T
     else:
         return TOTALprojection
 
-def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=multiprocessing.cpu_count()):
+def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=multiprocessing.cpu_count(), projectorClass=projector.Projector_allC):
     # Note:
     #  Htf is the *initial* backprojection of the camera image
     #  Xguess is the initial guess for the object
@@ -92,8 +92,8 @@ def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=multiprocessi
     t1 = time.time()
     for i in tqdm(range(maxIter), desc='RL deconv'):
         t0 = time.time()
-        HXguess = ForwardProjectACC(hMatrix, Xguess, numjobs=numjobs, logPrint=logPrint)
-        HXguessBack = BackwardProjectACC(hMatrix, HXguess, numjobs=numjobs, logPrint=logPrint)
+        HXguess = ForwardProjectACC(hMatrix, Xguess, numjobs=numjobs, progress=None, logPrint=logPrint, projectorClass=projectorClass)
+        HXguessBack = BackwardProjectACC(hMatrix, HXguess, numjobs=numjobs, progress=None, logPrint=logPrint, projectorClass=projectorClass)
         errorBack = Htf / HXguessBack
         Xguess = Xguess * errorBack
         Xguess[np.where(np.isnan(Xguess))] = 0
@@ -106,7 +106,7 @@ def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=multiprocessi
     return Xguess
 
 
-def main(argv):
+def main(argv, projectorClass=projector.Projector_allC, maxiter=8):
     #########################################################################
     # Test code for deconvolution
     #########################################################################
@@ -119,9 +119,10 @@ def main(argv):
         # No arguments passed
         print('NO ARGUMENTS PASSED. You should pass parameters to this script if you want to execute it directly to run self-tests (see script for what options are available)')
     
-    if ('basic' in argv) or ('full' in argv):
+    if ('basic' in argv) or ('full' in argv) or ('full32' in argv):
+        print('== Running basic (single-threaded backprojection) ==')
 	    # Run my back-projection code (single-threaded) on a cropped version of Prevedel's data
-        Htf = BackwardProjectACC(hMatrix, inputImage, planes=None, numjobs=1, logPrint=False)
+        Htf = BackwardProjectACC(hMatrix, inputImage, planes=None, numjobs=1, progress=None, logPrint=False, projectorClass=projectorClass)
         if True:
             definitive = tifffile.imread('Data/03_Reconstructed/exampleData/definitive_worm_crop_X15_backproject.tif')
             definitive = np.transpose(definitive, axes=(0,2,1))
@@ -135,12 +136,23 @@ def main(argv):
 
     if 'full' in argv:
         # Run my full Richardson-Lucy code on a cropped version of Prevedel's data
-        # Note that the back-projection must run first, since we use that as our initial guess
-        deconvolvedResult = DeconvRL(hMatrix, Htf, maxIter=8, Xguess=Htf.copy(), logPrint=False)
+        # Note that the back-projection (i.e. the 'basic' branch, above) must run first, since we use that as our initial guess
+        print('== Running full RL deconvolution ==')
+        deconvolvedResult = DeconvRL(hMatrix, Htf, maxIter=maxiter, Xguess=Htf.copy(), logPrint=False, projectorClass=projectorClass)
         definitive = tifffile.imread('Data/03_Reconstructed/exampleData/definitive_worm_crop_X15_iter8.tif')
         definitive = np.transpose(definitive, axes=(0,2,1))
         util.CheckComparison(definitive, deconvolvedResult*1e3, 1.0, 'Compare against matlab result')
 
+    if 'full32' in argv:
+        print('== Running full32 (full RL deconvolution on 32 parallel timepoints) ==')
+        import cProfile, pstats
+        Htf_x32 = np.tile(Htf[:,np.newaxis,:,:], (1,32,1,1))
+        pr = cProfile.Profile()
+        pr.enable()
+        deconvolvedResult = DeconvRL(hMatrix, Htf_x32, maxIter=maxiter, Xguess=Htf_x32.copy(), logPrint=False, projectorClass=projectorClass)
+        pr.disable()
+        pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
+    
     if 'parallel' in argv:
         # Code to test simultaneous deconvolution of an image pair
         # This does not test overall correctness, but it runs with two different (albeit proportional)
@@ -188,10 +200,9 @@ def main(argv):
         print('New method took', time.time()-t1)
     
        
-    if 'parallel' in argv:
+    if 'parallel-threading' in argv:
         # Run to test parallelization
-        # TODO: this just parasitises a previously-defined hMatrix and inputImage...
-        # Note that I think the reason I do not currently check for correctness is that
+        # Note that I think the reason I do not currently have code here to check for correctness is that
         # there are small numerical variations depending on how the parallelism occurs in each run.
         print("Testing multithreaded execution:")
         result1 = BackwardProjectACC(hMatrix, inputImage, planes=[0], numjobs=1, logPrint=False)

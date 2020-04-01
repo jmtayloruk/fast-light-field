@@ -95,27 +95,44 @@ def special_rfftn(in1, bb, aa, Nnum, fshape, partial=False):
     result *= expand2Multiplier(bb, fshape, result.shape)[...,np.newaxis]
     return result
 
-def convolutionShape(in1, in2Shape, Nnum):
+def prime_factors(n):
+    # Utility function from the internet
+    # This is useful for examining the GPU blocking possibilities for a given array shape
+    i = 2
+    factors = []
+    while i * i <= n:
+        if n % i:
+            i += 1
+        else:
+            n //= i
+            factors.append(i)
+    if n > 1:
+        factors.append(n)
+    return factors
+
+def convolutionShape(in1Shape, in2Shape, Nnum):
     # Logic copied from fftconvolve source code
-    s1 = np.array(in1.shape)
+    s1 = np.array(in1Shape)
     s2 = np.array(in2Shape)
     if (len(s1) == 3):   # Cope with case where we are processing multiple reconstructions in parallel
         s1 = s1[1:]
     shape = s1 + s2 - 1
     if False:
-        # TODO: I haven't worked out if/how I can do this yet.
-        # This is the original code in fftconvolve, which says:
+        # For reference: this is the original code in fftconvolve, which says:
         # Speed up FFT by padding to optimal size for FFTPACK
-        fshape = [_next_regular(int(d)) for d in shape]
+        # This doesn't work because I need things to be a multiple of Nnum
+        self.fshape = [_next_regular(int(d)) for d in shape]
     else:
-        fshape = [int(np.ceil(d/float(Nnum)))*Nnum for d in shape]   # TODO: comment why I need this to be a multiple of Nnum. It may well be because of my tiling tricks?
+        # This was the code I used which expands up to a multiple of Nnum.
+        # That is necessary because the tiling tricks I use in special_fftconvolve etc only work (I think) under that condition.
+        fshape = [int(np.ceil(d/float(Nnum)))*Nnum for d in shape]
     fslice = tuple([slice(0, int(sz)) for sz in shape])
     return (fshape, fslice, s1)
     
 def special_fftconvolve_part1(in1, bb, aa, Nnum, in2Shape, partial=False):
     assert((len(in1.shape) == 2) or (len(in1.shape) == 3))
     assert(len(in2Shape) == 2)
-    (fshape, _, _) = convolutionShape(in1, in2Shape, Nnum)
+    (fshape, _, _) = convolutionShape(in1.shape, in2Shape, Nnum)
     # Pre-1.9 NumPy FFT routines are not threadsafe - this code requires numpy 1.9 or greater
     assert(_rfft_mt_safe)
     fa = special_rfftn(in1, bb, aa, Nnum, fshape, partial=partial)
@@ -131,8 +148,9 @@ def special_fftconvolve_part3b(fab, fshape, fslice, s1, useCCode=False):
     return _centered(ret[fslice].copy(), s1)
 
 def special_fftconvolve_part3(fab, fshape, fslice, s1, useCCode=False):
-    # TODO: This gymnastics is probably unnecessary now I call ifft2 rather than fftn,
-    # although if I literally just do it in one call then it fails. I would need to work out why that is - it seems to be the [fslice] bit in part3b
+    # TODO: This gymnastics is probably unnecessary - it should be possible to do it all in one go.
+    # The complication is that fslice is a 2d slice, whereas fab[n] will probably be a 3D array.
+    # That can lead to unpredictable problems (wrong output shapes) unless I take a lot more care than I am doing at the moment!
     if (len(fab.shape) == 2):
         return special_fftconvolve_part3b(fab, fshape, fslice, s1, useCCode)
     else:
