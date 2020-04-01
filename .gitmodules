@@ -1,0 +1,4 @@
+[submodule "common"]
+	path = py_light_field/common
+	url = https://bitbucket.org/jmtaylor/common.git
+
