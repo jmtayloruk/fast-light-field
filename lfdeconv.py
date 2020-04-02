@@ -1,8 +1,8 @@
 import numpy as np
 import multiprocessing
-from joblib import Parallel, delayed
 import tifffile
 import sys, time, os
+import cProfile, pstats
 from jutils import tqdm_alias as tqdm
 
 import psfmatrix, lfimage
@@ -12,8 +12,10 @@ import jutils as util
 import py_light_field as plf
 
 # It has been suggested that low-level threading does not interact well with the joblib Parallel feature.
-# Certainly that matches my experience.
 # I have seen hangs, and also my code seems to take way longer to execute overall than it should.
+# However, in fact I am not using joblib now, so I could consider allowing MKL to parallelise things.
+# I don't use that in my gold-standard fastest code, though, so it's probably less confusing if I leave it
+# clear what is running single-threaded and what is multithreaded through deliberate choices I make
 os.environ['MKL_NUM_THREADS'] = '1'
 os.environ['OMP_NUM_THREADS'] = '1'
 os.environ['MKL_DYNAMIC'] = 'FALSE'
@@ -23,7 +25,7 @@ os.environ['MKL_DYNAMIC'] = 'FALSE'
 # Most of the core code has now been encapsulated in classes in projector.py
 #########################################################################
 
-def BackwardProjectACC(hMatrix, projection, planes=None, progress=tqdm, logPrint=True, numjobs=multiprocessing.cpu_count(), projectorClass=projector.Projector_allC):
+def BackwardProjectACC(hMatrix, projection, planes=None, progress=tqdm, logPrint=True, numjobs=multiprocessing.cpu_count(), projector=projector.Projector_allC(), keepNative=False):
     singleJob = (len(projection.shape) == 2)
     if singleJob:   # Cope with both a single 2D plane and an array of multiple 2D planes to process independently
         projection = projection[np.newaxis,:,:]
@@ -34,8 +36,7 @@ def BackwardProjectACC(hMatrix, projection, planes=None, progress=tqdm, logPrint
 
     ru1 = util.cpuTime('both')
     t1 = time.time()
-    projector = projectorClass()
-    Backprojection = projector.BackwardProjectACC(hMatrix, projection, planes, progress, logPrint, numjobs)
+    Backprojection = projector.BackwardProjectACC(hMatrix, projection, planes, progress, logPrint, numjobs, keepNative)
     assert(Backprojection.dtype == np.float32)   # Keep an eye out for any reversion to double-precision
     ru2 = util.cpuTime('both')
     t2 = time.time()
@@ -55,7 +56,7 @@ def BackwardProjectACC(hMatrix, projection, planes=None, progress=tqdm, logPrint
     else:
         return Backprojection
 
-def ForwardProjectACC(hMatrix, realspace, planes=None, progress=tqdm, logPrint=True, numjobs=multiprocessing.cpu_count(), projectorClass=projector.Projector_allC):
+def ForwardProjectACC(hMatrix, realspace, planes=None, progress=tqdm, logPrint=True, numjobs=multiprocessing.cpu_count(), projector=projector.Projector_allC(), keepNative=False):
     singleJob = (len(realspace.shape) == 3)
     if singleJob:   # Cope with both a single 2D plane and an array of multiple 2D planes to process independently
         realspace = realspace[:,np.newaxis,:,:]
@@ -66,8 +67,7 @@ def ForwardProjectACC(hMatrix, realspace, planes=None, progress=tqdm, logPrint=T
 
     ru1 = util.cpuTime('both')
     t1 = time.time()
-    projector = projectorClass()
-    TOTALprojection = projector.ForwardProjectACC(hMatrix, realspace, planes, progress, logPrint, numjobs)
+    TOTALprojection = projector.ForwardProjectACC(hMatrix, realspace, planes, progress, logPrint, numjobs, keepNative)
     assert(TOTALprojection.dtype == np.float32)   # Keep an eye out for any reversion to double-precision
     ru2 = util.cpuTime('both')
     t2 = time.time()
@@ -90,23 +90,25 @@ def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=multiprocessi
     #  Xguess is the initial guess for the object
     ru1 = util.cpuTime('both')
     t1 = time.time()
+    projector = projectorClass()
+    Htf = projector.asnative(Htf)
+    Xguess = projector.asnative(Xguess)
     for i in tqdm(range(maxIter), desc='RL deconv'):
         t0 = time.time()
-        HXguess = ForwardProjectACC(hMatrix, Xguess, numjobs=numjobs, progress=None, logPrint=logPrint, projectorClass=projectorClass)
-        HXguessBack = BackwardProjectACC(hMatrix, HXguess, numjobs=numjobs, progress=None, logPrint=logPrint, projectorClass=projectorClass)
+        HXguess = ForwardProjectACC(hMatrix, Xguess, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector, keepNative=True)
+        HXguessBack = BackwardProjectACC(hMatrix, HXguess, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector, keepNative=True)
         errorBack = Htf / HXguessBack
         Xguess = Xguess * errorBack
         Xguess[np.where(np.isnan(Xguess))] = 0
         ttime = time.time() - t0
-        print('iter %d | %d, took %.1f secs. Max val %f' % (i+1, maxIter, ttime, np.max(Xguess)))
+        print('iter %d | %d, took %.1f secs' % (i+1, maxIter, ttime))
     ru2 = util.cpuTime('both')
     t2 = time.time()
     print('Deconvolution elapsed wallclock time %f, rusage %f' % (t2-t1, np.sum(ru2-ru1)))
+    return projector.asnumpy(Xguess)
 
-    return Xguess
 
-
-def main(argv, projectorClass=projector.Projector_allC, maxiter=8):
+def main(argv, projectorClass=projector.Projector_allC, maxiter=8, numParallel=32):
     #########################################################################
     # Test code for deconvolution
     #########################################################################
@@ -114,6 +116,7 @@ def main(argv, projectorClass=projector.Projector_allC, maxiter=8):
     # Load the input image and matrix
     inputImage = lfimage.LoadLightFieldTiff('Data/02_Rectified/exampleData/20131219WORM2_small_full_neg_X1_N15_cropped_uncompressed.tif')
     hMatrix = psfmatrix.LoadMatrix('PSFmatrix/PSFmatrix_M40NA0.95MLPitch150fml3000from-26to0zspacing2Nnum15lambda520n1.0.mat')
+    deconvolvedResult = None
     
     if (len(argv) == 1):
         # No arguments passed
@@ -122,7 +125,7 @@ def main(argv, projectorClass=projector.Projector_allC, maxiter=8):
     if ('basic' in argv) or ('full' in argv) or ('full32' in argv):
         print('== Running basic (single-threaded backprojection) ==')
 	    # Run my back-projection code (single-threaded) on a cropped version of Prevedel's data
-        Htf = BackwardProjectACC(hMatrix, inputImage, planes=None, numjobs=1, progress=None, logPrint=False, projectorClass=projectorClass)
+        Htf = BackwardProjectACC(hMatrix, inputImage, planes=None, numjobs=1, progress=None, logPrint=False, projector=projectorClass())
         if True:
             definitive = tifffile.imread('Data/03_Reconstructed/exampleData/definitive_worm_crop_X15_backproject.tif')
             definitive = np.transpose(definitive, axes=(0,2,1))
@@ -134,19 +137,25 @@ def main(argv, projectorClass=projector.Projector_allC, maxiter=8):
             definitive = np.load('semi-definitive.npy')
             util.CheckComparison(definitive, Htf, 1.0, 'Compare against matlab result')
 
+    if 'prime' in argv:
+        # Run a single RL iteration to prime things (my caches, GPU FFT plans, etc) for subsequent runs (since we may be interested in timing/profiling)
+        print('== Priming caches with a single RL iteration ==')
+        deconvolvedResult = DeconvRL(hMatrix, Htf, maxIter=1, Xguess=Htf.copy(), logPrint=False, projectorClass=projectorClass)
+
     if 'full' in argv:
         # Run my full Richardson-Lucy code on a cropped version of Prevedel's data
         # Note that the back-projection (i.e. the 'basic' branch, above) must run first, since we use that as our initial guess
         print('== Running full RL deconvolution ==')
+        print('Problem size {0}={1}MB'.format(Htf.shape, Htf.size*Htf.itemsize/1e6))
         deconvolvedResult = DeconvRL(hMatrix, Htf, maxIter=maxiter, Xguess=Htf.copy(), logPrint=False, projectorClass=projectorClass)
         definitive = tifffile.imread('Data/03_Reconstructed/exampleData/definitive_worm_crop_X15_iter8.tif')
         definitive = np.transpose(definitive, axes=(0,2,1))
         util.CheckComparison(definitive, deconvolvedResult*1e3, 1.0, 'Compare against matlab result')
 
     if 'full32' in argv:
-        print('== Running full32 (full RL deconvolution on 32 parallel timepoints) ==')
-        import cProfile, pstats
-        Htf_x32 = np.tile(Htf[:,np.newaxis,:,:], (1,32,1,1))
+        print('== Running full32 (full RL deconvolution on {0} parallel timepoints) =='.format(numParallel))
+        Htf_x32 = np.tile(Htf[:,np.newaxis,:,:], (1,numParallel,1,1))
+        print('Problem size {0}={1}MB'.format(Htf_x32.shape, Htf_x32.size*Htf_x32.itemsize/1e6))
         pr = cProfile.Profile()
         pr.enable()
         deconvolvedResult = DeconvRL(hMatrix, Htf_x32, maxIter=maxiter, Xguess=Htf_x32.copy(), logPrint=False, projectorClass=projectorClass)
@@ -196,7 +205,7 @@ def main(argv, projectorClass=projector.Projector_allC, maxiter=8):
         print('Running (%d planes x10)'%numPlanesToUse)
         t1 = time.time()
         temp = BackwardProjectACC(hMatrix, np.tile(candidate, (5,1,1)), planes=None, numjobs=1, logPrint=False)
-        tenRoundtrip = ForwardProjectACC(hMatrix, temp, planes=None, logPrint=False)
+        deconvolvedResult = ForwardProjectACC(hMatrix, temp, planes=None, logPrint=False)
         print('New method took', time.time()-t1)
     
        
@@ -221,5 +230,8 @@ def main(argv, projectorClass=projector.Projector_allC, maxiter=8):
         else:
             print("  -> OK")
 
+    # Return the last result we obtained
+    return deconvolvedResult
+
 if __name__ == "__main__":
-    main(sys.argv)
+    main(sys.argv, projectorClass=projector.Projector_python)
