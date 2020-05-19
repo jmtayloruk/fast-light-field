@@ -552,6 +552,12 @@ class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
                         dummyWork = cp.empty(workShape)
                         t1 = time.time()
                         kernelCall(dummyWork, thisBlockShape)
+                        if not gSynchronizeAfterKernelCalls:
+                            # We would not normally synchronize as part of the kernel call, but we need to do that here
+                            # so that we can have a meaningful measure of how long the kernel call took to run to completion.
+                            # I still don't fully understand if/when deviceSynchronize is needed, and it's possible that calling this
+                            # does not give the most "realistic" measure of run time. But it's the best option I know of, for now.
+                            cp.cuda.runtime.deviceSynchronize()
                         t = time.time()-t1
                         minTime = np.minimum(minTime, t)
                         maxTime = np.maximum(maxTime, t)

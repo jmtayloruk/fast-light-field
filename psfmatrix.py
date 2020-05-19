@@ -94,7 +94,7 @@ def GetPathFormats(matPath):
     htPathFormat = mmapPath+'/Ht{z:02d}.array'
     return (mmapPath, hPathFormat, htPathFormat)
 
-def LoadRawMatrixData(matPath, forceRegeneration = False):
+def LoadRawMatrixData(matPath):
     # Load the contents of a .mat file (and generate memmap backing files that my optimized code actually uses)
     # Normally this function should not be called directly, but it is needed if we want to run old code that
     # makes direct use of the matrices _H and _Ht.
@@ -155,5 +155,5 @@ def LoadMatrix(matPath, numZ=None, zStart=0, forceRegeneration = False, cacheH=F
     except:
         print("Failed to load array shapes. There are probably no memmap files either.")
         print("We will now try to generate them from scratch from the .mat file, which will take a little while")
-        (_, _, _, hPathFormat, htPathFormat, hReducedShape, htReducedShape) = LoadRawMatrixData(matPath, forceRegeneration)
+        (_, _, _, hPathFormat, htPathFormat, hReducedShape, htReducedShape) = LoadRawMatrixData(matPath)
     return HMatrix(hPathFormat, htPathFormat, hReducedShape, numZ=numZ, zStart=zStart, cacheH=cacheH, cacheMMap=True)
