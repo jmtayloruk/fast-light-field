@@ -1,0 +1,16 @@
+{\rtf1\ansi\ansicpg1252\cocoartf1504\cocoasubrtf840
+{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww15160\viewh15800\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 \ul \ulc0 Test against Matlab\ulnone \
+Check a plot of psfLine to see if it looks the same\
+Compare psfWAVE_STACK and LFpsfWAVE_STACK between my code and theirs\
+\
+\uc0\u8730  Confirmed that I can calculate Ht from the H in the .mat, and my Ht matches theirs.\
+\
+\ul Investigate\ulnone \
+- I am fairly sure there is something incorrect happening with the PSF at z=0. It has a bright spot in the centre that does not appear at z=-0.5. Could there actually be a bug in their code for z=0? I should investigate this, because although they may not care much, it\'92s very important for me since it is around z=0 that I am particularly interested in. It might also explain the effect I seem to remember I saw where my motion-aware deconvolution behaved differently even a very small distance away from z=0\'85\
+- I seem to remember seeing some slightly odd effects in the off-axis reconstruction, where it was reconstructing a rectangle with a single-pixel-wide strip of a different intensity at the edge. It\'92s not impossible that that could be an off-by-one bug in their PSF generation, so I should investigate that I think\'85}
