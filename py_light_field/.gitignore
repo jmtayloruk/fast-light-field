@@ -1,4 +1,5 @@
 test-py-symmetry/DerivedData
 fftw*
+!fftw*.tar.gz
 test-py-symmetry/test-py-symmetry.xcodeproj/project.xcworkspace/xcuserdata/jonny.xcuserdatad/UserInterfaceState.xcuserstate
 test-py-symmetry/test-py-symmetry.xcodeproj/project.xcworkspace/xcshareddata

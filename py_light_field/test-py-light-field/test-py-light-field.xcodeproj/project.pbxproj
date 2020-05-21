@@ -8,14 +8,14 @@
 
 /* Begin PBXBuildFile section */
 		FB62DF0923F310B600DCC6BB /* main.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FB62DF0823F310B600DCC6BB /* main.cpp */; };
-		FB62DF1023F310C900DCC6BB /* py_symmetry.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FB62DF0F23F310C900DCC6BB /* py_symmetry.cpp */; };
+		FB62DF1023F310C900DCC6BB /* py_light_field.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FB62DF0F23F310C900DCC6BB /* py_light_field.cpp */; };
 		FB62DF1823F3110B00DCC6BB /* jPythonArray.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FB62DF1323F3110B00DCC6BB /* jPythonArray.cpp */; };
 		FB62DF1923F3110B00DCC6BB /* jPythonCommon.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FB62DF1523F3110B00DCC6BB /* jPythonCommon.cpp */; };
-		FB62DF1B23F3132F00DCC6BB /* libpython3.5m.a in Frameworks */ = {isa = PBXBuildFile; fileRef = FB62DF1A23F3132F00DCC6BB /* libpython3.5m.a */; };
 		FB62DF1D23F313C100DCC6BB /* libfftw3f.a in Frameworks */ = {isa = PBXBuildFile; fileRef = FB62DF1C23F313C100DCC6BB /* libfftw3f.a */; };
 		FB62DF1F23F313CB00DCC6BB /* jAssert.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FB62DF1E23F313CB00DCC6BB /* jAssert.cpp */; };
 		FB62DF2123F313DC00DCC6BB /* DebugPrintf_Unix.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FB62DF2023F313DC00DCC6BB /* DebugPrintf_Unix.cpp */; };
 		FB62DF2823F5AC7A00DCC6BB /* libfftw3f_threads.a in Frameworks */ = {isa = PBXBuildFile; fileRef = FB62DF2723F5AC7A00DCC6BB /* libfftw3f_threads.a */; };
+		FB9785D62428FE4600395380 /* libpython3.7m.a in Frameworks */ = {isa = PBXBuildFile; fileRef = FB9785D52428FE4600395380 /* libpython3.7m.a */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -31,19 +31,19 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		FB62DF0523F310B600DCC6BB /* test-py-symmetry */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "test-py-symmetry"; sourceTree = BUILT_PRODUCTS_DIR; };
+		FB62DF0523F310B600DCC6BB /* test-py-light-field */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "test-py-light-field"; sourceTree = BUILT_PRODUCTS_DIR; };
 		FB62DF0823F310B600DCC6BB /* main.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = main.cpp; sourceTree = "<group>"; };
-		FB62DF0F23F310C900DCC6BB /* py_symmetry.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = py_symmetry.cpp; path = ../../py_symmetry.cpp; sourceTree = "<group>"; };
+		FB62DF0F23F310C900DCC6BB /* py_light_field.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = py_light_field.cpp; path = ../../py_light_field.cpp; sourceTree = "<group>"; };
 		FB62DF1323F3110B00DCC6BB /* jPythonArray.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = jPythonArray.cpp; path = ../../common/jPythonArray.cpp; sourceTree = "<group>"; };
 		FB62DF1423F3110B00DCC6BB /* jPythonArray.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = jPythonArray.h; path = ../../common/jPythonArray.h; sourceTree = "<group>"; };
 		FB62DF1523F3110B00DCC6BB /* jPythonCommon.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = jPythonCommon.cpp; path = ../../common/jPythonCommon.cpp; sourceTree = "<group>"; };
 		FB62DF1623F3110B00DCC6BB /* jPythonCommon.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = jPythonCommon.h; path = ../../common/jPythonCommon.h; sourceTree = "<group>"; };
 		FB62DF1723F3110B00DCC6BB /* jPythonList.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = jPythonList.h; path = ../../common/jPythonList.h; sourceTree = "<group>"; };
-		FB62DF1A23F3132F00DCC6BB /* libpython3.5m.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libpython3.5m.a; path = ../../../../../../Users/jonny/anaconda/lib/libpython3.5m.a; sourceTree = "<group>"; };
 		FB62DF1C23F313C100DCC6BB /* libfftw3f.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libfftw3f.a; path = "../../fftw-3.3.8/.libs/libfftw3f.a"; sourceTree = "<group>"; };
 		FB62DF1E23F313CB00DCC6BB /* jAssert.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = jAssert.cpp; path = ../../common/jAssert.cpp; sourceTree = "<group>"; };
 		FB62DF2023F313DC00DCC6BB /* DebugPrintf_Unix.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = DebugPrintf_Unix.cpp; path = ../../common/DebugPrintf_Unix.cpp; sourceTree = "<group>"; };
 		FB62DF2723F5AC7A00DCC6BB /* libfftw3f_threads.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libfftw3f_threads.a; path = "../../fftw-3.3.8/threads/.libs/libfftw3f_threads.a"; sourceTree = "<group>"; };
+		FB9785D52428FE4600395380 /* libpython3.7m.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libpython3.7m.a; path = ../../../../../Users/jonny/opt/anaconda3/lib/libpython3.7m.a; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -51,7 +51,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				FB62DF1B23F3132F00DCC6BB /* libpython3.5m.a in Frameworks */,
+				FB9785D62428FE4600395380 /* libpython3.7m.a in Frameworks */,
 				FB62DF2823F5AC7A00DCC6BB /* libfftw3f_threads.a in Frameworks */,
 				FB62DF1D23F313C100DCC6BB /* libfftw3f.a in Frameworks */,
 			);
@@ -63,7 +63,7 @@
 		FB62DEFC23F310B600DCC6BB = {
 			isa = PBXGroup;
 			children = (
-				FB62DF0723F310B600DCC6BB /* test-py-symmetry */,
+				FB62DF0723F310B600DCC6BB /* test-py-light-field */,
 				FB62DF0623F310B600DCC6BB /* Products */,
 			);
 			sourceTree = "<group>";
@@ -71,22 +71,22 @@
 		FB62DF0623F310B600DCC6BB /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				FB62DF0523F310B600DCC6BB /* test-py-symmetry */,
+				FB62DF0523F310B600DCC6BB /* test-py-light-field */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
-		FB62DF0723F310B600DCC6BB /* test-py-symmetry */ = {
+		FB62DF0723F310B600DCC6BB /* test-py-light-field */ = {
 			isa = PBXGroup;
 			children = (
 				FB62DF1223F310F600DCC6BB /* common */,
 				FB62DF0823F310B600DCC6BB /* main.cpp */,
-				FB62DF0F23F310C900DCC6BB /* py_symmetry.cpp */,
-				FB62DF1A23F3132F00DCC6BB /* libpython3.5m.a */,
+				FB62DF0F23F310C900DCC6BB /* py_light_field.cpp */,
+				FB9785D52428FE4600395380 /* libpython3.7m.a */,
 				FB62DF1C23F313C100DCC6BB /* libfftw3f.a */,
 				FB62DF2723F5AC7A00DCC6BB /* libfftw3f_threads.a */,
 			);
-			path = "test-py-symmetry";
+			path = "test-py-light-field";
 			sourceTree = "<group>";
 		};
 		FB62DF1223F310F600DCC6BB /* common */ = {
@@ -106,9 +106,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		FB62DF0423F310B600DCC6BB /* test-py-symmetry */ = {
+		FB62DF0423F310B600DCC6BB /* test-py-light-field */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = FB62DF0C23F310B600DCC6BB /* Build configuration list for PBXNativeTarget "test-py-symmetry" */;
+			buildConfigurationList = FB62DF0C23F310B600DCC6BB /* Build configuration list for PBXNativeTarget "test-py-light-field" */;
 			buildPhases = (
 				FB62DF0123F310B600DCC6BB /* Sources */,
 				FB62DF0223F310B600DCC6BB /* Frameworks */,
@@ -118,9 +118,9 @@
 			);
 			dependencies = (
 			);
-			name = "test-py-symmetry";
-			productName = "test-py-symmetry";
-			productReference = FB62DF0523F310B600DCC6BB /* test-py-symmetry */;
+			name = "test-py-light-field";
+			productName = "test-py-light-field";
+			productReference = FB62DF0523F310B600DCC6BB /* test-py-light-field */;
 			productType = "com.apple.product-type.tool";
 		};
 /* End PBXNativeTarget section */
@@ -129,7 +129,7 @@
 		FB62DEFD23F310B600DCC6BB /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
-				LastUpgradeCheck = 0620;
+				LastUpgradeCheck = 0830;
 				ORGANIZATIONNAME = "Jonathan Taylor";
 				TargetAttributes = {
 					FB62DF0423F310B600DCC6BB = {
@@ -137,7 +137,7 @@
 					};
 				};
 			};
-			buildConfigurationList = FB62DF0023F310B600DCC6BB /* Build configuration list for PBXProject "test-py-symmetry" */;
+			buildConfigurationList = FB62DF0023F310B600DCC6BB /* Build configuration list for PBXProject "test-py-light-field" */;
 			compatibilityVersion = "Xcode 3.2";
 			developmentRegion = English;
 			hasScannedForEncodings = 0;
@@ -149,7 +149,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				FB62DF0423F310B600DCC6BB /* test-py-symmetry */,
+				FB62DF0423F310B600DCC6BB /* test-py-light-field */,
 			);
 		};
 /* End PBXProject section */
@@ -160,7 +160,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				FB62DF1823F3110B00DCC6BB /* jPythonArray.cpp in Sources */,
-				FB62DF1023F310C900DCC6BB /* py_symmetry.cpp in Sources */,
+				FB62DF1023F310C900DCC6BB /* py_light_field.cpp in Sources */,
 				FB62DF2123F313DC00DCC6BB /* DebugPrintf_Unix.cpp in Sources */,
 				FB62DF0923F310B600DCC6BB /* main.cpp in Sources */,
 				FB62DF1923F3110B00DCC6BB /* jPythonCommon.cpp in Sources */,
@@ -178,20 +178,24 @@
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++0x";
 				CLANG_CXX_LIBRARY = "libc++";
 				CLANG_ENABLE_MODULES = YES;
-				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_ARC = NO;
 				CLANG_WARN_BOOL_CONVERSION = YES;
 				CLANG_WARN_CONSTANT_CONVERSION = YES;
 				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
 				CLANG_WARN_EMPTY_BODY = YES;
 				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
 				CLANG_WARN_INT_CONVERSION = YES;
 				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu99;
 				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_OPTIMIZATION_LEVEL = 0;
 				GCC_PREPROCESSOR_DEFINITIONS = "TESTING=1";
 				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
@@ -204,18 +208,22 @@
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/include,
-					"$(HOME)/anaconda/lib/python3.5/site-packages/numpy/core/include",
-					"$(HOME)/anaconda/include/python3.5m",
+					"$(HOME)/opt/anaconda3/lib/python3.7/site-packages/numpy/core/include",
+					"$(HOME)/opt/anaconda3/include/python3.7m",
 					/usr/local/include,
 				);
-				LIBRARY_SEARCH_PATHS = /Users/jonny/anaconda/lib;
-				MACOSX_DEPLOYMENT_TARGET = 10.11;
+				LIBRARY_SEARCH_PATHS = (
+					"$(HOME)/opt/anaconda3/lib",
+					"fftw-3.3.8/.libs",
+					"fftw-3.3.8/threads/.libs",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 10.12;
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				OTHER_LDFLAGS = (
 					"-ldl",
 					"-weak_library",
-					/Users/jonny/anaconda/lib/libpython3.5m.dylib,
+					"$(HOME)/opt/anaconda3/lib/libpython3.7m.dylib",
 				);
 				SDKROOT = macosx;
 			};
@@ -228,14 +236,16 @@
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++0x";
 				CLANG_CXX_LIBRARY = "libc++";
 				CLANG_ENABLE_MODULES = YES;
-				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_ARC = NO;
 				CLANG_WARN_BOOL_CONVERSION = YES;
 				CLANG_WARN_CONSTANT_CONVERSION = YES;
 				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
 				CLANG_WARN_EMPTY_BODY = YES;
 				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
 				CLANG_WARN_INT_CONVERSION = YES;
 				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
@@ -243,6 +253,7 @@
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu99;
+				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_PREPROCESSOR_DEFINITIONS = "TESTING=1";
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
@@ -253,17 +264,21 @@
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/include,
-					"$(HOME)/anaconda/lib/python3.5/site-packages/numpy/core/include",
-					"$(HOME)/anaconda/include/python3.5m",
+					"$(HOME)/opt/anaconda3/lib/python3.7/site-packages/numpy/core/include",
+					"$(HOME)/opt/anaconda3/include/python3.7m",
 					/usr/local/include,
 				);
-				LIBRARY_SEARCH_PATHS = /Users/jonny/anaconda/lib;
-				MACOSX_DEPLOYMENT_TARGET = 10.11;
+				LIBRARY_SEARCH_PATHS = (
+					"$(HOME)/opt/anaconda3/lib",
+					"fftw-3.3.8/.libs",
+					"fftw-3.3.8/threads/.libs",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 10.12;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				OTHER_LDFLAGS = (
 					"-ldl",
 					"-weak_library",
-					/Users/jonny/anaconda/lib/libpython3.5m.dylib,
+					"$(HOME)/opt/anaconda3/lib/libpython3.7m.dylib",
 				);
 				SDKROOT = macosx;
 			};
@@ -273,10 +288,9 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				LIBRARY_SEARCH_PATHS = (
-					"$(inherited)",
-					/Users/jonny/anaconda/lib,
-					"/Volumes/Development/light-field-flow/py_symmetry/fftw-3.3.8/.libs",
-					"/Volumes/Development/light-field-flow/py_symmetry/fftw-3.3.8/threads/.libs",
+					"$(HOME)/opt/anaconda3/lib",
+					"../fftw-3.3.8/.libs",
+					"../fftw-3.3.8/threads/.libs",
 				);
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -286,10 +300,9 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				LIBRARY_SEARCH_PATHS = (
-					"$(inherited)",
-					/Users/jonny/anaconda/lib,
-					"/Volumes/Development/light-field-flow/py_symmetry/fftw-3.3.8/.libs",
-					"/Volumes/Development/light-field-flow/py_symmetry/fftw-3.3.8/threads/.libs",
+					"$(HOME)/opt/anaconda3/lib",
+					"../fftw-3.3.8/.libs",
+					"../fftw-3.3.8/threads/.libs",
 				);
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -298,7 +311,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		FB62DF0023F310B600DCC6BB /* Build configuration list for PBXProject "test-py-symmetry" */ = {
+		FB62DF0023F310B600DCC6BB /* Build configuration list for PBXProject "test-py-light-field" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				FB62DF0A23F310B600DCC6BB /* Debug */,
@@ -307,13 +320,14 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		FB62DF0C23F310B600DCC6BB /* Build configuration list for PBXNativeTarget "test-py-symmetry" */ = {
+		FB62DF0C23F310B600DCC6BB /* Build configuration list for PBXNativeTarget "test-py-light-field" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				FB62DF0D23F310B600DCC6BB /* Debug */,
 				FB62DF0E23F310B600DCC6BB /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
 	};

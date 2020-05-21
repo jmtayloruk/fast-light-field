@@ -2,12 +2,25 @@ import numpy as np
 from scipy.signal import fftconvolve
 import scipy.fftpack
 import time, warnings, os
+from joblib import Parallel, delayed
 from jutils import tqdm_alias as tqdm
 
-import py_symmetry as jps
+import py_light_field as plf
 import special_fftconvolve as special
 import psfmatrix
 import jutils as util
+import myfft
+
+try:
+    import cupy as cp
+    import cupyx
+    import cupyx.scipy.fftpack
+    import pycuda.driver as cuda
+    gpuAvailable = True
+except:
+    print('Unable to import cupy - no GPU support will be available')
+    gpuAvailable = False
+
 
 # Ensure existence of the directory we will use to log performance diagnostics
 try:
@@ -15,51 +28,75 @@ try:
 except:
     pass  # Probably the directory already exists
 
+#########################################################################
+# Global variables that affect GPU kernel block selection (see code below for usage)
+#########################################################################
+gBlockSelection = 'measure'
+gBlockSizeCache = dict()
+# For hard-coded values
+gExpandXBlocks = (1, 1, 1)
+gCalculateRowsBlocks = (1, 1, 1)
+gMirrorXBlocks = (1, 1)
+gMirrorYBlocks = (1, 1)
+# For auto-selected values (these are probably reasonably adequate)
+gExpandXTargetBlocks = (1, 15, 8)
+gCalculateRowsTargetBlocks = (3, 8, 8)
+gCalculateRowsMaxBlocks = (3, 13, 13)
+
+gPadFactor = 8
+# Flag controlling a few debug checks.
+# Turn this off for a small performance boost, at the expense of a few self-consistency checks
+gDebugChecks = True
+# Flag controlling whether we call cp.cuda.runtime.deviceSynchronize()
+# I am not sure if it is safe to turn this off (I am not completely sure how smart cupy is at making sure we wait before starting a dependent custom kernel)
+# It does speed things up noticably, though!
+# Presumably this is because it is able to continue running my python glue code while the GPU is busy, and so I am able to hide that CPU execution time
+# Note that turning this off will make python (CPU) code profiler reports much harder to interpret
+gSynchronizeAfterKernelCalls = True
 
 # Note: H.shape in python is (<num z planes>, Nnum, Nnum, <psf size>, <psf size>),
 #                       e.g. (56, 19, 19, 343, 343)
 
-#########################################################################        
-# Projector class performs the convolution between a given image
+#########################################################################
+# Z Projector class performs the convolution between a given image
 # and a (provided) PSF. It operates for a specific ZYX, 
 # but does the projection for all symmetries that exist for that PSF
 # (i.e. in practice it is likely to project for more than just the one specified ZYX)
 #########################################################################        
 
-class Projector(object):
+class ProjectorForZ_base(object):
     # Note: the variable names in this class mostly imply we are doing the back-projection
-    # (e.g. Ht, 'projection', etc. However, the same code also does forward-projection!)
-    def __init__(self, projection, hMatrix, cc):
-        # Note: H and Hts are not stored as class variables.
-        # I had a lot of trouble with them and multithreading,
-        # and eventually settled on having them in shared memory.
-        # As I encapsulate more stuff in this class, I could bring them back as class variables...
-
+    # (e.g. 'Hts', 'projection', etc. However, the same code also does forward-projection!)
+    def __init__(self, projection, hMatrix, cc, fftPlan=None, fftPlan2=None):
+        assert(len(projection.shape) == 3)
         self.cpuTime = np.zeros(2)
+        self.fftPlan = fftPlan       # Only currently used by GPU version, but our code
+        self.fftPlan2 = fftPlan2     # expects it to be defined (as None) in other cases
+        self.initialisedForCC = cc
         
         # Nnum: number of pixels across a lenslet array (after rectification)
-        self.Nnum = hMatrix.Nnum(cc)
+        self.Nnum = hMatrix.Nnum
         
         # This next chunk of logic is copied from the fftconvolve source code.
         # s1, s2: shapes of the input arrays
         # fshape: shape of the (full, possibly padded) result array in Fourier space
         # fslice: slicing tuple specifying the actual result size that should be returned
-        self.s1 = np.array(projection.shape)
+        self.s1 = np.array(projection.shape[-2:])
         self.s2 = np.array(hMatrix.PSFShape(cc))
-        shape = self.s1 + self.s2 - 1
-        if False:
-            # TODO: I haven't worked out if/how I can do this yet.
-            # This is the original code in fftconvolve, which says:
-            # Speed up FFT by padding to optimal size for FFTPACK
-            self.fshape = [_next_regular(int(d)) for d in shape]
-        else:
-            self.fshape = [int(np.ceil(d/float(self.Nnum)))*self.Nnum for d in shape]
-        self.fslice = tuple([slice(0, int(sz)) for sz in shape])
+        (self.fshape, self.fslice, _) = special.convolutionShape(self.s1, self.s2, self.Nnum)
         
         # rfslice: slicing tuple to crop down full fft array to the shape that would be output from rfftn
         self.rfshape = (self.fshape[0], int(self.fshape[1]/2)+1)
         self.rfslice = (slice(0,self.fshape[0]), slice(0,int(self.fshape[1]/2)+1))
-        
+        # reducedShape: shape of the initial FFT, which we will then tile up to full size using the special_fftconvolve tricks
+        self.reducedShape = ()
+        for d in self.fshape:
+            assert((d % self.Nnum) == 0)
+            self.reducedShape = self.reducedShape + (int(d/self.Nnum),)
+        # rfshape_xPadded: real FFT array shape but with extra padding to improve row alignment in memory.
+        # This padding is crucial for GPU performance, and might even help a little for CPU-based code
+        self.rfshape_xPadded = (self.rfshape[0], ((self.rfshape[1] + gPadFactor-1) // gPadFactor) * gPadFactor)
+
         # Precalculate arrays that are needed as part of the process of converting from FFT(H) to FFT(mirrorImage(H))
         padLength = self.fshape[0] - self.s2[0]
         self.mirrorXMultiplier = np.exp((1j * (1+padLength) * 2*np.pi / self.fshape[0]) * np.arange(self.fshape[0])).astype('complex64')
@@ -76,148 +113,725 @@ class Projector(object):
         self.xAxisMultipliers = np.append(self.mirrorYMultiplier[np.newaxis,:], expandXMultiplier, axis=0)
         self.yAxisMultipliers = np.array([expandYMultiplier, expandYMultiplier * self.mirrorXMultiplier])
 
-        return
-    
-    
-    #########################################################################
-    # Convolve a projection with a H matrix (PSF), taking advantage of all
-    # the mirror symmetries that are present in the H matrix
-    #########################################################################
-    def MirrorXArray(self, fHtsFull):
-        # Utility function to convert the FFT of a PSF to the FFT of the X mirror of that same PSF
-        if True:
-            # Old code that does this in pure python
-            fHtsFull = fHtsFull.conj() * self.mirrorXMultiplier[:,np.newaxis]
-            fHtsFull[:,1::] = fHtsFull[:,1::][:,::-1]
-            return fHtsFull
-        else:
-            # New, faster code written in C
-            return jps.mirrorX(fHtsFull, self.mirrorXMultiplier)
+    def nativeZeros(self, shape, dtype=float):
+        return np.zeros(shape, dtype)
 
-    def MirrorYArray(self, fHtsFull):
-        # Utility function to convert the FFT of a PSF to the FFT of the Y mirror of that same PSF
-        if True:
-            # Old code that does this in pure python
-            fHtsFull = fHtsFull.conj() * self.mirrorYMultiplier
-            fHtsFull[1::] = fHtsFull[1::][::-1]
-            return fHtsFull
-        else:
-            # New, faster code written in C
-            return jps.mirrorY(fHtsFull, self.mirrorYMultiplier)
-        
-    def convolvePart3(self, projection, bb, aa, fHtsFull, mirrorX, accum):
-        cpu0 = util.cpuTime('both')
-        if False:
-            accum = special.special_fftconvolve2(projection,bb,aa,self.Nnum,self.s2,accum,fHtsFull,int(self.fshape[1]/2)+1,None)
-        else:
-            # Old pure-python code still here for reference, for now
-            accum = special.special_fftconvolve(projection,bb,aa,self.Nnum,self.s2,accum,fb=fHtsFull[self.rfslice])
-        self.cpuTime += util.cpuTime('both')-cpu0
-        if mirrorX:
-            cpu0 = util.cpuTime('both')
-            if False:
-                accum = special.special_fftconvolve2(projection,self.Nnum-bb-1,aa,self.Nnum,self.s2,accum,fHtsFull,int(self.fshape[1]/2)+1,self.mirrorXMultiplier)
-            else:
-                # Old pure-python code still here for reference, for now
-                fHtsMirror = self.MirrorXArray(fHtsFull)
-                accum = special.special_fftconvolve(projection,self.Nnum-bb-1,aa,self.Nnum,self.s2,accum,fb=fHtsMirror[self.rfslice])
-            self.cpuTime += util.cpuTime('both')-cpu0
-        return accum
-
-    def convolvePart2(self, projection, bb, aa, fHtsFull, mirrorY, mirrorX, accum):
-        if self.useCCodeForConvolve:
-            # New c code, currently being tested
-            accum = jps.Convolve(projection, fHtsFull, bb, aa, self.Nnum, self.xAxisMultipliers, self.yAxisMultipliers, accum)
-        else:
-            # Old python code
-            accum = self.convolvePart3(projection,bb,aa,fHtsFull,mirrorX,accum)
-            if mirrorY:
-                fHtsFull = self.MirrorYArray(fHtsFull)
-                accum = self.convolvePart3(projection,bb,self.Nnum-aa-1,fHtsFull,mirrorX,accum)
-        return accum
+    def GetFH(self, hMatrix, cc, bb, aa, backwards, transpose):
+        return hMatrix.fH(cc, bb, aa, backwards, transpose, self.fshape)
 
     def convolve(self, projection, hMatrix, cc, bb, aa, backwards, accum):
         # The main function to be called from external code.
         # Convolves projection with hMatrix, returning a result that is still in Fourier space
         # (caller will accumulate in Fourier space and do the inverse FFT just once at the end)
         cent = int(self.Nnum/2)
-
+        
         mirrorX = (bb != cent)
         mirrorY = (aa != cent)
         transpose = ((aa != bb) and (aa != (self.Nnum-bb-1)))
-
+        
         # TODO: it would speed things up if I could avoid computing the full fft for Hts.
         # However, it's not immediately clear to me how to fill out the full fftn array from rfftn
         # in the case of a 2D transform.
         # For 1D it's the reversed conjugate, but for 2D it's more complicated than that.
         # It's possible that it's actually nontrivial, in spite of the fact that
         # you can get away without it when only computing fft/ifft for real arrays)
-        fHtsFull = hMatrix.fH(cc, bb, aa, backwards, False, self.fshape)
+        fHtsFull = self.GetFH(hMatrix, cc, bb, aa, backwards, False)
         accum = self.convolvePart2(projection,bb,aa,fHtsFull,mirrorY,mirrorX, accum)
         if transpose:
-            if (self.fshape[0] == self.fshape[1]):
-                # For a square array, the FFT of the transpose is just the transpose of the FFT.
-                # The copy() is because my C code currently can't cope with
-                # a transposed array (non-contiguous strides in x)
-                fHtsFull = fHtsFull.transpose().copy()
-            else:
-                # For a non-square array, we have to compute the FFT for the transpose.
-                fHtsFull = hMatrix.fH(cc, bb, aa, backwards, True, self.fshape)
+            fHtsFull = self.GetFH(hMatrix, cc, bb, aa, backwards, True)
             # Note that mx,my have been swapped here, which is necessary following the transpose
-            accum = self.convolvePart2(projection,aa,bb,fHtsFull,mirrorX,mirrorY, accum) 
+            accum = self.convolvePart2(projection,aa,bb,fHtsFull,mirrorX,mirrorY, accum)
         assert(accum.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
         return accum
 
+    def convolvePart2(self, projection, bb, aa, fHtsFull, mirrorY, mirrorX, accum):
+        accum = self.convolvePart3(projection,bb,aa,fHtsFull,mirrorX,accum)
+        if mirrorY:
+            fHtsFull = self.MirrorYArray(fHtsFull)
+            accum = self.convolvePart3(projection,bb,self.Nnum-aa-1,fHtsFull,mirrorX,accum)
+        return accum
+
+    def ProjectForZY(self, cc, bb, source, hMatrix, backwards):
+        assert(source.dtype == np.float32)   # Keep an eye out for if we are provided with double-precision inputs
+        #f = open('perf_diags/%d_%d.txt'%(cc,bb), "w")
+        t1 = time.time()
+        singleJob = (len(source.shape) == 2)
+        if singleJob:   # Cope with both a single 2D plane and an array of multiple 2D planes to process independently
+            source = source[np.newaxis,:,:]
+        
+        # For the result, we actually allocate a larger array with a nice round-number x stride, and then take a 'view' into it that has our desired dimensions
+        # This is crucial for good performance on the GPU
+        if singleJob:
+            _result = self.nativeZeros((1, self.rfshape[0], self.rfshape_xPadded[1]), dtype='complex64')
+        else:
+            _result = self.nativeZeros((source.shape[0], self.rfshape[0], self.rfshape_xPadded[1]), dtype='complex64')
+        result = _result[:,:,0:self.rfshape[1]]
+
+        for aa in range(bb,int((hMatrix.Nnum+1)/2)):
+            result = self.convolve(source, hMatrix, cc, bb, aa, backwards, result)
+        t2 = time.time()
+        assert(result.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
+        #f.write('%d\t%f\t%f\t%f\t%f\t%f\n' % (os.getpid(), t1, t2, t2-t1, self.cpuTime[0], self.cpuTime[1]))
+        #f.close()
+        if singleJob:
+            return result[0]
+        else:
+            return result
+
+    def ProjectForZ(self, cc, source, hMatrix, backwards):
+        assert(self.initialisedForCC == cc)
+        result = None
+        for bb in hMatrix.iterableBRange:
+            r = self.ProjectForZY(cc, bb, source, hMatrix, backwards)
+            if result is None:    # TODO: may want to tidy up to eliminate the need for this logic
+                result = r
+            else:
+                result += r
+        return result
+
+#########################################################################
+# Pure python implementation of helper functions
+#########################################################################
+class ProjectorForZ_python(ProjectorForZ_base):
+    def MirrorXArray(self, fHtsFull):
+        # Utility function to convert the FFT of a PSF to the FFT of the X mirror of that same PSF
+        fHtsFull = fHtsFull.conj() * self.mirrorXMultiplier[:,np.newaxis]
+        fHtsFull[:,1::] = fHtsFull[:,1::][:,::-1]
+        return fHtsFull
+
+    def MirrorYArray(self, fHtsFull):
+        # Utility function to convert the FFT of a PSF to the FFT of the Y mirror of that same PSF
+        fHtsFull = fHtsFull.conj() * self.mirrorYMultiplier
+        fHtsFull[1::] = fHtsFull[1::][::-1]
+        return fHtsFull
     
+    def convolvePart3(self, projection, bb, aa, fHtsFull, mirrorX, accum):
+        cpu0 = util.cpuTime('both')
+        accum = special.special_fftconvolve(projection,fHtsFull[self.rfslice],bb,aa,self.Nnum,self.s2,accum)
+        if mirrorX:
+            fHtsMirror = self.MirrorXArray(fHtsFull)
+            accum = special.special_fftconvolve(projection,fHtsMirror[self.rfslice],self.Nnum-bb-1,aa,self.Nnum,self.s2,accum)
+        self.cpuTime += util.cpuTime('both')-cpu0
+        return accum
+
+
+#########################################################################
+# New, faster code with helper functions implemented in C
+#########################################################################
+class ProjectorForZ_cHelpers(ProjectorForZ_base):
+    def MirrorXArray(self, fHtsFull):
+        # Utility function to convert the FFT of a PSF to the FFT of the X mirror of that same PSF
+        return plf.mirrorX(fHtsFull, self.mirrorXMultiplier)
+
+    def MirrorYArray(self, fHtsFull):
+        # Utility function to convert the FFT of a PSF to the FFT of the Y mirror of that same PSF
+        return plf.mirrorY(fHtsFull, self.mirrorYMultiplier)
+    
+    def convolvePart3(self, projection, bb, aa, fHtsFull, mirrorX, accum):
+        cpu0 = util.cpuTime('both')
+        accum = plf.special_fftconvolve(projection, fHtsFull, bb, aa, self.Nnum, 0, self.xAxisMultipliers, self.yAxisMultipliers, accum)
+        if mirrorX:
+            accum = plf.special_fftconvolve(projection, fHtsFull, self.Nnum-bb-1, aa, self.Nnum, 1, self.xAxisMultipliers, self.yAxisMultipliers, accum)
+        self.cpuTime += util.cpuTime('both')-cpu0
+        return accum
+
+
+#########################################################################
+# Even faster variant where the entire convolution is written in C
+#########################################################################
+class ProjectorForZ_allC(ProjectorForZ_base):
+    def convolvePart2(self, projection, bb, aa, fHtsFull, mirrorY, mirrorX, accum):
+        return plf.Convolve(projection, fHtsFull, bb, aa, self.Nnum, self.xAxisMultipliers, self.yAxisMultipliers, accum)
+
+
+#########################################################################
+# Helper functions implemented on GPU
+#########################################################################
+def prime_factors(n):
+    # From the internet
+    i = 2
+    factors = []
+    while i * i <= n:
+        if n % i:
+            i += 1
+        else:
+            n //= i
+            factors.append(i)
+    if n > 1:
+        factors.append(n)
+    return factors
+
+def CallKernel(kernel, workShape, blockShape, params):
+    workShape = np.asarray(workShape)
+    blockShape = np.asarray(blockShape)
+    gridShape = workShape//blockShape
+    # Check that the block shape we were given is an exact factor of the total work shape
+    if gDebugChecks:
+        if not np.all(gridShape*blockShape == workShape):
+            print('Block shape {0} incompatible with work shape {1}'.format(blockShape, workShape))
+            print('Prime factors for work dimensions:')
+            for d in workShape:
+                print(' {0}: {1}', d, prime_factors(d))
+            assert(False)
+    # Call through to the kernel
+    kernel(tuple(gridShape), tuple(blockShape), params)
+    if gSynchronizeAfterKernelCalls:
+        cp.cuda.runtime.deviceSynchronize()
+
+def element_strides(a):
+    return np.asarray(a.strides) // a.itemsize
+
+def BestFactorUpTo(n, max):
+    for i in range(max, 0, -1):
+        if (((n//i)*i) == n):
+            return i
+    assert(0)   # Should always return from the loop - with i=1 if nothing else!
+
+def BestBlockFactors(jobShape, target, max=None):
+    # First try forming getting each axis as close to 'target' as possible
+    result = [1] * len(jobShape)
+    for i in range(len(jobShape)):
+        result[i] = BestFactorUpTo(jobShape[i], target[i])
+        if (result[i] == 1) and (target[i] > 1) and (max is not None):
+            result[i] = BestFactorUpTo(jobShape[i], max[i])
+    return tuple(result)
+
+class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
+    def __init__(self, projection, hMatrix, cc, fftPlan=None, fftPlan2=None):
+        super().__init__(projection, hMatrix, cc, fftPlan=fftPlan, fftPlan2=fftPlan2)
+        assert(len(projection.shape) == 3)
+        self.xAxisMultipliers = cp.asarray(self.xAxisMultipliers)
+        self.yAxisMultipliers = cp.asarray(self.yAxisMultipliers)
+        self.mirrorXMultiplier = cp.asarray(self.mirrorXMultiplier)
+        self.mirrorYMultiplier = cp.asarray(self.mirrorYMultiplier)
+        self.mirrorX_kernel = cp.RawKernel(r'''
+            #include <cupy/complex.cuh>
+            extern "C" __global__ void mirrorX(const complex<float>* x, const complex<float>* mirrorXMultiplier, complex<float>* result)
+            {
+                int i = threadIdx.x + blockIdx.x * blockDim.x;
+                int j = threadIdx.y + blockIdx.y * blockDim.y;
+                int i_width = blockDim.x * gridDim.x;
+                int j_width = blockDim.y * gridDim.y; 
+                // We need to reverse the order of all elements in the final dimension EXCEPT the first element.
+                int jDest = j_width - j;  // Will give correct indexing for all except j=0
+                if (j == 0)               // ... which we fix here
+                  jDest = 0;
+                  
+                result[i*j_width + jDest] = conj(x[i*j_width + j]) * mirrorXMultiplier[i];
+            }
+            ''', 'mirrorX')
+        self.mirrorY_kernel = cp.RawKernel(r'''
+            #include <cupy/complex.cuh>
+            extern "C" __global__ void mirrorY(const complex<float>* x, const complex<float>* mirrorYMultiplier, complex<float>* result)
+            {
+                int i = threadIdx.x + blockIdx.x * blockDim.x;
+                int j = threadIdx.y + blockIdx.y * blockDim.y;
+                int i_width = blockDim.x * gridDim.x;
+                int j_width = blockDim.y * gridDim.y; 
+                // We need to reverse the order of all elements in the first dimension EXCEPT the first element.
+                int iDest = i_width - i;  // Will give correct indexing for all except i=0
+                if (i == 0)               // ... which we fix here
+                  iDest = 0;
+                  
+                result[iDest*j_width + j] = conj(x[i*j_width + j]) * mirrorYMultiplier[j];
+            }
+            ''', 'mirrorY')
+
+        self.expandX_kernel = cp.RawKernel(r'''
+            #include <cupy/complex.cuh>
+            extern "C" __global__
+            void expandX(const complex<float>* x, const complex<float>* expandXMultiplier, int smallDimXY, int smallDimX, complex<float>* result)
+            {
+                int i = threadIdx.x + blockIdx.x * blockDim.x;
+                int j = threadIdx.y + blockIdx.y * blockDim.y;
+                int k = threadIdx.z + blockIdx.z * blockDim.z;
+                int i_width = blockDim.x * gridDim.x;
+                int j_width = blockDim.y * gridDim.y; 
+                int k_width = blockDim.z * gridDim.z; 
+
+                // Tile the result up to the length that is implied by expandXMultiplier (using that length saves us figuring out the length for ourselves)
+                int kReduced = k % smallDimX;
+                result[i*j_width*k_width + j*k_width + k] = x[i*smallDimXY + j*smallDimX + kReduced] * expandXMultiplier[k];
+            }
+            ''', 'expandX')
+
+
+        self.calculateRows_kernel = cp.RawKernel(r'''
+            #include <cupy/complex.cuh>
+            extern "C" __global__
+            void calculateRows(const complex<float>* partialFourierOfProjection, const complex<float>* fHTsFull_unmirrored,
+            const complex<float>* yAxisMultipliers, int smallDimY, int smallDimX, int fHtsDimX, complex<float>* accum)
+            {
+                int i = threadIdx.x + blockIdx.x * blockDim.x;
+                int j = threadIdx.y + blockIdx.y * blockDim.y;
+                int k = threadIdx.z + blockIdx.z * blockDim.z;
+                int i_width = blockDim.x * gridDim.x;
+                int j_width = blockDim.y * gridDim.y;
+                int k_width = blockDim.z * gridDim.z;
+                
+                int pos3 = i*j_width*k_width + j*k_width + k;
+                int pos3_partial = i*smallDimY*smallDimX + (j%smallDimY)*smallDimX + k;
+                int pos2 = j*fHtsDimX + k;
+                complex<float> emy = yAxisMultipliers[j];
+                accum[pos3] += partialFourierOfProjection[pos3_partial] * fHTsFull_unmirrored[pos2] * emy;
+            }
+            ''', 'calculateRows')
+
+        self.calculateRowsMirrored_kernel = cp.RawKernel(r'''
+            #include <cupy/complex.cuh>
+            extern "C" __global__
+            void calculateRowsMirrored(const complex<float>* partialFourierOfProjection, const complex<float>* fHTsFull_unmirrored,
+            const complex<float>* yAxisMultipliers, int smallDimY, int smallDimX, int fHtsDimX, complex<float>* accum)
+            {
+                int i = threadIdx.x + blockIdx.x * blockDim.x;
+                int j = threadIdx.y + blockIdx.y * blockDim.y;
+                int k = threadIdx.z + blockIdx.z * blockDim.z;
+                int i_width = blockDim.x * gridDim.x;
+                int j_width = blockDim.y * gridDim.y;
+                int k_width = blockDim.z * gridDim.z;
+                
+                int pos3 = i*j_width*k_width + j*k_width + k;
+                int pos3_partial = i*smallDimY*smallDimX + (j%smallDimY)*smallDimX + k;
+                // For accessing fHTs, we need to reverse the order of all elements in the final dimension EXCEPT the first element.
+                // ***** TODO: I need to think about whether fHtsDimX is correct here - I want to use width of fHTsFull_unmirrored.
+                int k2 = fHtsDimX - k;  // Will give correct indexing for all except j=0
+                if (k == 0)            // ... which we fix here
+                  k2 = 0;
+                int pos2 = j*fHtsDimX + k2;
+                complex<float> emy = yAxisMultipliers[j];
+                accum[pos3] += partialFourierOfProjection[pos3_partial] * conj(fHTsFull_unmirrored[pos2]) * emy;
+            }
+            ''', 'calculateRowsMirrored')
+        # Set the block sizes we use when calling our custom GPU kernels.
+        # To *ensure* we can make that a block size that performs well, we will deliberately over-allocate space in our accumlator array,
+        # which then allows us to use a nice round block size even if it overruns the array in the x dimension
+        if gBlockSelection is 'fixed':
+            # Use global variables to rigidly set the block sizes
+            # (Note that this will not work well when doing a full projection, where each z plane will have different array shapes.
+            #  This mode is only really useful when running test cases where we have exact control over the inputs)
+            self.mirrorXBlocks = gMirrorXBlocks
+            self.mirrorYBlocks = gMirrorYBlocks
+            self.expandXBlocks = gExpandXBlocks
+            self.calculateRowsBlocks = gCalculateRowsBlocks
+        elif gBlockSelection is 'auto':
+            # Automatically select suitable block sizes, based on the array shapes we will be working with.
+            # These block factors seem to perform reasonably well, but ideally I would write some code that would auto-calibrate
+            # and work out the best block factors in each scenario. It might well be that this can be improved on.
+            # Each individual kernel call takes ~1ms, so I could try quite a lot of different block factors in a manageable amount of time.
+            numTimepoints = projection.shape[0]
+            self.mirrorXBlocks = BestBlockFactors(self.fshape, target=(1, 15, 15))
+            self.mirrorYBlocks = BestBlockFactors(self.fshape, target=(1, 15, 15))
+            self.expandXBlocks = BestBlockFactors((numTimepoints, self.reducedShape[-2], self.rfshape_xPadded[-1]), target=gExpandXTargetBlocks)
+            self.calculateRowsBlocks = BestBlockFactors((numTimepoints, self.rfshape[-2], self.rfshape_xPadded[-1]), target=gCalculateRowsTargetBlocks, max=gCalculateRowsMaxBlocks)
+        elif gBlockSelection is 'measure':
+            mirrorYWorkShape = (1, self.fshape[0], self.fshape[1])
+            expandWorkShape = (projection.shape[0],self.reducedShape[0],self.rfshape_xPadded[1])
+            calculateRowsWorkShape = (projection.shape[0],self.rfshape[0],self.rfshape_xPadded[1])
+            cacheKey = str(mirrorYWorkShape) + str(expandWorkShape) + str(calculateRowsWorkShape)
+            if cacheKey in gBlockSizeCache:
+                (self.mirrorYBlocks, self.expandXBlocks, self.calculateRowsBlocks) = gBlockSizeCache[cacheKey]
+            else:
+                print('Finding best block factors for Expand, on shape {0}'.format(expandWorkShape))
+                testExpand = lambda dummyLoad,blocks: self.special_fftconvolve2_expand(dummyLoad, 0, blocks=blocks)
+                self.expandXBlocks = self.CalibrateBlockFactors(testExpand, expandWorkShape)
+                print('Finding best block factors for CalculateRows, on shape {0}'.format(calculateRowsWorkShape))
+                fHtsFull = cp.zeros(self.fshape)
+                accum = cp.zeros((projection.shape[0],self.rfshape_xPadded[0],self.rfshape_xPadded[1]))
+                testRows = lambda dummyLoad,blocks: self.special_fftconvolve2_nomirror(dummyLoad, fHtsFull, 0, 0, self.Nnum, accum, blocks=blocks)
+                self.calculateRowsBlocks = self.CalibrateBlockFactors(testRows, calculateRowsWorkShape)
+                print('Finding best block factors for MirrorY, on shape {0}'.format(mirrorYWorkShape))
+                testMirror = lambda dummyLoad,blocks: self.MirrorYArray(dummyLoad, blocks=blocks)
+                self.mirrorYBlocks = self.CalibrateBlockFactors(testMirror, mirrorYWorkShape)
+                self.mirrorYBlocks = (self.mirrorYBlocks[1], self.mirrorYBlocks[2])   # Actually it needs to be just a 2D block tuple
+                gBlockSizeCache[cacheKey] = (self.mirrorYBlocks, self.expandXBlocks, self.calculateRowsBlocks)
+            # TODO: this is not currently measured (but then I don't actually use mirrorX live, anyway!)
+            self.mirrorXBlocks = BestBlockFactors(self.fshape, target=(1, 15, 15))
+        else:
+            assert(0)  # Invalid value for gBlockSelection
+        
+        # Make our FFT plans, unless we have been provided with one that is already suitable (from the previous z plane that was processed)
+        self.batchFFTShape = (projection.shape[0], self.Nnum, self.Nnum, projection.shape[-2]//self.Nnum, projection.shape[-1]//self.Nnum)
+        if (fftPlan is None) or (fftPlan.shape != self.reducedShape):
+            dummy = cp.empty(self.batchFFTShape, dtype='complex64')
+            self.fftPlan = cupyx.scipy.fftpack.get_fft_plan(dummy, shape=self.reducedShape, axes=(3,4))
+        halfWidth = (self.Nnum+1)//2
+        self.batchFHShape = (halfWidth,halfWidth,self.s2[0],self.s2[1])
+        if (fftPlan2 is None) or (fftPlan2.shape != self.fshape):
+            dummy = cp.empty(self.batchFHShape, dtype='complex64')
+            self.fftPlan2 = cupyx.scipy.fftpack.get_fft_plan(dummy, shape=self.fshape, axes=(2,3))
+
+    def nativeZeros(self, shape, dtype=float):
+        return cp.zeros(shape, dtype)
+        
+    def MirrorXArray(self, fHtsFull):
+        # Utility function to convert the FFT of a PSF to the FFT of the X mirror of that same PSF
+        result = cp.empty_like(fHtsFull)
+        CallKernel(self.mirrorX_kernel, fHtsFull.shape, self.mirrorXBlocks,
+                   (fHtsFull, self.mirrorXMultiplier, result))
+        return result
+    
+    def MirrorYArray(self, fHtsFull, blocks=None):
+        # Utility function to convert the FFT of a PSF to the FFT of the Y mirror of that same PSF
+        if blocks is None:
+            blocks = self.mirrorYBlocks
+        result = cp.empty_like(fHtsFull)
+        CallKernel(self.mirrorY_kernel, fHtsFull.shape, blocks, (fHtsFull, self.mirrorYMultiplier, result))
+        return result
+
+    def special_fftconvolve_py(self, projection, fHtsFull, bb, aa, Nnum, mirrorX, xAxisMultipliers, yAxisMultipliers, accum, earlyExit=0):
+        assert(0)   # Should not be calling this, but I am leaving it here for testing purposes
+        # First compute the FFT of 'projection'
+        subset = projection[...,bb::Nnum,aa::Nnum]
+        fftArray = np.fft.fftn(subset, self.reducedShape, axes=(1,2)).astype(np.complex64)
+
+        # Tile the result up to the length that is implied by expandXMultiplier 
+        # (using that length saves us figuring out the length for ourselves)
+        tileFactor = (1,1,int(Nnum/2+1))
+        result = np.tile(fftArray, tileFactor)
+        expandXMultiplier = xAxisMultipliers[1+aa]
+        result = result[...,:int(self.fshape[-1]/2+1)]
+        result = result * expandXMultiplier[:result.shape[-1]]
+        if (earlyExit == 1):
+            return result
+        tileFactor = (1, Nnum, 1)
+        result = np.tile(result, tileFactor)
+        if (earlyExit == 2):        # Note: with this condition we need to compare against a hacked version of the CUDA kernel that returns just the tiled part, without multipliers
+            return result
+        assert(mirrorX == 0)    # I don't support this here - fHtsFull needs to be mirrored before passing it in to us
+        result *= fHtsFull[self.rfslice] * yAxisMultipliers[mirrorX,bb][...,np.newaxis]
+        return accum + result
+
+    def special_fftconvolve(self, projection, fHtsFull, bb, aa, Nnum, mirrorX, accum):
+        # First compute the FFT of 'projection'
+        fftArray = self.precalculatedFFTArray[:,bb,aa,:,:]
+        assert(fftArray.dtype == cp.complex64)
+        # Now expand it in the horizontal direction
+        partialFourierOfProjection = self.special_fftconvolve2_expand(fftArray, aa)
+        # Now expand it in the vertical direction and do the multiplication
+        if mirrorX:
+            return self.special_fftconvolve2_mirror(partialFourierOfProjection, fHtsFull, bb, aa, Nnum, accum)
+        else:
+            return self.special_fftconvolve2_nomirror(partialFourierOfProjection, fHtsFull, bb, aa, Nnum, accum)
+
+    def special_fftconvolve2_expand(self, fftArray, aa, blocks=None):
+        # Expand our fft array in the x direction, making use of a padded array to improve GPU performance
+        if blocks is None:
+            blocks = self.expandXBlocks
+        expandXMultiplier = self.xAxisMultipliers[1+aa,0:int(self.fshape[-1]/2+1)]
+        _partialFourierOfProjection = cp.empty((fftArray.shape[0], fftArray.shape[1], self.rfshape_xPadded[1]), dtype='complex64')
+        partialFourierOfProjection = _partialFourierOfProjection[:,:,0:expandXMultiplier.shape[0]]
+        CallKernel(self.expandX_kernel, _partialFourierOfProjection.shape, blocks,
+                   (fftArray, expandXMultiplier, np.int32(element_strides(fftArray)[0]), np.int32(element_strides(fftArray)[-2]), partialFourierOfProjection))
+        return partialFourierOfProjection
+    
+    def CalibrateBlockFactors(self, kernelCall, workShape):
+        maxThreadsPerBlock = cuda.Device(0).get_attributes()[cuda.device_attribute.MAX_THREADS_PER_BLOCK]
+        numRepeats = 8  # How many times do we call the kernel (taking the average run time)
+        def ExactDivisors(a, b):
+          a = np.array(a)
+          b = np.array(b)
+          return np.all((b//a)*a == b)
+        if ((workShape[2]%8) == 0):
+            xSearchRange = range(8, np.minimum(workShape[2], 64)+1, 8)   # Non-multiples of 8 are almost definitely going to perform less well
+        else:
+            xSearchRange = range(1, np.minimum(workShape[2], 32)+1, 1)
+        bestTime = 1
+        bestShape = None
+        numTries = 0
+        tStart = time.time()
+        for z in range(1, np.minimum(workShape[0], 9)+1):     # Larger z batch sizes do not seem to get picked, but we could be patient and still try z>8
+            for y in range(1, workShape[1]+1):
+                for x in xSearchRange:
+                    thisBlockShape = (z,y,x)
+                    if (ExactDivisors(thisBlockShape, workShape) and (z*y*x <= maxThreadsPerBlock)):
+                      numTries += 1
+                      minTime = 1
+                      maxTime = 0
+                      totalTime = 0
+                      for n in range(numRepeats):
+                        dummyWork = cp.empty(workShape)
+                        t1 = time.time()
+                        kernelCall(dummyWork, thisBlockShape)
+                        if not gSynchronizeAfterKernelCalls:
+                            # We would not normally synchronize as part of the kernel call, but we need to do that here
+                            # so that we can have a meaningful measure of how long the kernel call took to run to completion.
+                            # I still don't fully understand if/when deviceSynchronize is needed, and it's possible that calling this
+                            # does not give the most "realistic" measure of run time. But it's the best option I know of, for now.
+                            cp.cuda.runtime.deviceSynchronize()
+                        t = time.time()-t1
+                        minTime = np.minimum(minTime, t)
+                        maxTime = np.maximum(maxTime, t)
+                        totalTime += t
+                        if (n == 0) and (t > bestTime*1.5):
+                          totalTime *= numRepeats
+                          break
+                      #print('Try {0}, took {1:.2f} ({2:.2f}-{3:.2f})'.format(thisBlockShape, totalTime/numRepeats*1e3, minTime*1e3, maxTime*1e3))
+                      if (totalTime/numRepeats < bestTime):
+                        bestTime = totalTime/numRepeats
+                        bestShape = thisBlockShape
+        tEnd = time.time()
+        print('Best shape {0}, took {1:.2f}ms. Tried {2} in {3:.2f}s'.format(bestShape, bestTime*1e3, numTries, tEnd-tStart))
+        return bestShape
+    
+    def special_fftconvolve2_mirror(self, partialFourierOfProjection, fHtsFull, bb, aa, Nnum, accum, blocks=None):
+        if blocks is None:
+            blocks = self.calculateRowsBlocks
+        workShape = (accum.shape[0], accum.shape[1], element_strides(accum)[-2])        # Adapt to the padded length of accum
+        CallKernel(self.calculateRowsMirrored_kernel, workShape, blocks,
+                   (partialFourierOfProjection, fHtsFull, self.yAxisMultipliers[1,bb],
+                    np.int32(partialFourierOfProjection.shape[1]), np.int32(element_strides(partialFourierOfProjection)[-2]), np.int32(fHtsFull.shape[1]), accum))
+        return accum
+
+    def special_fftconvolve2_nomirror(self, partialFourierOfProjection, fHtsFull, bb, aa, Nnum, accum, blocks=None):
+        if blocks is None:
+            blocks = self.calculateRowsBlocks
+        workShape = (accum.shape[0], accum.shape[1], element_strides(accum)[-2])        # Adapt to the padded length of accum
+        CallKernel(self.calculateRows_kernel, workShape, blocks,
+                       (partialFourierOfProjection, fHtsFull, self.yAxisMultipliers[0,bb],
+                        np.int32(partialFourierOfProjection.shape[1]), np.int32(element_strides(partialFourierOfProjection)[-2]), np.int32(fHtsFull.shape[1]), accum))
+        return accum
+
+    def convolvePart3(self, projection, bb, aa, fHtsFull, mirrorX, accum):
+        cpu0 = util.cpuTime('both')
+        accum = self.special_fftconvolve(projection, fHtsFull, bb, aa, self.Nnum, 0, accum)
+        if mirrorX:
+            accum = self.special_fftconvolve(projection, fHtsFull, self.Nnum-bb-1, aa, self.Nnum, 1, accum)
+        self.cpuTime += util.cpuTime('both')-cpu0
+        return accum
+
+    def GetFH(self, hMatrix, cc, bb, aa, backwards, transpose):
+        if transpose:
+            fHtsFull = self.precalculatedFH[aa,bb]
+        else:
+            fHtsFull = self.precalculatedFH[bb,aa]
+        return fHtsFull
+
+    def PrecalculateFFTArray(self, cc, source):
+        # Rejig 'projection' into a shape we can work with more easily
+        tempRejig = cp.empty(self.batchFFTShape, dtype='complex64')
+        for bb in range(self.Nnum):
+            for aa in range(self.Nnum):
+                tempRejig[:,bb,aa,:,:] = source[...,bb::self.Nnum,aa::self.Nnum]
+        # Calculate all the FFTs in one big batch
+        self.precalculatedFFTArray = cupyx.scipy.fftpack.fftn(tempRejig, self.reducedShape, axes=(3,4), plan=self.fftPlan)
+        if gSynchronizeAfterKernelCalls:
+            cp.cuda.runtime.deviceSynchronize()
+
+    def PrecalculateFH(self, cc, hMatrix, backwards):
+        batch = cp.empty(self.batchFHShape, dtype='complex64')
+        Hcc = hMatrix.Hcc(cc, backwards)
+        for bb in range(self.batchFHShape[0]):
+            for aa in range(self.batchFHShape[1]):
+                batch[bb][aa] = Hcc[bb, aa]
+        # Calculate all the FFTs in one big batch
+        self.precalculatedFH = cupyx.scipy.fftpack.fftn(batch, self.fshape, axes=(2,3), plan=self.fftPlan2)
+        if gSynchronizeAfterKernelCalls:
+            cp.cuda.runtime.deviceSynchronize()
+    
+    
+    def ProjectForZ(self, cc, source, hMatrix, backwards):
+        self.PrecalculateFFTArray(cc, source)
+        self.PrecalculateFH(cc, hMatrix, backwards)
+        # Now do the z projection
+        return super().ProjectForZ(cc, source, hMatrix, backwards)
+
+
+def SanityCheckMatrix(m):
+  s = m.itemsize
+  for i in range(len(m.shape)-1,0,-1):
+    if (m.strides[i] != s):
+      print('Problem with dimension {0} (stride {1}, expected {2}). {3}'.format(i, m.strides[i], s, m.strides))
+    s *= m.shape[i]
+
 #########################################################################        
-# Functions to project for a partial or entire z plane.
+# Classes to project for a partial or entire volume
 # These are the functions I expect external code to call.
 #########################################################################        
+class Projector_base(object):
+    def __init__(self):
+        super().__init__()
+        self.fftPlan = None
+        self.fftPlan2 = None
     
-def ProjectForZY(cc, bb, source, hMatrix, backwards, useCCode=True):
-    assert(source.dtype == np.float32)   # Keep an eye out for if we are provided with double-precision inputs
-    f = open('perf_diags/%d_%d.txt'%(cc,bb), "w")
-    t1 = time.time()
-    singleJob = (len(source.shape) == 2)
-    if singleJob:   # Cope with both a single 2D plane and an array of multiple 2D planes to process independently
-        source = source[np.newaxis,:,:]
-    projector = Projector(source[0], hMatrix, cc)
-    projector.useCCodeForConvolve = useCCode
-    if singleJob:
-        result = np.zeros((1, projector.rfshape[0], projector.rfshape[1]), dtype='complex64')
-    else:
-        result = np.zeros((source.shape[0], projector.rfshape[0], projector.rfshape[1]), dtype='complex64')
-    for aa in range(bb,int((hMatrix.Nnum(cc)+1)/2)):
-        result = projector.convolve(source, hMatrix, cc, bb, aa, backwards, result)
-    t2 = time.time()
-    assert(result.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
-    f.write('%d\t%f\t%f\t%f\t%f\t%f\n' % (os.getpid(), t1, t2, t2-t1, projector.cpuTime[0], projector.cpuTime[1]))
-    f.close()
-    if singleJob:
-        return (result[0], cc, bb, t2-t1)
-    else:
-        return (np.array(result), cc, bb, t2-t1)
+    def asnative(self, m):
+        return np.asarray(m)
+    
+    def asnumpy(self, m):
+        return np.asarray(m)
+    
+    def nativeZeros(self, shape, dtype=float):
+        return np.zeros(shape, dtype)
 
-def ProjectForZ(hMatrix, backwards, cc, source, useCCode=True, progress=tqdm):
-    result = None
-    for bb in progress(hMatrix.IterableBRange(cc), leave=False, desc='Project - y'):
-        (thisResult, _, _, _) = ProjectForZY(cc, bb, source, hMatrix, backwards, useCCode)
-        if (result is None):
-            result = thisResult
+
+class Projector_allC(Projector_base):
+    def __init__(self):
+        super().__init__()
+        self.zProjectorClass = ProjectorForZ_allC
+
+    def BackwardProjectACC(self, hMatrix, projection, planes, progress, logPrint, numjobs, keepNative=False):
+        Backprojection = np.zeros((hMatrix.numZ, projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
+        pos = 0
+        for cc in progress(planes, 'Backward-project - z', leave=False):
+            proj = self.zProjectorClass(projection, hMatrix, cc)
+            Hcc = hMatrix.Hcc(cc, True)
+            fourierZPlane = plf.ProjectForZ(projection, Hcc, hMatrix.Nnum, \
+                                             proj.fshape[-2], proj.fshape[-1], \
+                                             proj.rfshape[-2], proj.rfshape[-1], \
+                                             proj.xAxisMultipliers, proj.yAxisMultipliers)
+            # Compute the FFT for each z plane
+            Backprojection[cc] = special.special_fftconvolve_part3(fourierZPlane, proj.fshape, proj.fslice, proj.s1, useCCode=True)
+        return Backprojection
+
+    def ForwardProjectACC(self, hMatrix, realspace, planes, progress, logPrint, numjobs, keepNative=False):
+        TOTALprojection = None
+        for cc in progress(planes, 'Forward-project - z', leave=False):
+            # Project each z plane forward to the camera image plane
+            proj = self.zProjectorClass(realspace[0], hMatrix, cc)
+            Htcc = hMatrix.Hcc(cc, False)
+            fourierProjection = plf.ProjectForZ(realspace[cc], Htcc, hMatrix.Nnum, \
+                                                 proj.fshape[-2], proj.fshape[-1], \
+                                                 proj.rfshape[-2], proj.rfshape[-1], \
+                                                 proj.xAxisMultipliers, proj.yAxisMultipliers)
+            # Transform back from Fourier space into real space
+            # Note that we really do need to do a separate FFT for each plane, because fshape/convolutionShape will be different in each case
+            thisProjection = special.special_fftconvolve_part3(fourierProjection, proj.fshape, proj.fslice, proj.s1, useCCode=True)
+            if TOTALprojection is None:
+                TOTALprojection = thisProjection
+            else:
+                TOTALprojection += thisProjection
+
+        assert(TOTALprojection.dtype == np.float32)   # Keep an eye out for any reversion to double-precision
+        return TOTALprojection
+
+
+class Projector_pythonSkeleton(Projector_base):
+    def BackwardProjectACC(self, hMatrix, projection, planes, progress, logPrint, numjobs, keepNative=False):
+        projection = self.asnative(projection)
+        # Project each z plane in turn
+        fourierZPlanes = []     # This has to be a list because in Fourier space the shapes are different for each z plane
+        for cc in progress(planes, desc='Backward-project - z', leave=False):
+            fourierZPlanes.append(self.ProjectForZ(cc, projection, hMatrix, True))
+        # Now convert back to real space from Fourier space
+        result = self.InverseTransformBackwardProjection(fourierZPlanes, planes, hMatrix, projection)
+        if keepNative:
+            return result
         else:
-            result += thisResult
+            return self.asnumpy(result)
+
+    def InverseTransformBackwardProjection(self, fourierZPlanes, planes, hMatrix, projection):
+        # Compute the FFT for each z plane
+        Backprojection = np.zeros((len(planes), projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
+        for cc in planes:
+            (fshape, fslice, s1) = special.convolutionShape(projection.shape, hMatrix.PSFShape(cc), hMatrix.Nnum)
+            Backprojection[cc] = special.special_fftconvolve_part3(fourierZPlanes[cc], fshape, fslice, s1)
+        return Backprojection
+
+    def ForwardProjectACC(self, hMatrix, realspace, planes, progress, logPrint, numjobs, keepNative=False):
+        realspace = self.asnative(realspace)
+        # Project each z plane in turn
+        fourierProjections = []     # This has to be a list because in Fourier space the shapes are different for each z plane
+        for cc in progress(planes, desc='Forward-project - z', leave=False):
+            fourierProjections.append(self.ProjectForZ(cc, realspace[cc], hMatrix, False))
+        # Now convert back to real space from Fourier space
+        result = self.InverseTransformForwardProjection(fourierProjections, planes, hMatrix, realspace)
+        if keepNative:
+            return result
+        else:
+            return self.asnumpy(result)
+    
+    def InverseTransformForwardProjection(self, fourierProjection, planes, hMatrix, realspace):
+        # Compute and accumulate the FFT for each z plane
+        TOTALprojection = self.nativeZeros((len(planes), realspace.shape[1], realspace.shape[2], realspace.shape[3]), dtype='float32')
+        for cc in planes:
+            (fshape, fslice, s1) = special.convolutionShape(realspace[cc].shape, hMatrix.PSFShape(cc), hMatrix.Nnum)
+            thisProjection = special.special_fftconvolve_part3(fourierProjection[cc], fshape, fslice, s1)
+            TOTALprojection += thisProjection
+        return TOTALprojection
+
+    def ProjectForZ(self, cc, source, hMatrix, backwards):
+        # This is a perhaps a bit of a hack for now - it ensures FFT(PSF) is calculated on the GPU
+        # TODO: I should update this with a lambda (if I can work out how...?) that passes in an FFT plan that we have precomputed
+        if self.zProjectorClass is ProjectorForZ_gpuHelpers:
+            hMatrix.UpdateFFTFunc(myfft.myFFT2_gpu)
+        else:
+            hMatrix.UpdateFFTFunc(myfft.myFFT2)
+        projector = self.zProjectorClass(source, hMatrix, cc, self.fftPlan, self.fftPlan2)
+        # Cache the fftPlan from this projector, to reuse for the next z plane if possible
+        self.fftPlan = projector.fftPlan
+        self.fftPlan2 = projector.fftPlan2
+        return projector.ProjectForZ(cc, source, hMatrix, backwards)
+
+class Projector_python(Projector_pythonSkeleton):
+    def __init__(self):
+        super().__init__()
+        self.zProjectorClass = ProjectorForZ_python
+
+
+class Projector_cHelpers(Projector_pythonSkeleton):
+    def __init__(self):
+        super().__init__()
+        self.zProjectorClass = ProjectorForZ_cHelpers
+
+
+class Projector_gpuHelpers(Projector_pythonSkeleton):
+    def __init__(self):
+        super().__init__()
+        self.zProjectorClass = ProjectorForZ_gpuHelpers
+
+    def asnative(self, m):
+        return cp.asarray(m)
+
+    def asnumpy(self, m):
+        return cp.asnumpy(m)
+
+    def nativeZeros(self, shape, dtype=float):
+        return cp.zeros(shape, dtype)
+    
+    def InverseTransformBackwardProjection(self, fourierZPlanes, planes, hMatrix, projection):
+        # Compute the FFT for each z plane
+        Backprojection = self.nativeZeros((len(fourierZPlanes), projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
+        for cc in planes:
+            (fshape, fslice, s1) = special.convolutionShape(projection.shape, hMatrix.PSFShape(cc), hMatrix.Nnum)
+            # This next code is copied from special_fftconvolve_part3
+            results = []
+            for n in range(fourierZPlanes[cc].shape[0]):
+                inv = cp.fft.irfftn(fourierZPlanes[cc][n], fshape)
+                # TODO: what was the purpose of the copy() here? I think I have just copied this from the fftconvolve source code. Perhaps if fslice does something nontrivial, it makes the result compact..? But fslice seems to be the same as fshape for me, here
+                inv = special._centered(inv[fslice].copy(), s1)
+                results.append(inv)
+            Backprojection[cc] = cp.array(results)
+        return Backprojection
+
+    def InverseTransformForwardProjection(self, fourierProjection, planes, hMatrix, realspace):
+        # Compute and accumulate the FFT for each z plane
+        TOTALprojection = self.nativeZeros((realspace.shape[1], realspace.shape[2], realspace.shape[3]), dtype='float32')
+        for cc in planes:
+            (fshape, fslice, s1) = special.convolutionShape(realspace[cc].shape, hMatrix.PSFShape(cc), hMatrix.Nnum)
+            # This next code is copied from special_fftconvolve_part3
+            for n in range(fourierProjection[cc].shape[0]):
+                inv = cp.fft.irfftn(fourierProjection[cc][n], fshape)
+                # TODO: what was the purpose of the copy() here? I think I have just copied this from the fftconvolve source code. Perhaps if fslice does something nontrivial, it makes the result compact..? But fslice seems to be the same as fshape for me, here
+                inv = special._centered(inv[fslice].copy(), s1)
+                TOTALprojection[n] += inv
+        return TOTALprojection
+
+
+#########################################################################
+# Older, simple versions of backprojection code, for reference.
+# I don't expect these to be used except for internal testing within this module.
+# Note: it is a bit of an anomaly that some of these are here, but forwardProjectACC etc are in lfdeconv...
+#########################################################################
+
+def ProjectForZ(hMatrix, backwards, cc, source, projectorClass=Projector_allC, progress=tqdm):
+    # This is somewhat obsolete now, I think, but I will leave it for now
+    projector = projectorClass()
+    result = projector.ProjectForZ(cc, source, hMatrix, backwards)
     # Actually, for forward projection we don't need to do this separately for every z,
-    # but it's easier to do it for symmetry (and this function is not used in performance-critical code anyway)
-    (fshape, fslice, s1) = special.convolutionShape(source, hMatrix.PSFShape(cc), hMatrix.Nnum(cc))
+    # but it's easier to do it for consistency (and this function is not used in performance-critical code anyway)
+    (fshape, fslice, s1) = special.convolutionShape(source.shape, hMatrix.PSFShape(cc), hMatrix.Nnum)
     return special.special_fftconvolve_part3(result, fshape, fslice, s1)
 
         
-#########################################################################        
-# Older, simple versions of backprojection code, for reference.
-# I don't expect these to be used except for internal testing within this module.
-# Note: it is a bit of an anomaly that these are here, but forwardProjectACC etc are in lfdeconv...
-#########################################################################        
-
 def ForwardProjectForZ_old(HCC, realspaceCC):
     singleJob = (len(realspaceCC.shape) == 2)
     if singleJob:   # Cope with both a single 2D plane and an array of multiple 2D planes to process independently
@@ -273,36 +887,72 @@ def BackwardProjectACC_old(Ht, projection, CAindex, progress=tqdm, planes=None):
 
     return backprojection
 
-if __name__ == "__main__":
-    #########################################################################
-    # Self-test code: test the backprojection code against a slower definitive version
-    #########################################################################
-    print("Testing the backprojection code")
+#########################################################################
+# Self-test code: test the backprojection code against a slower definitive version
+#########################################################################
+def selfTest():
+    # The strictest self-test would be against the original (very simple) code I wrote,
+    # but that is very slow and requires us to load in the H matrices in a slow manner.
+    # As a result, normally I would be satisfied to test against the newer, but still
+    # pure-python implementation I have written (and which is stable code).
+    testAgainstOriginalCode = False
+    if testAgainstOriginalCode:
+        print('Testing backprojection code against original code')
+    else:
+        print('Testing backprojection code against pure-python code')
     
     # Load the H matrix
     # We need the raw _H and _Ht values, since we are using old projection code to validate the results of my new optimized code
     matPath = 'PSFmatrix/PSFmatrix_M40NA0.95MLPitch150fml3000from-13to0zspacing0.5Nnum15lambda520n1.0.mat'
-    (_H, _Ht, _CAIndex, hPathFormat, htPathFormat, hReducedShape, htReducedShape) = psfmatrix.LoadRawMatrixData(matPath)
-    testHCC = _H[13]
-    testHtCC = _Ht[13]
+    if testAgainstOriginalCode:
+        (_H, _Ht, _CAIndex, hPathFormat, htPathFormat, hReducedShape, htReducedShape) = psfmatrix.LoadRawMatrixData(matPath)
+        testHCC = _H[13]
+        testHtCC = _Ht[13]
 
     # Test forward and back projection
-    for bk in [True, False]:
-        # Test both square and non-square, since they use different code
-        for shape in [(200,200), (200,300), (300,200)]:
-            testHMatrix = psfmatrix.LoadMatrix(matPath, numZ=1, zStart=13)   # Needs to be in the loop here, because caching is confused by changing the image shape
-            testProjection = np.random.random(shape).astype(np.float32)
-            if bk:
-                testResultOld = BackwardProjectForZ_old(testHtCC, testProjection)
-            else:
-                testResultOld = ForwardProjectForZ_old(testHCC, testProjection)
-            
-            testResultNew = ProjectForZ(testHMatrix, bk, 0, testProjection)
-            comparison = np.max(np.abs(testResultOld - testResultNew))
-            print('test result (should be <<1): %e' % comparison)
-            if (comparison > 1e-4):
-                print(" -> WARNING: disagreement detected")
-            else:
-                print(" -> OK")
+    classesToTest = [Projector_allC, Projector_python, Projector_cHelpers]
+    if gpuAvailable:
+        classesToTest = [Projector_gpuHelpers]   #  classesToTest +    # TODO: eventually will want to prepend classesToTest
+    for projectorClass in classesToTest:
+        print(' Testing class:', projectorClass.__name__)
+        for bk in [True, False]:
+            print(' === bk', bk)
+            # Test both square and non-square, since they use different code
+            for shape in [(1,150,150), (1,150,300), (1,300,150)]:
+                print(' === shape', shape)
+                testHMatrix = psfmatrix.LoadMatrix(matPath, numZ=1, zStart=13)   # Needs to be in the loop here, because caching is confused by changing the image shape
+                testProjection = np.random.random(shape).astype(np.float32)
+                # Start by running old, definitive code that we trust
+                if testAgainstOriginalCode:
+                    if bk:
+                        testResultOld = BackwardProjectForZ_old(testHtCC, testProjection)
+                    else:
+                        testResultOld = ForwardProjectForZ_old(testHCC, testProjection)
+                else:
+                    t1 = time.time()
+                    testResultOld = ProjectForZ(testHMatrix, bk, 0, testProjection, Projector_python, progress=util.noProgressBar)
+                    t2 = time.time()
+                    print('Old took %.2fms'%((t2-t1)*1e3))
+
+                # Now run the code we are actually testing.
+                # Note that we call xxxProjectACC rather than ProjectForZ,
+                # because the pure-C implementation does not have a ProjectForZ function.
+                t1 = time.time()
+                if bk:
+                    testResultNew = projectorClass().BackwardProjectACC(testHMatrix, testProjection, [0], progress=util.noProgressBar, logPrint=False, numjobs=1)
+                else:
+                    testResultNew = projectorClass().ForwardProjectACC(testHMatrix, testProjection[np.newaxis,:,:,:], [0], progress=util.noProgressBar, logPrint=False, numjobs=1)
+                t2 = time.time()
+                print('New took %.2fms'%((t2-t1)*1e3))
+                # Compare the results that we got
+                comparison = np.max(np.abs(testResultOld - testResultNew))
+                print('  test result (should be <<1): %e' % comparison)
+                if (comparison > 1e-4):
+                    print("   -> WARNING: disagreement detected")
+                else:
+                    print("   -> OK")
             
     print('Tests complete')
+
+if __name__ == "__main__":
+    selfTest()

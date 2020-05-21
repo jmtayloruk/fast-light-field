@@ -10,19 +10,29 @@
 My c code can't cope with an array that has been transposed (Probably because it assumes adjacent strides in x?). I should probably fix that, though I doubt it's a performance issue to just .copy() the transposed array, which is what I do at the moment. I should really be swapping the transpose to be the final operation (in the case of square inputs) anyway. However, it looks as if a decent chunk of the fft time is actually being spent in the other ffts (for the reduced arrays) anyway!
 \b \
 \
+Single-pixel imaging
+\b0 \
+This seems as good as anywhere to add a note about single-pixel imaging (which is another application where I think my approach is plausible). I need to remember this as a reference:\
+https://www.osapublishing.org/oe/abstract.cfm?uri=oe-28-6-7889\
+They are just using a moving target over a static illumination pattern (don\'92t know if they referenced the japanese Science flow cytometry paper\'85!), but I should still bear it in mind as a citation.
+\b \
+\
 Flow recovery - what I\'92ve done\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
-\b0 - I am using a local optimizer, of course, so I need to choose a plausible starting point or things go crazy. That\'92s ok: I should have a decent estimate from PIV analysis of artefact-corrupted images\
+\b0 \cf0 - I am using a local optimizer, of course, so I need to choose a plausible starting point or things go crazy. That\'92s ok: I should have a decent estimate from PIV analysis of artefact-corrupted images\
 - It turns out that the naive method works surprisingly well with large blurry features - I suppose that\'92s not surprising, since effectively the resolution of the flow analysis is greater than the lenslet pitch. It struggles more when I run it with small blobs (thank goodness!).\
 - BFGS actually doesn\'92t seem to converge to the solution (it fails for some reason). Powell seems more reliable.\
 - I discovered that edge effects with warp() were distorting the solution in random ways. That may well explain why BFGS was failing to find a solution! I battled with warp() issues a lot. These included:\
 	- warp() leads to anomalies at the edge of the image. Specifically, pixels are either \'91in\'92 or \'91out\'92, and the switch between the two states causes jumps in the score. It\'92s not clear what the best thing to do about this is. mode=\'92edge\'92 might work, but I would worry it might introduce odd biasing behaviour. I tried extending the object size and then cropping it down (i.e. filling with real data).\
 	- It turned out it wasn\'92t enough to ignore the edge pixels, because the edge pixels affect a large area when I forward project. A combination of forcing zero edge shifts and specifying edge padding seems to have suppressed edge artefacts enough to stop instability in the scores I get for two virtually-identical shift values.\
 \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
-\b Flow recovery - next steps\
+\b \cf0 Flow recovery - next steps\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
-\b0 \
+\b0 \cf0 \
 - See how the naive algorithm fares with a larger peak velocity (12 instead of 7). Does it still consistently underestimate? By more\'85? Actually no, it does ok. I should maybe investigate somewhat systematically how it fares with different shift values. And also go back to uniform shifts, because I thought I\'92d observed that it really didn\'92t perform properly in that case - but maybe I\'92ve since fixed a bug in that code.\
 \
 - I should maybe revisit BFGS now I have excluded edge effects from warp()\'85\
@@ -44,8 +54,9 @@ Flow recovery - what I\'92ve done\
 \i0  to converge. Also, it seems to be evaluating shifts to a smaller granularity than e.g. 1e-2. Is that definitely correct, or have I got the settings wrong somehow? See comment above about tiny changes.\
 \
 - Consider expanding the PIV code to more than one z plane\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
-\b \
+\b \cf0 \
 Things to investigate
 \b0 \
 - deconvRL and _PIV actually give slightly different results (deconvRL seems better). Is there an actual bug in deconvRL_PIV, or is Prevedel\'92s implementation of RL actually slightly different (and more efficient)?\

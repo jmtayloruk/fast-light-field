@@ -3,15 +3,11 @@ import os, sys, time
 import csv, glob
 import cProfile, pstats
 import numpy as np
-#import matplotlib.pyplot as plt   # For some reason this is crashing on my Mac Pro. This has persisted across a restart, not sure what's going on...!?
-# The following is a workaround until I figure out what the root cause is:
-import matplotlib
-matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 
 import jutils as util
 import lfdeconv, psfmatrix, lfimage, projector
-import py_symmetry as jps
+import py_light_field as plf
 
 def AnalyzeTestResults(numJobsUsed):
     # Long function which analyses the data from the run that just happened
@@ -124,18 +120,18 @@ def AnalyzeTestResults2(statsFilePath):
     plt.legend(loc=2)
     plt.show()
 
-if __name__ == "__main__":
+def main(argv, planesToProcess=None, projectorClass=projector.Projector_allC):
     #########################################################################
     # Test code for performance measurement
     #########################################################################
 
     matPath = 'PSFmatrix/PSFmatrix_M40NA0.95MLPitch150fml3000from-13to0zspacing0.5Nnum15lambda520n1.0.mat'
-    if ('no-raw' in sys.argv):
+    if ('no-raw' in argv):
         print('Warning - we will not load the raw H matrices. Not all command line options will be usable - some (old code) will hit errors')
     else:
         (_H, _Ht, _CAindex, hPathFormat, htPathFormat, hReducedShape, htReducedShape) = psfmatrix.LoadRawMatrixData(matPath)
-    cacheH = ('cache-H' in sys.argv)
-    if ('smaller-H' in sys.argv):
+    cacheH = ('cache-H' in argv)
+    if ('smaller-H' in argv):
         # This matrix is small enough to allow matrix caching (for backprojection only) with 8GB of RAM available
         # Note that it does not affect the 'old' code, which uses the full PSF regardless
         hMatrix = psfmatrix.LoadMatrix(matPath, numZ=16, cacheH=cacheH)
@@ -143,13 +139,13 @@ if __name__ == "__main__":
         hMatrix = psfmatrix.LoadMatrix(matPath, cacheH=cacheH)
 
     inputImage = lfimage.LoadLightFieldTiff('Data/02_Rectified/exampleData/20131219WORM2_small_full_neg_X1_N15_cropped_uncompressed.tif')
-    if ('smaller-image' in sys.argv):
+    if ('smaller-image' in argv):
         inputImage = inputImage[0:20*15,0:15*15]
 
     inputImage_x30 = np.tile(inputImage[np.newaxis,:,:], (30,1,1))
     inputImage_x10 = inputImage_x30[0:10]
 
-    if ('parallel-scaling' in sys.argv):
+    if ('parallel-scaling' in argv):
         # Investigate performance for different numbers of parallel threads
         for numJobsForTesting in range(1,13):
             print('Running with {0} parallel threads:'.format(numJobsForTesting))
@@ -160,7 +156,7 @@ if __name__ == "__main__":
             print('overall delta rusage:', ru2-ru1)
             AnalyzeTestResults(numJobsForTesting)
 
-    if ('analyze-saved-data' in sys.argv):
+    if ('analyze-saved-data' in argv):
         # Plot some analysis based on previously-acquired performance statistics
         plt.title('Dummy work on empty arrays')
         AnalyzeTestResults2('stats-dummy.txt')
@@ -171,15 +167,13 @@ if __name__ == "__main__":
         plt.title('New code')
         AnalyzeTestResults2('stats-new-code.txt')
 
-    planesToProcess = None    # Can be set differently to speed things up for shorter investigations
-
-    if ('time-old' in sys.argv):
+    if ('time-old' in argv):
         # For fun, see how long the original code and my new code takes
         t0 = time.time()
         result1 = projector.BackwardProjectACC_old(_Ht, inputImage, _CAindex, planes=planesToProcess)
         print('Original code took %f'%(time.time()-t0))
         
-    if ('time-new' in sys.argv):
+    if ('time-new' in argv):
         # Run my code (single-threaded)
         t0 = time.time()
         result2 = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, numjobs=1)
@@ -208,59 +202,79 @@ if __name__ == "__main__":
 
         util.CheckComparison(result2, result3, 1.0, 'Compare single- and multi-threaded')
 
-    if ('profile-old' in sys.argv):
+    if ('profile-old' in argv):
         # Profile old code (single-threaded)
+        pr = cProfile.Profile()
+        pr.enable()
         ru1 = util.cpuTime('both')
-        myStats = cProfile.run('temp = projector.BackwardProjectACC_old(_Ht, inputImage, _CAindex, planes=planesToProcess)', 'mystats')
+        temp = projector.BackwardProjectACC_old(_Ht, inputImage, _CAindex, planes=planesToProcess)
         ru2 = util.cpuTime('both')
         print('overall delta rusage:', ru2-ru1)
         p = pstats.Stats('mystats')
         p.strip_dirs().sort_stats('cumulative').print_stats(40)
 
-    if ('profile-new' in sys.argv):
+    if ('profile-new' in argv):
         # Profile my code (single-threaded)
-        jps.ResetStats()
-        myStats = cProfile.run('temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, numjobs=1)', 'mystats')
-        jps.PrintStats()
-        p = pstats.Stats('mystats')
+        plf.ResetStats()
+        pr = cProfile.Profile()
+        pr.enable()
+        ru1 = util.cpuTime('both')
+        temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, numjobs=1, projectorClass=projectorClass)
+        ru2 = util.cpuTime('both')
+        print('overall delta rusage:', ru2-ru1)
+        plf.PrintStats()
         print('hMatrix hits {0} misses {1}. Cache size {2}GB'.format(hMatrix.cacheHits, hMatrix.cacheMisses, hMatrix.cacheSize/1e9))
-        p.strip_dirs().sort_stats('cumulative').print_stats(40)
+        pr.disable()
+        pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
 
-    if ('profile-new2' in sys.argv):
+    if ('profile-new2' in argv):
         # Profile the same code code for a second run, now that the matrices ought to be cached. (single-threaded)
-        myStats = cProfile.run('temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, numjobs=1)', 'mystats')
-        p = pstats.Stats('mystats')
+        pr = cProfile.Profile()
+        pr.enable()
+        temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, numjobs=1, projectorClass=projectorClass)
         print('hMatrix hits {0} misses {1}. Cache size {2}GB'.format(hMatrix.cacheHits, hMatrix.cacheMisses, hMatrix.cacheSize/1e9))
-        p.strip_dirs().sort_stats('cumulative').print_stats(40)
+        pr.disable()
+        pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
 
-    if ('profile-new-piv' in sys.argv):
+    if ('profile-new-piv' in argv):
         # Profile my code (single-threaded) in the sort of scenario I would expect to run it in for my PIV experiments
         tempInputImage = np.zeros((2,hMatrix.Nnum(0)*20,hMatrix.Nnum(0)*20)).astype('float32')
-        myStats = cProfile.run('temp = lfdeconv.BackwardProjectACC(hMatrix, tempInputImage, planes=planesToProcess, numjobs=1)', 'mystats')
-        p = pstats.Stats('mystats')
-        p.strip_dirs().sort_stats('cumulative').print_stats(40)
+        pr = cProfile.Profile()
+        pr.enable()
+        temp = lfdeconv.BackwardProjectACC(hMatrix, tempInputImage, planes=planesToProcess, numjobs=1, projectorClass=projectorClass)
+        pr.disable()
+        pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
 
-    if ('profile-new-batch-prime-cache' in sys.argv):
+    if ('profile-new-batch-prime-cache' in argv):
         # Do a single-image run to fill the cache, to observe the speedup when we run subsequent code
-        myStats = cProfile.run('temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage_x10[0], planes=planesToProcess, numjobs=1)', 'mystats')
-        p = pstats.Stats('mystats')
+        pr = cProfile.Profile()
+        pr.enable()
+        temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage_x10[0], planes=planesToProcess, numjobs=1, projectorClass=projectorClass)
         print('hMatrix hits {0} misses {1}. Cache size {2}GB'.format(hMatrix.cacheHits, hMatrix.cacheMisses, hMatrix.cacheSize/1e9))
-        p.strip_dirs().sort_stats('cumulative').print_stats(40)
+        pr.disable()
+        #pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
 
-    if ('profile-new-batch' in sys.argv):
+    if ('profile-new-batch' in argv):
         # Profile my code (single-threaded) in the sort of scenario I would expect to run it in when batch-processing video
-        jps.ResetStats()
-        myStats = cProfile.run('temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage_x30, planes=planesToProcess, numjobs=1)', 'mystats')
-        jps.PrintStats()
-        p = pstats.Stats('mystats')
+        plf.ResetStats()
+        pr = cProfile.Profile()
+        pr.enable()
+        temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage_x30, planes=planesToProcess, numjobs=1, projectorClass=projectorClass)
+        plf.PrintStats()
         print('hMatrix hits {0} misses {1}. Cache size {2}GB'.format(hMatrix.cacheHits, hMatrix.cacheMisses, hMatrix.cacheSize/1e9))
-        p.strip_dirs().sort_stats('cumulative').print_stats(40)
+        pr.disable()
+        pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
 
-    if ('profile-new-batch2' in sys.argv):
+    if ('profile-new-batch2' in argv):
         # Repeat again (with cache already primed)
-        jps.ResetStats()
-        myStats = cProfile.run('temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage_x30, planes=planesToProcess, numjobs=1)', 'mystats')
-        jps.PrintStats()
-        p = pstats.Stats('mystats')
+        plf.ResetStats()
+        pr = cProfile.Profile()
+        pr.enable()
+        temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage_x30, planes=planesToProcess, numjobs=1, projectorClass=projectorClass)
+        plf.PrintStats()
         print('hMatrix hits {0} misses {1}. Cache size {2}GB'.format(hMatrix.cacheHits, hMatrix.cacheMisses, hMatrix.cacheSize/1e9))
-        p.strip_dirs().sort_stats('cumulative').print_stats(40)
+        pr.disable()
+        pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
+
+if __name__ == "__main__":
+    main(sys.argv)

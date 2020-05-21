@@ -1,5 +1,5 @@
 import numpy as np
-import py_symmetry as jps
+import py_light_field as plf
 import warnings
 import scipy.fftpack
 import myfft
@@ -73,24 +73,6 @@ def _centered(arr, newsize):
 def expand2Multiplier(bb, fshape, resultShape):
     return np.exp(-1j * bb * 2*np.pi / fshape[-2] * np.arange(resultShape[-2],dtype='complex64'))
 
-def tempMul(bb,fshape,result):
-    result *= expand2Multiplier(bb, fshape, result.shape)[...,np.newaxis]
-    return result
-
-def expand2(result, bb, aa, Nnum, fshape):
-    tileFactor = (1,) * (len(result.shape)-2) + (Nnum, 1)
-    return np.tile(result, tileFactor)
-
-def expand(reducedF, bb, aa, Nnum, fshape, partial=False):
-    tileFactor = (1,) * (len(reducedF.shape)-1) + (int(Nnum/2+1),)
-    result = np.tile(reducedF, tileFactor)
-    result = result[...,:int(fshape[-1]/2+1)]
-    result *= np.exp(-1j * aa * 2*np.pi / fshape[-1] * np.arange(result.shape[-1],dtype='complex64'))
-    if partial:
-        return result
-    result = expand2(result, bb, aa, Nnum, fshape)
-    return tempMul(bb,fshape,result)
-
 def special_rfftn(in1, bb, aa, Nnum, fshape, partial=False):
     # Compute the fft of elements in1[bb::Nnum,aa::Nnum], after in1 has been zero-padded out to fshape
     # We exploit the fact that fft(masked-in1) is fft(arr[::Nnum,::Nnum]) replicated Nnum times.
@@ -102,29 +84,55 @@ def special_rfftn(in1, bb, aa, Nnum, fshape, partial=False):
     # Compute an array giving rfft(mask(in1)), i.e. the FFT for a smaller array consisting only of the pixels selected by the mask
     reducedF = myfft.myFFT2(reduced, reducedShape)
     # Expand this up to obtain the equivalent fourier transform for the full masked array (with intervening zeroes).
-    return expand(reducedF, bb, aa, Nnum, fshape, partial=partial)
+    tileFactor = (1,) * (len(reducedF.shape)-1) + (int(Nnum/2+1),)
+    result = np.tile(reducedF, tileFactor)
+    result = result[...,:int(fshape[-1]/2+1)]
+    result *= np.exp(-1j * aa * 2*np.pi / fshape[-1] * np.arange(result.shape[-1],dtype='complex64'))
+    if partial:
+        return result
+    tileFactor = (1,) * (len(result.shape)-2) + (Nnum, 1)
+    result = np.tile(result, tileFactor)
+    result *= expand2Multiplier(bb, fshape, result.shape)[...,np.newaxis]
+    return result
 
-def convolutionShape(in1, in2Shape, Nnum):
+def prime_factors(n):
+    # Utility function from the internet
+    # This is useful for examining the GPU blocking possibilities for a given array shape
+    i = 2
+    factors = []
+    while i * i <= n:
+        if n % i:
+            i += 1
+        else:
+            n //= i
+            factors.append(i)
+    if n > 1:
+        factors.append(n)
+    return factors
+
+def convolutionShape(in1Shape, in2Shape, Nnum):
     # Logic copied from fftconvolve source code
-    s1 = np.array(in1.shape)
+    s1 = np.array(in1Shape)
     s2 = np.array(in2Shape)
     if (len(s1) == 3):   # Cope with case where we are processing multiple reconstructions in parallel
         s1 = s1[1:]
     shape = s1 + s2 - 1
     if False:
-        # TODO: I haven't worked out if/how I can do this yet.
-        # This is the original code in fftconvolve, which says:
+        # For reference: this is the original code in fftconvolve, which says:
         # Speed up FFT by padding to optimal size for FFTPACK
-        fshape = [_next_regular(int(d)) for d in shape]
+        # This doesn't work because I need things to be a multiple of Nnum
+        self.fshape = [_next_regular(int(d)) for d in shape]
     else:
-        fshape = [int(np.ceil(d/float(Nnum)))*Nnum for d in shape]   # TODO: comment why I need this to be a multiple of Nnum. It may well be because of my tiling tricks?
+        # This was the code I used which expands up to a multiple of Nnum.
+        # That is necessary because the tiling tricks I use in special_fftconvolve etc only work (I think) under that condition.
+        fshape = [int(np.ceil(d/float(Nnum)))*Nnum for d in shape]
     fslice = tuple([slice(0, int(sz)) for sz in shape])
     return (fshape, fslice, s1)
     
 def special_fftconvolve_part1(in1, bb, aa, Nnum, in2Shape, partial=False):
     assert((len(in1.shape) == 2) or (len(in1.shape) == 3))
     assert(len(in2Shape) == 2)
-    (fshape, _, _) = convolutionShape(in1, in2Shape, Nnum)
+    (fshape, _, _) = convolutionShape(in1.shape, in2Shape, Nnum)
     # Pre-1.9 NumPy FFT routines are not threadsafe - this code requires numpy 1.9 or greater
     assert(_rfft_mt_safe)
     fa = special_rfftn(in1, bb, aa, Nnum, fshape, partial=partial)
@@ -133,15 +141,16 @@ def special_fftconvolve_part1(in1, bb, aa, Nnum, in2Shape, partial=False):
 def special_fftconvolve_part3b(fab, fshape, fslice, s1, useCCode=False):
     assert(len(fab.shape) == 2)
     if useCCode:
-        ret = jps.InverseRFFT(fab, fshape[0], fshape[1])
+        ret = plf.InverseRFFT(fab, fshape[0], fshape[1])
     else:
         ret = myfft.myIFFT2(fab, fshape)
     # TODO: what was the purpose of the copy() here? I think I have just copied this from the fftconvolve source code. Perhaps if fslice does something nontrivial, it makes the result compact..? But fslice seems to be the same as fshape for me, here
     return _centered(ret[fslice].copy(), s1)
 
 def special_fftconvolve_part3(fab, fshape, fslice, s1, useCCode=False):
-    # TODO: This gymnastics is probably unnecessary now I call ifft2 rather than fftn,
-    # although if I literally just do it in one call then it fails. I would need to work out why that is - it seems to be the [fslice] bit in part3b
+    # TODO: This gymnastics is probably unnecessary - it should be possible to do it all in one go.
+    # The complication is that fslice is a 2d slice, whereas fab[n] will probably be a 3D array.
+    # That can lead to unpredictable problems (wrong output shapes) unless I take a lot more care than I am doing at the moment!
     if (len(fab.shape) == 2):
         return special_fftconvolve_part3b(fab, fshape, fslice, s1, useCCode)
     else:
@@ -150,7 +159,7 @@ def special_fftconvolve_part3(fab, fshape, fslice, s1, useCCode=False):
             results.append(special_fftconvolve_part3(fab[n], fshape, fslice, s1, useCCode))
         return np.array(results)
 
-def special_fftconvolve(in1, bb, aa, Nnum, in2Shape, accum, fb):
+def special_fftconvolve(in1, fb, bb, aa, Nnum, in2Shape, accum):
     '''
     in1 consists of subapertures of size Nnum x Nnum pixels.
     We are being asked to convolve only pixel (bb,aa) within each subaperture, i.e.
@@ -168,22 +177,3 @@ def special_fftconvolve(in1, bb, aa, Nnum, in2Shape, accum, fb):
         accum += fa*fb
     assert(accum.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
     return accum
-
-################################
-# This next function is an experimental work in progress, trying to cover more of the performance-sensitive bits with fast C code
-def special_fftconvolve2(in1, bb, aa, Nnum, in2Shape, accum, fb_unmirrored, validWidth, mirrorXMultiplier):
-    if True:
-        # Old code
-        (fa_partial, fshape) = special_fftconvolve_part1(in1, bb, aa, Nnum, in2Shape, partial=True)
-    else:
-        # New code using my C implementation of part1
-        assert((len(in1.shape) == 2) or (len(in1.shape) == 3))
-        assert(len(in2Shape) == 2)
-        (fshape, _, _) = convolutionShape(in1, in2Shape, Nnum)
-        expandXMultiplier = np.exp(-1j * aa * 2*np.pi / fshape[-1] * np.arange(int(fshape[-1]/2+1), dtype='complex64'))
-        fa_partial = jps.special_fftconvolve_part1(in1, bb, aa, Nnum, fshape[-2], fshape[-1], expandXMultiplier)
-
-    assert(fa_partial.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
-    assert(fb_unmirrored.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
-    expandYMultiplier = expand2Multiplier(bb, fshape, fshape)
-    return jps.special_fftconvolve(accum, fa_partial, fb_unmirrored, expandYMultiplier, validWidth, mirrorXMultiplier)

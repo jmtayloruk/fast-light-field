@@ -3,7 +3,12 @@ import os, sys, h5py
 from jutils import tqdm_alias as tqdm
 import myfft
 
-class HMatrix:
+try:
+    import cupy as cp
+except:
+    print('Unable to import cupy - no GPU support will be available')
+
+class HMatrix(object):
     def __init__(self, HPathFormat, HtPathFormat, HReducedShape, numZ=None, zStart=0, cacheMMap=True, cacheH=False):
         self.HPathFormat = HPathFormat
         self.HtPathFormat = HtPathFormat
@@ -13,6 +18,11 @@ class HMatrix:
         else:
             self.numZ = len(HReducedShape)
         self.zStart = zStart
+        # We can deduce Nnum indirectly from looking at the dimensions of the H matrix we are loading.
+        # We only store one quadrant of the H matrix, since we know the other quadrants are just mirror images
+        self.Nnum = self.HReducedShape[0][0]*2-1
+        self.iterableBRange = range(self.HReducedShape[0][0])
+
         self.cacheH = cacheH
         self.Hcache = dict()
         self.cacheHits = 0
@@ -21,7 +31,15 @@ class HMatrix:
         self.cacheMMap = cacheMMap
         self.mappedH = dict()
         self.mappedHt = dict()
+        self._fftFunc = myfft.myFFT2
   
+    def UpdateFFTFunc(self, fftFunc):
+        if self._fftFunc is not fftFunc:
+            self.HCache = dict()
+            self.mappedH = dict()
+            self.mappedHt = dict()
+            self._fftFunc = fftFunc
+    
     def Hcc(self, cc, useHt):
         if useHt:
             if (self.cacheMMap and (str(cc) in self.mappedHt)):
@@ -33,6 +51,10 @@ class HMatrix:
             pathFormat = self.HPathFormat
         # Note we need to cast to tuple for safety - strange errors seem to occur if we pass a numpy array instead
         result = np.memmap(pathFormat.format(z=cc+self.zStart), dtype='float32', mode='r', shape=tuple(self.HReducedShape[cc+self.zStart]))
+
+        if self._fftFunc is myfft.myFFT2_gpu:
+            result = cp.asarray(np.array(result))
+        
         if self.cacheMMap:
             if useHt:
                 self.mappedHt[str(cc)] = result
@@ -42,10 +64,11 @@ class HMatrix:
 
     def fH_uncached(self, cc, bb, aa, useHt, transposePSF, fshape):
         if transposePSF:
-            return myfft.myFFT2(self.Hcc(cc, useHt)[bb, aa].transpose(), fshape)
+            Hcc = self.Hcc(cc, useHt)[bb, aa].transpose()
         else:
-            return myfft.myFFT2(self.Hcc(cc, useHt)[bb, aa], fshape)
-    
+            Hcc = self.Hcc(cc, useHt)[bb, aa]
+        return self._fftFunc(Hcc, fshape)
+
     def fH(self, cc, bb, aa, useHt, transposePSF, fshape):
         key = '%d,%d,%d,%d,%d'%(cc, bb, aa, int(useHt), int(transposePSF))
         if (self.cacheH and key in self.Hcache):
@@ -60,20 +83,9 @@ class HMatrix:
     
     def ClearCache(self):
         self.Hcache.clear()
-    
-    def IterableBRange(self, cc):
-        # TODO: surely the b range that we iterate over will not in fact depend on which z plane we are looking at!?
-        return range(self.HReducedShape[cc+self.zStart][0])
-    
+
     def PSFShape(self, cc):
         return (self.HReducedShape[cc+self.zStart][2], self.HReducedShape[cc+self.zStart][3])
-    
-    def Nnum(self, cc):
-        # TODO: I am not even sure why this formula works.
-        # It is a strange and convoluted way of obtaining the result.
-        # Nnum is a constant for a given PSF, it does not depend on cc!
-        # I have no idea why I have coded it this way. It does seem to return the correct answer though!
-        return self.HReducedShape[cc+self.zStart][0]*2-1
 
 def GetPathFormats(matPath):
     # Use the .mat filename, but without that extension, as a folder name to store our memory-mapped data
@@ -82,7 +94,7 @@ def GetPathFormats(matPath):
     htPathFormat = mmapPath+'/Ht{z:02d}.array'
     return (mmapPath, hPathFormat, htPathFormat)
 
-def LoadRawMatrixData(matPath, forceRegeneration = False):
+def LoadRawMatrixData(matPath):
     # Load the contents of a .mat file (and generate memmap backing files that my optimized code actually uses)
     # Normally this function should not be called directly, but it is needed if we want to run old code that
     # makes direct use of the matrices _H and _Ht.
@@ -143,5 +155,5 @@ def LoadMatrix(matPath, numZ=None, zStart=0, forceRegeneration = False, cacheH=F
     except:
         print("Failed to load array shapes. There are probably no memmap files either.")
         print("We will now try to generate them from scratch from the .mat file, which will take a little while")
-        (_, _, _, hPathFormat, htPathFormat, hReducedShape, htReducedShape) = LoadRawMatrixData(matPath, forceRegeneration)
+        (_, _, _, hPathFormat, htPathFormat, hReducedShape, htReducedShape) = LoadRawMatrixData(matPath)
     return HMatrix(hPathFormat, htPathFormat, hReducedShape, numZ=numZ, zStart=zStart, cacheH=cacheH, cacheMMap=True)
