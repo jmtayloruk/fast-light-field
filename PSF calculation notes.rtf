@@ -1,16 +1,39 @@
-{\rtf1\ansi\ansicpg1252\cocoartf1504\cocoasubrtf840
+{\rtf1\ansi\ansicpg1252\cocoartf1404\cocoasubrtf470
 {\fonttbl\f0\fswiss\fcharset0 Helvetica;}
 {\colortbl;\red255\green255\blue255;}
-{\*\expandedcolortbl;;}
-\paperw11900\paperh16840\margl1440\margr1440\vieww15160\viewh15800\viewkind0
+\paperw11900\paperh16840\margl1440\margr1440\vieww18940\viewh16860\viewkind0
 \pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
 
 \f0\fs24 \cf0 \ul \ulc0 Test against Matlab\ulnone \
-Check a plot of psfLine to see if it looks the same\
-Compare psfWAVE_STACK and LFpsfWAVE_STACK between my code and theirs\
+\uc0\u8730  Confirmed that psfLine matches (both for z starting at -0.5 and z starting at -5.0)\
+\uc0\u8730  Confirmed that calcML matches (for z starting at -5.0 - though I think it does not depend on z)\
+\uc0\u8730  Confirmed that calcPSF_p matches - psfWAVE_STACK and LFpsfWAVE_STACK agree with the Matlab. Required a bug fix to Matlab code for z=0.5Um\
+\uc0\u8730  Confirmed that H matches\
+\uc0\u8730  Confirmed that Ht matches. I have also written new code to calculate Ht, which is astronomically faster than their original code (since I eliminate the convolution and a lot of other associated unnecessary work)\
 \
-\uc0\u8730  Confirmed that I can calculate Ht from the H in the .mat, and my Ht matches theirs.\
+\ul Bug in their code\
+\ulnone There is a bug in their code when z=0, whereby the max() operator does not work as they intend in calcPSF. I have added a workaround for that bug.\
 \
-\ul Investigate\ulnone \
-- I am fairly sure there is something incorrect happening with the PSF at z=0. It has a bright spot in the centre that does not appear at z=-0.5. Could there actually be a bug in their code for z=0? I should investigate this, because although they may not care much, it\'92s very important for me since it is around z=0 that I am particularly interested in. It might also explain the effect I seem to remember I saw where my motion-aware deconvolution behaved differently even a very small distance away from z=0\'85\
-- I seem to remember seeing some slightly odd effects in the off-axis reconstruction, where it was reconstructing a rectangle with a single-pixel-wide strip of a different intensity at the edge. It\'92s not impossible that that could be an off-by-one bug in their PSF generation, so I should investigate that I think\'85}
+\ul Be aware\ulnone \
+- Because there is a step where they normalise H by max(H), the scaling of H will depend on what z range the PSF is generated with. I don\'92t actually know why they do that - it doesn\'92t seem to be logical as an actual [flux] normalization. It is however something I will have to bear in mind if I ever intend to fuse together multiple short sections of PSF into one big PSF file. If the scaling matters (and surely it does\'85?) then I will only be able to know how to fuse them if there is an overlap in the z range between the different PSF sections.\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+\cf0 - The cell that starts \'91Size of PSF\'92 raises a warning the first time it is run. This seems to be due to me having an outdated version of scipy installed - I should be able to silence by updating scipy.\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+\cf0 \ul \ulc0 \
+Investigate\ulnone \
+- I seem to remember seeing some slightly odd effects in the off-axis reconstruction, where it was reconstructing a rectangle with a single-pixel-wide strip of a different intensity at the edge. It\'92s not impossible that that could be an off-by-one bug in their PSF generation, so I should investigate that I think\'85\
+\
+Note that my python code runs single-threaded, so inevitably it will be substantially slower than the Matlab (although the only bottleneck part now is Part 2)\
+\
+\
+\ul Performance\
+\ulnone calcPSF_p initially took 1h10 to process the first plane at z=-26\
+- This is a massively parallel problem that should be easily threadable - PSF is computed independently for each point.\
+- Remember also that I am having to do the real and imag part integrals separately, which will inevitably slow things down by perhaps a factor of 2. Possibly more since it will obsess over e.g. the accuracy of imaginary parts when the real part is actually substantially larger.\
+- I doubt I can do anything more to exploit symmetry to reduce the work that needs to be done - the original code already seems to do that.\
+\
+Oh man. Matlab takes 132s, 100s, 77s for the first three planes. This is a big problem - it\'92s going 32x as fast as my python code! Not good.\
+-> I have massively speeded up my code by replacing scipy.special.j0 with the GSL equivalent. Overkill to link GSL, but has helped a lot. Now my own code is not anywhere near as much of a bottleneck. I presume what remains is genuine time that is required in the code. \
+- I am spending about 0.8/2.1s in J0, so that is a bottleneck, but not the only one. I suspect I am genuinely limited by computation now, and would struggle to speed things up further without an algebraic change to the calculation.\
+\
+OK, my new run time is 618s. That\'92s much more respectable. If I can thread that 8x, then my code will actually take 77s and be significantly faster than Matlab\'92s - so I could very legitimately call it a day there if I wanted!}
