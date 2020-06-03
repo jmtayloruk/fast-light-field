@@ -1,8 +1,6 @@
 {\rtf1\ansi\ansicpg1252\cocoartf1404\cocoasubrtf470
-{\fonttbl\f0\fswiss\fcharset0 Helvetica;\f1\fnil\fcharset0 Consolas-Bold;\f2\fnil\fcharset0 Consolas;
-}
-{\colortbl;\red255\green255\blue255;\red13\green95\blue24;\red242\green242\blue242;\red47\green51\blue57;
-\red19\green112\blue166;\red184\green73\blue12;\red83\green83\blue83;\red29\green111\blue63;}
+{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
 \paperw11900\paperh16840\margl1440\margr1440\vieww18940\viewh16860\viewkind0
 \pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
 
@@ -18,42 +16,24 @@
 \
 \ul Be aware\ulnone \
 - Because there is a step where they normalise H by max(H), the scaling of H will depend on what z range the PSF is generated with. I don\'92t actually know why they do that - it doesn\'92t seem to be logical as an actual [flux] normalization. It is however something I will have to bear in mind if I ever intend to fuse together multiple short sections of PSF into one big PSF file. If the scaling matters (and surely it does\'85?) then I will only be able to know how to fuse them if there is an overlap in the z range between the different PSF sections.\
+I now save the maximum value encountered (pre-normalisation) in the .mat file. That should allow me to fuse PSFs I have generated myself, without accumulating successive rounding errors. This seems like a low-impact way of making things better.\
 \ul \
 Investigate\ulnone \
 - I seem to remember seeing some slightly odd effects in the off-axis reconstruction, where it was reconstructing a rectangle with a single-pixel-wide strip of a different intensity at the edge. It\'92s not impossible that that could be an off-by-one bug in their PSF generation, so I should investigate that I think\'85\
 \
-Note that my python code runs single-threaded, so inevitably it will be substantially slower than the Matlab (although the only bottleneck part now is Part 2)\
 \
-\
-\ul Performance\
-\ulnone calcPSF_p initially took 1h10 to process the first plane at z=-26\
-- This is a massively parallel problem that should be easily threadable - PSF is computed independently for each point.\
-- Remember also that I am having to do the real and imag part integrals separately, which will inevitably slow things down by perhaps a factor of 2. Possibly more since it will obsess over e.g. the accuracy of imaginary parts when the real part is actually substantially larger.\
+\ul Performance - stage 1\
+\ulnone - This is a massively parallel problem that should be easily threadable - PSF is computed independently for each point.\
+- Remember that I am having to do the real and imag part integrals separately, which will inevitably slow things down by perhaps a factor of 2. Possibly more since it will obsess over e.g. the accuracy of imaginary parts when the real part is actually substantially larger.\
 - I doubt I can do anything more to exploit symmetry to reduce the work that needs to be done - the original code already seems to do that.\
+- I have massively speeded up my code by using cython, and replacing scipy.special.j0 with the GSL equivalent. It\'92s overkill to link GSL, but has helped a lot. I suspect I am genuinely limited by computation now, and would struggle to speed things up further without an algebraic change to the calculation.\
+- My single-threaded run time is ~625s for z=-26, 85.9s@8x. ~7.2x speedup over original, which is pretty reasonable.\
 \
-Oh man. Matlab takes 132s, 100s, 77s for the first three planes. This is a big problem - it\'92s going 32x as fast as my python code! Not good.\
--> I have massively speeded up my code by replacing scipy.special.j0 with the GSL equivalent. Overkill to link GSL, but has helped a lot. Now my own code is not anywhere near as much of a bottleneck. I presume what remains is genuine time that is required in the code. \
-- I am spending about 0.8/2.1s in J0, so that is a bottleneck, but not the only one. I suspect I am genuinely limited by computation now, and would struggle to speed things up further without an algebraic change to the calculation.\
+\ul \ulc0 Performance - stage 2\
+\ulnone z=-26 took 57s@8x. This is a 6.2x speedup over single-threaded (6m04). I imagine the reason this isn\'92t any more efficient is because there is quite a lot of data to pickle.\
 \
-OK, my new run time is 618s. That\'92s much more respectable. If I can thread that 8x, then my code will actually take 77s and be significantly faster than Matlab\'92s - so I could very legitimately call it a day there if I wanted!\
+\
+\
 Stage 1 (\'93computing PSFs\'94) took 27:46 to do the entire calculation for planes 26:2:0\
 Stage 2 (\'93computing LF PSFs\'94) took 15:43\
-\
-\
-\pard\pardeftab720\partightenfactor0
-
-\f1\b\fs27\fsmilli13600 \cf2 \cb3 \expnd0\expndtw0\kerning0
-from
-\f2\b0 \cf4  
-\f1\b \cf5 joblib
-\f2\b0 \cf4  
-\f1\b \cf2 import
-\f2\b0 \cf4  Parallel, delayed\
-\pard\pardeftab720\partightenfactor0
-
-\f1\b \cf6 >>> 
-\f2\b0 \cf4 Parallel(n_jobs\cf7 =\cf8 2\cf4 )(delayed(sqrt)(i \cf7 **\cf4  \cf8 2\cf4 ) 
-\f1\b \cf2 for
-\f2\b0 \cf4  i 
-\f1\b \cf2 in
-\f2\b0 \cf4  \cf2 range\cf4 (\cf8 10\cf4 ))}
+}
