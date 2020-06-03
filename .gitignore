@@ -8,3 +8,10 @@ PSFmatrix
 perf_diags
 .ipynb_checkpoints
 .DS_Store
+light-field-integrands/build
+light-field-integrands/light_field_integrands_api.h
+light-field-integrands/light_field_integrands.html
+light-field-integrands/light_field_integrands.h
+light-field-integrands/light_field_integrands.c
+light-field-integrands/light_field_integrands.*.so
+

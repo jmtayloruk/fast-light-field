@@ -100,7 +100,7 @@ def LoadRawMatrixData(matPath):
     # makes direct use of the matrices _H and _Ht.
     mmapPath, hPathFormat, htPathFormat = GetPathFormats(matPath)
     try:
-        # Ensure the folder exists: we will use to store our mmapped matrices actually exists
+        # Ensure the folder we will use to store our mmapped matrices actually exists
         os.mkdir(mmapPath)
     except:
         pass  # Probably the directory already exists
