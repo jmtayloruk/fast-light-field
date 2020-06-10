@@ -1,4 +1,4 @@
-import resource
+import resource, psutil
 import numpy as np
 
 def CheckComparison(arrayA, arrayB, maxAcceptableDifference, description="Test result", shouldBe=None):
@@ -48,3 +48,8 @@ if isnotebook():
     from tqdm import tqdm_notebook as tqdm_alias
 else:
     from tqdm import tqdm as tqdm_alias
+
+def PhysicalCoreCount():
+    # On my mac pro, this cpu_count() call correctly returns 8 (psutil version 5.2.2).
+    # I need to check if it works correctly on all machines - I thought on my laptop it gave the wrong number.
+    return psutil.cpu_count(logical=False)

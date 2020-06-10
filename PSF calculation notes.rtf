@@ -1,7 +1,7 @@
 {\rtf1\ansi\ansicpg1252\cocoartf1404\cocoasubrtf470
 {\fonttbl\f0\fswiss\fcharset0 Helvetica;}
 {\colortbl;\red255\green255\blue255;}
-\paperw11900\paperh16840\margl1440\margr1440\vieww18940\viewh16860\viewkind0
+\paperw11900\paperh16840\margl1440\margr1440\vieww18340\viewh15160\viewkind0
 \pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
 
 \f0\fs24 \cf0 \ul \ulc0 Test against Matlab\ulnone \
@@ -17,10 +17,10 @@
 \ul Be aware\ulnone \
 - Because there is a step where they normalise H by max(H), the scaling of H will depend on what z range the PSF is generated with. I don\'92t actually know why they do that - it doesn\'92t seem to be logical as an actual [flux] normalization. It is however something I will have to bear in mind if I ever intend to fuse together multiple short sections of PSF into one big PSF file. If the scaling matters (and surely it does\'85?) then I will only be able to know how to fuse them if there is an overlap in the z range between the different PSF sections.\
 I now save the maximum value encountered (pre-normalisation) in the .mat file. That should allow me to fuse PSFs I have generated myself, without accumulating successive rounding errors. This seems like a low-impact way of making things better.\
+-> Actually, I have now decided that I need to properly normalise H to conserve flux. The scaling of H should not depend on the z range, but the scaling of Ht will\'85\
 \ul \
 Investigate\ulnone \
-- I seem to remember seeing some slightly odd effects in the off-axis reconstruction, where it was reconstructing a rectangle with a single-pixel-wide strip of a different intensity at the edge. It\'92s not impossible that that could be an off-by-one bug in their PSF generation, so I should investigate that I think\'85\
-\
+- I seem to remember seeing some slightly odd effects in the off-axis reconstruction near the native focal plane, where it was reconstructing a rectangle with a single-pixel-wide strip of a different intensity at the edge. It\'92s not inconceivable that that could be an off-by-one bug in their PSF generation, so I should investigate that I think\'85\
 \
 \ul Performance - stage 1\
 \ulnone - This is a massively parallel problem that should be easily threadable - PSF is computed independently for each point.\
@@ -29,11 +29,25 @@ Investigate\ulnone \
 - I have massively speeded up my code by using cython, and replacing scipy.special.j0 with the GSL equivalent. It\'92s overkill to link GSL, but has helped a lot. I suspect I am genuinely limited by computation now, and would struggle to speed things up further without an algebraic change to the calculation.\
 - My single-threaded run time is ~625s for z=-26, 85.9s@8x. ~7.2x speedup over original, which is pretty reasonable.\
 \
-\ul \ulc0 Performance - stage 2\
+Stage 1 (\'93computing PSFs\'94) took 27:46 to do the entire calculation for planes 26:2:0. With 8 cores it took 6m08 (4.5x speedup). Presumably the efficiency gains are reduced for smaller problem sizes\'85? -> It looks like a good chunk of time is being taken either in returning the results or in processing them after the multithreaded code is over. 
+\b I could investigate
+\b0  whether there is a bottleneck there that I could improve on (if I care). It might turn out to be the fresnel2D part, for example\'85\
+For the first few planes, Matlab takes 132s, 100s, 77s. I take 91.0, 71.4, 56.8, so I can be happy that I am running faster than the Matlab now!\
+\
+40 minutes for the Nmax=19 parameter set.\
+\
+\ul Performance - stage 2\
+\ulnone [most of these timings are before I switched the code to the reduced H matrix]\ul \
 \ulnone z=-26 took 57s@8x. This is a 6.2x speedup over single-threaded (6m04). I imagine the reason this isn\'92t any more efficient is because there is quite a lot of data to pickle.\
 \
+Stage 2 (\'93computing LF PSFs\'94) took 15:43 to do the entire calculation for planes 26:2:0. With 8 cores it took 6:32. Only a 2.4x speedup. I\'92m not sure why it\'92s not any better than that. I suppose that doing it in bigger chunks might possibly help\'85? I could also profile it. I wonder if the Fresnel FFT might already be being multithreaded via MKL on my Mac Pro, i.e. the supposedly single-threaded version is already partially multithreaded? Could also be inefficiencies at the planes closer to z=0?\
 \
+27 minutes for the Nmax=19 parameter set (calculating the reduced H matrix).\
 \
-Stage 1 (\'93computing PSFs\'94) took 27:46 to do the entire calculation for planes 26:2:0\
-Stage 2 (\'93computing LF PSFs\'94) took 15:43\
+\ul Performance - stage 3\ulnone \
+With my new code, it takes 30s (single-threaded). I have not bothered to parallelise this, as it is not a bottleneck.\
+1m47 for the Nmax=19 parameter set (with the reduced H matrix).\
+\
+\ul Memory usage\
+\ulnone Even with oversampling, stage 1 is not the biggest memory hog. The main issue is the size of H (and Ht). I have used my symmetry relationships to reduce these to ~15% of their original size (although note that this means my .mat files are not compatible with the actual Matlab code).\
 }

@@ -2,6 +2,7 @@ py_light_field/build
 py_light_field/build/*
 py_light_field/test-py-light-field/test-py-light-field.xcodeproj/project.xcworkspace/xcshareddata
 py_light_field/test-py-light-field/test-py-light-field.xcodeproj/project.xcworkspace/xcuserdata
+py_light_field/test-py-light-field/DerivedData/
 *.pyc
 piv-raw-data
 PSFmatrix

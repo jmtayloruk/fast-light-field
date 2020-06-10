@@ -94,7 +94,7 @@ def GetPathFormats(matPath):
     htPathFormat = mmapPath+'/Ht{z:02d}.array'
     return (mmapPath, hPathFormat, htPathFormat)
 
-def LoadRawMatrixData(matPath):
+def LoadRawMatrixData(matPath, expectedNnum=None):
     # Load the contents of a .mat file (and generate memmap backing files that my optimized code actually uses)
     # Normally this function should not be called directly, but it is needed if we want to run old code that
     # makes direct use of the matrices _H and _Ht.
@@ -113,12 +113,23 @@ def LoadRawMatrixData(matPath):
         print('Load CAindex')
         sys.stdout.flush()
         _CAindex = f['CAindex'].value.astype('int')
+        Nnum = f['Nnum'].value.astype('int')
+        if (expectedNnum is not None) and (Nnum != expectedNnum):
+            warnings.warn('Nnum={0} from file does not match expected value {1}'.format(Nnum, expectedNnum))
+        try:
+            reducedMatrix = f['ReducedMatrix'].value.astype('int')
+        except:
+            print('No reduced flag - will assume this is a full matrix')
+            reducedMatrix = False
         
         print('Load H')
         sys.stdout.flush()
         _H = f['H'].value.astype('float32')
-        Nnum = _H.shape[2]
         aabbRange = int((Nnum+1)/2)
+        if reducedMatrix:
+            assert(_H.shape[2] == aabbRange)
+        else:
+            assert(_H.shape[2] == Nnum)
         for cc in tqdm(range(_H.shape[0]), desc='memmap H'):
             HCC =  _H[cc, :aabbRange, :aabbRange, _CAindex[0,cc]-1:_CAindex[1,cc], _CAindex[0,cc]-1:_CAindex[1,cc]]
             hReducedShape.append(HCC.shape)
@@ -146,6 +157,7 @@ def LoadRawMatrixData(matPath):
 def LoadMatrix(matPath, numZ=None, zStart=0, forceRegeneration = False, cacheH=False):
     # Obtain a HMatrix object based on a .mat file
     # (although we will jump straight to previously-generated memmap backing files if they exist)
+    # This is the function that user code should normally be calling
     mmapPath, hPathFormat, htPathFormat = GetPathFormats(matPath)
     try:
         if forceRegeneration:
