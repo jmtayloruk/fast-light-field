@@ -667,10 +667,45 @@ class Projector_allC(Projector_base):
     def __init__(self):
         super().__init__()
         self.zProjectorClass = ProjectorForZ_allC
+        self.name = 'Pure C'
 
     def BackwardProjectACC(self, hMatrix, projection, planes, progress, logPrint, numjobs, keepNative=False):
         Backprojection = np.zeros((hMatrix.numZ, projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
         pos = 0
+        planeWork = []
+        for cc in planes:
+            proj = self.zProjectorClass(projection, hMatrix, cc)
+            planeWork.append((projection, hMatrix.Hcc(cc, True), hMatrix.Nnum, proj.fshape[-2], proj.fshape[-1], proj.rfshape[-2], proj.rfshape[-1], proj.xAxisMultipliers, proj.yAxisMultipliers))
+        fourierZPlanes = plf.ProjectForZList(planeWork)
+        for cc in planes:
+            # Compute the iFFT for each z plane
+            proj = self.zProjectorClass(projection, hMatrix, cc)
+            Backprojection[cc] = special.special_fftconvolve_part3(fourierZPlanes[cc], proj.fshape, proj.fslice, proj.s1, useCCode=True)
+        return Backprojection
+    
+    def ForwardProjectACC(self, hMatrix, realspace, planes, progress, logPrint, numjobs, keepNative=False):
+        TOTALprojection = None
+        planeWork = []
+        for cc in planes:
+            # Project each z plane forward to the camera image plane
+            proj = self.zProjectorClass(realspace[0], hMatrix, cc)
+            planeWork.append((realspace[cc], hMatrix.Hcc(cc, False), hMatrix.Nnum, proj.fshape[-2], proj.fshape[-1], proj.rfshape[-2], proj.rfshape[-1], proj.xAxisMultipliers, proj.yAxisMultipliers))
+        fourierProjections = plf.ProjectForZList(planeWork)
+        for cc in planes:
+            # Transform back from Fourier space into real space
+            # Note that we really do need to do a separate FFT for each plane, because fshape/convolutionShape will be different in each case
+            proj = self.zProjectorClass(realspace[0], hMatrix, cc)
+            thisProjection = special.special_fftconvolve_part3(fourierProjections[cc], proj.fshape, proj.fslice, proj.s1, useCCode=True)
+            if TOTALprojection is None:
+                TOTALprojection = thisProjection
+            else:
+                TOTALprojection += thisProjection
+        assert(TOTALprojection.dtype == np.float32)   # Keep an eye out for any reversion to double-precision
+        return TOTALprojection
+    
+    def BackwardProjectACC_old(self, hMatrix, projection, planes, progress, logPrint, numjobs, keepNative=False):
+        # Plane-by-plane code left for reference
+        Backprojection = np.zeros((hMatrix.numZ, projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
         for cc in progress(planes, 'Backward-project - z', leave=False):
             proj = self.zProjectorClass(projection, hMatrix, cc)
             Hcc = hMatrix.Hcc(cc, True)
@@ -678,11 +713,11 @@ class Projector_allC(Projector_base):
                                              proj.fshape[-2], proj.fshape[-1], \
                                              proj.rfshape[-2], proj.rfshape[-1], \
                                              proj.xAxisMultipliers, proj.yAxisMultipliers)
-            # Compute the FFT for each z plane
+            # Compute the iFFT for each z plane
             Backprojection[cc] = special.special_fftconvolve_part3(fourierZPlane, proj.fshape, proj.fslice, proj.s1, useCCode=True)
         return Backprojection
 
-    def ForwardProjectACC(self, hMatrix, realspace, planes, progress, logPrint, numjobs, keepNative=False):
+    def ForwardProjectACC_old(self, hMatrix, realspace, planes, progress, logPrint, numjobs, keepNative=False):
         TOTALprojection = None
         for cc in progress(planes, 'Forward-project - z', leave=False):
             # Project each z plane forward to the camera image plane
@@ -741,7 +776,7 @@ class Projector_pythonSkeleton(Projector_base):
     
     def InverseTransformForwardProjection(self, fourierProjection, planes, hMatrix, realspace):
         # Compute and accumulate the FFT for each z plane
-        TOTALprojection = self.nativeZeros((len(planes), realspace.shape[1], realspace.shape[2], realspace.shape[3]), dtype='float32')
+        TOTALprojection = self.nativeZeros((realspace.shape[1], realspace.shape[2], realspace.shape[3]), dtype='float32')
         for cc in planes:
             (fshape, fslice, s1) = special.convolutionShape(realspace[cc].shape, hMatrix.PSFShape(cc), hMatrix.Nnum)
             thisProjection = special.special_fftconvolve_part3(fourierProjection[cc], fshape, fslice, s1)
@@ -765,18 +800,21 @@ class Projector_python(Projector_pythonSkeleton):
     def __init__(self):
         super().__init__()
         self.zProjectorClass = ProjectorForZ_python
+        self.name = 'Pure python'
 
 
 class Projector_cHelpers(Projector_pythonSkeleton):
     def __init__(self):
         super().__init__()
         self.zProjectorClass = ProjectorForZ_cHelpers
+        self.name = 'C helpers'
 
 
 class Projector_gpuHelpers(Projector_pythonSkeleton):
     def __init__(self):
         super().__init__()
         self.zProjectorClass = ProjectorForZ_gpuHelpers
+        self.name = 'GPU helpers'
 
     def asnative(self, m):
         return cp.asarray(m)
@@ -908,17 +946,22 @@ def selfTest():
         (_H, _Ht, _CAIndex, hPathFormat, htPathFormat, hReducedShape, htReducedShape) = psfmatrix.LoadRawMatrixData(matPath)
         testHCC = _H[13]
         testHtCC = _Ht[13]
-
-    # Test forward and back projection
-    classesToTest = [Projector_allC, Projector_python, Projector_cHelpers]
+    
+    # I have removed Projector_cHelpers from this list of classes to test, because my changes to py_light_field
+    # have removed several of the c helper functions. I might be able to reinstate them now the C code is stable again,
+    # but I don't think it's a mode I actually care about keeping going. Its only benefit is to have a C counterpart
+    # to the GPU helpers for testing purposes (but I could probably equally well test against a python counterpart if I wanted...)
+    classesToTest = [Projector_allC, Projector_python]
     if gpuAvailable:
         classesToTest = [Projector_gpuHelpers]   #  classesToTest +    # TODO: eventually will want to prepend classesToTest
+    np.random.seed(0)
     for projectorClass in classesToTest:
         print(' Testing class:', projectorClass.__name__)
         for bk in [True, False]:
             print(' === bk', bk)
             # Test both square and non-square, since they use different code
-            for shape in [(1,150,150), (1,150,300), (1,300,150)]:
+            for numTimepoints in [2]:
+              for shape in [(numTimepoints,150,150), (numTimepoints,150,300), (numTimepoints,300,150)]:
                 print(' === shape', shape)
                 testHMatrix = psfmatrix.LoadMatrix(matPath, numZ=1, zStart=13)   # Needs to be in the loop here, because caching is confused by changing the image shape
                 testProjection = np.random.random(shape).astype(np.float32)
@@ -937,12 +980,13 @@ def selfTest():
                 # Now run the code we are actually testing.
                 # Note that we call xxxProjectACC rather than ProjectForZ,
                 # because the pure-C implementation does not have a ProjectForZ function.
-                t1 = time.time()
-                if bk:
-                    testResultNew = projectorClass().BackwardProjectACC(testHMatrix, testProjection, [0], progress=util.noProgressBar, logPrint=False, numjobs=1)
-                else:
-                    testResultNew = projectorClass().ForwardProjectACC(testHMatrix, testProjection[np.newaxis,:,:,:], [0], progress=util.noProgressBar, logPrint=False, numjobs=1)
-                t2 = time.time()
+                for n in range(2):  # Run twice to avoid counting the time spent making FFT plans
+                    t1 = time.time()
+                    if bk:
+                        testResultNew = projectorClass().BackwardProjectACC(testHMatrix, testProjection, [0], progress=util.noProgressBar, logPrint=False, numjobs=1)
+                    else:
+                        testResultNew = projectorClass().ForwardProjectACC(testHMatrix, testProjection[np.newaxis,:,:,:], [0], progress=util.noProgressBar, logPrint=False, numjobs=1)
+                    t2 = time.time()
                 print('New took %.2fms'%((t2-t1)*1e3))
                 # Compare the results that we got
                 comparison = np.max(np.abs(testResultOld - testResultNew))

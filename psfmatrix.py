@@ -113,6 +113,10 @@ def LoadRawMatrixData(matPath, expectedNnum=None):
         print('Load CAindex')
         sys.stdout.flush()
         _CAindex = f['CAindex'].value.astype('int')
+        # I have got into a mess whereby I have sometimes been saving CAIndex in transposed form.
+        # This test is a hack to fix that:
+        if _CAindex.shape[1] == 2:
+            _CAindex = _CAindex.T
         Nnum = f['Nnum'].value.astype('int')
         if (expectedNnum is not None) and (Nnum != expectedNnum):
             warnings.warn('Nnum={0} from file does not match expected value {1}'.format(Nnum, expectedNnum))

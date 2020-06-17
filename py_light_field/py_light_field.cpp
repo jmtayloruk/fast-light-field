@@ -260,32 +260,62 @@ void CalculateRowMirror(TYPE *ac, const TYPE *fap, const TYPE *fbu, const TYPE e
 
 class WorkItem
 {
+private:  // To ensure callers go through our mutex-protected accessor functions
+    bool        complete;
 public:
+    WorkItem    *dependency;
+    double      runStartTime, runEndTime, mutexWaitStartTime[2], mutexWaitEndTime[2];
+    int         ranOnThread;
+    
+    WorkItem() : complete(false), dependency(NULL) { mutexWaitStartTime[0] = mutexWaitEndTime[0] = 0; mutexWaitStartTime[1] = mutexWaitEndTime[1] = 0; }
     virtual ~WorkItem() { }
     virtual void Run(void) = 0;
+    void RunComplete(void)
+    {
+        // TODO: thought will be needed here about thread safety, but for now I think I am ok to do this without a mutex, since I am just polling
+        // in the case where a thread is blocked waiting on another piece of work.
+        complete = true;
+    }
+    bool Complete(void)
+    {
+        return complete;
+    }
+    bool CanRun(void)   // Note that this is not fully threadsafe, and caller must be aware of window conditions (or can just poll!)
+    {
+        if (dependency != NULL)
+            return dependency->Complete();
+        else
+            return true;
+    }
 };
 
-class FFTWorkItem : public WorkItem
+class FHWorkItemBase : public WorkItem
 {
 public:
+    int                     fshapeY, fshapeX;
     JPythonArray2D<TYPE>    *fftResult;
     
-    FFTWorkItem(int fshapeY, int fshapeX)
+    FHWorkItemBase(int _fshapeY, int _fshapeX) : fshapeY(_fshapeY), fshapeX(_fshapeX), fftResult(NULL)
+    {
+    }
+    
+    void AllocateResultArray(void)
     {
         // Allocate an array to hold the results
         npy_intp dims[2] = { fshapeY, fshapeX };
         npy_intp strides[2] = { int((fshapeX + 15)/16)*16, 1 };     // Ensure 16-byte alignment of each row, which seems to make things *slightly* faster
-        // TODO: eventually we cannot allocate like this when the work item is constructed - that will more than fill the available memory! I will need to change things so that this is allocated later (and make sure no dependencies rely on it from their own constructors)
         fftResult = new JPythonArray2D<TYPE>(NULL, dims, strides);
+        ALWAYS_ASSERT(!(((size_t)fftResult->Data()) & 0xF));        // Check base alignment. In fact, just plain malloc seems to give sufficient alignment.
     }
     
-    virtual ~FFTWorkItem()
+    virtual ~FHWorkItemBase()
     {
-        delete fftResult;
+        if (fftResult != NULL)
+            delete fftResult;
     }
 };
 
-class FHWorkItem : public FFTWorkItem
+class FHWorkItem : public FHWorkItemBase
 {
 public:
     JPythonArray2D<RTYPE>   Hts;
@@ -293,13 +323,18 @@ public:
     fftwf_plan              plan, plan2;
     
     
-    FHWorkItem(JPythonArray2D<RTYPE> _Hts, int fshapeY, int fshapeX, bool _transpose) : FFTWorkItem(fshapeY, fshapeX), Hts(_Hts), transpose(_transpose)
+    FHWorkItem(JPythonArray2D<RTYPE> _Hts, int fshapeY, int fshapeX, bool _transpose) : FHWorkItemBase(fshapeY, fshapeX), Hts(_Hts), transpose(_transpose)
     {
-        // Note that we manually split up the 2D FFT into horizontal and vertical 1D FFTs, to enable us to skip the rows that we know are all zeroes.
-        int nx[1] = { fftResult->Dims(1) };
-        ALWAYS_ASSERT(!(((size_t)fftResult->Data()) & 0xF));        // Check alignment. In fact, just plain malloc seems to give sufficient alignment.
+        /*  Set up the FFT plan.
+            The complication here is that we cannot afford to allocate memory for every 
+            FFT array simultaneously, as we would exhause all the available memory.
+            Because of this we temporarily allocate an array for FFTW planning purposes.
+            I am imagining this will never be a bottleneck, but I will want to keep an eye on how long the setup time takes.  */
         fftwf_plan_with_nthreads(1);
+        AllocateResultArray();      // Just temporarily, for FFT planning! We will delete it at the end of this function
+        int nx[1] = { fftResult->Dims(1) };
         // Compute the horizontal 1D FFTs, for only the nonzero rows
+        // Note that we manually split up the 2D FFT into horizontal and vertical 1D FFTs, to enable us to skip the rows that we know are all zeroes.
         plan = fftwf_plan_many_dft(1, nx, Hts.Dims(0),
                                    (fftwf_complex *)fftResult->Data(), NULL,
                                    fftResult->Strides(1), fftResult->Strides(0),
@@ -314,6 +349,7 @@ public:
                                     (fftwf_complex *)fftResult->Data(), NULL,
                                     fftResult->Strides(0), fftResult->Strides(1),
                                     FFTW_FORWARD, fftPlanMethod);
+        delete fftResult; fftResult = NULL;
     }
     
     virtual ~FHWorkItem()
@@ -324,6 +360,7 @@ public:
     
     void Run(void)
     {
+        AllocateResultArray();
         fftResult->SetZero();
         assert(Hts.Dims(0) == Hts.Dims(1));     // Sanity check - this should be true. If it is not, then among other things our whole transpose logic gets messed up.
         if (transpose)
@@ -342,26 +379,32 @@ public:
                     _result[x] = _Hts[x];
             }
         
+        mutexWaitEndTime[0] = GetTime();
         // Compute the full 2D FFT (i.e. not just the RFFT)
-        fftwf_execute(plan);
-        fftwf_execute(plan2);
+        fftwf_execute_dft(plan, (fftwf_complex *)fftResult->Data(), (fftwf_complex *)fftResult->Data());
+        mutexWaitEndTime[1] = GetTime();
+        fftwf_execute_dft(plan2, (fftwf_complex *)fftResult->Data(), (fftwf_complex *)fftResult->Data());
+        RunComplete();
     }
     
 };
 
-class MirrorWorkItem : public FFTWorkItem
+class MirrorWorkItem : public FHWorkItemBase
 {
 public:
     FHWorkItem            *sourceFFTWorkItem;
     JPythonArray1D<TYPE>  mirrorYMultiplier;
     
-    MirrorWorkItem(FHWorkItem *_sourceFFTWorkItem, JPythonArray1D<TYPE> _mirrorYMultiplier) : FFTWorkItem(_sourceFFTWorkItem->fftResult->Dims(0), _sourceFFTWorkItem->fftResult->Dims(1)),
+    MirrorWorkItem(FHWorkItem *_sourceFFTWorkItem, JPythonArray1D<TYPE> _mirrorYMultiplier) : FHWorkItemBase(_sourceFFTWorkItem->fshapeY, _sourceFFTWorkItem->fshapeX),
                                                                                                 sourceFFTWorkItem(_sourceFFTWorkItem), mirrorYMultiplier(_mirrorYMultiplier)
     {
+        dependency = sourceFFTWorkItem;
     }
     void Run(void)
     {
+        AllocateResultArray();
         MirrorYArray(*sourceFFTWorkItem->fftResult, mirrorYMultiplier, *fftResult);
+        RunComplete();
     }
 };
 
@@ -369,71 +412,87 @@ class ConvolveWorkItem : public WorkItem
 {
     JPythonArray2D<RTYPE> projection;
     int                   bbUnmirrored, aaUnmirrored, Nnum;
-    FFTWorkItem           *fftWorkItem_unXmirrored;
+    FHWorkItemBase        *fhWorkItem_unXmirrored;
     bool                  mirrorX;
     JPythonArray2D<TYPE>  xAxisMultipliers;
     JPythonArray3D<TYPE>  yAxisMultipliers3;
     JPythonArray2D<TYPE>  accum;
+    JMutex                *accumMutex;
     
-    fftwf_plan            plan;
-    JPythonArray2D<TYPE>  *fftArray;
+    fftwf_plan            plan;     // Pointer to plan held by the caller
 
 public:
-    ConvolveWorkItem(JPythonArray2D<RTYPE> _projection, int _bb, int _aa, int _Nnum, FFTWorkItem *_fftWorkItem_unXmirrored, bool _mirrorX, JPythonArray2D<TYPE> _xAxisMultipliers, JPythonArray3D<TYPE> _yAxisMultipliers3, JPythonArray2D<TYPE> _accum)
-                       : projection(_projection), bbUnmirrored(_bb), aaUnmirrored(_aa), Nnum(_Nnum), fftWorkItem_unXmirrored(_fftWorkItem_unXmirrored), mirrorX(_mirrorX), xAxisMultipliers(_xAxisMultipliers), yAxisMultipliers3(_yAxisMultipliers3), accum(_accum),
-                         plan(NULL), fftArray(NULL)
+    ConvolveWorkItem(JPythonArray2D<RTYPE> _projection, int _bb, int _aa, int _Nnum, FHWorkItemBase *_fhWorkItem_unXmirrored, bool _mirrorX, JPythonArray2D<TYPE> _xAxisMultipliers, JPythonArray3D<TYPE> _yAxisMultipliers3, JPythonArray2D<TYPE> _accum, JMutex *_accumMutex, fftwf_plan _plan)
+                       : projection(_projection), bbUnmirrored(_bb), aaUnmirrored(_aa), Nnum(_Nnum), fhWorkItem_unXmirrored(_fhWorkItem_unXmirrored), mirrorX(_mirrorX),
+                         xAxisMultipliers(_xAxisMultipliers), yAxisMultipliers3(_yAxisMultipliers3), accum(_accum), accumMutex(_accumMutex), plan(_plan)
     {
+        dependency = fhWorkItem_unXmirrored;
+    }
+    
+    static fftwf_plan GetFFTPlan(FHWorkItemBase *_fhWorkItem_unXmirrored, int Nnum)
+    {
+        // The convolution itself is actually fast enough that it takes a non-negligible amount of time to request the FFT plan if we do it separately for every convolution!
+        // To avoid this, the main code should call this once and pass the result to many ConvolveWorkItems.
         // Define the FFTW plan that we will use as part of our convolution task
-        int fullYSize = fftWorkItem_unXmirrored->fftResult->Dims(0);
-        int fullXSize = fftWorkItem_unXmirrored->fftResult->Dims(1);
-        npy_intp smallDims[2] = { fullYSize/Nnum, fullXSize/Nnum };
-        fftArray = new JPythonArray2D<TYPE>(smallDims);
+        npy_intp smallDims[2] = { _fhWorkItem_unXmirrored->fshapeY/Nnum, _fhWorkItem_unXmirrored->fshapeX/Nnum };
+        JPythonArray2D<TYPE> fftArray(smallDims);
         // A reminder that this planning may modify the data in fftArray, especially if using FFTW_MEASURE.
         // That's fine, becasue we have not filled it in yet.
-        plan = fftwf_plan_dft_2d((int)smallDims[0], (int)smallDims[1], (fftwf_complex *)fftArray->Data(), (fftwf_complex *)fftArray->Data(), FFTW_FORWARD, fftPlanMethod);
+        fftwf_plan result = fftwf_plan_dft_2d((int)smallDims[0], (int)smallDims[1], (fftwf_complex *)fftArray.Data(), (fftwf_complex *)fftArray.Data(), FFTW_FORWARD, fftPlanMethod);
+        ALWAYS_ASSERT(result != NULL);
+        return result;
     }
     
     virtual ~ConvolveWorkItem()
     {
-        delete fftArray;
-        fftwf_destroy_plan(plan);
     }
     
     void special_fftconvolve_part1(JPythonArray2D<TYPE> &result, JPythonArray1D<TYPE> expandXMultiplier, int bb, int aa)
     {
         // Select the pixels indexed by bb,aa, and pad to the size we need based on what we will eventually tile up to the same shape as fHtsFull_unXmirrored
-        fftArray->SetZero();    // Note that we may not be setting every element, I think, due to padding - so we do need to set to zero initially
+        npy_intp smallDims[2] = { fhWorkItem_unXmirrored->fshapeY/Nnum, fhWorkItem_unXmirrored->fshapeX/Nnum };
+        JPythonArray2D<TYPE> fftArray(smallDims);
+        fftArray.SetZero();    // Note that we may not be setting every element, I think, due to padding - so we do need to set to zero initially
         for (int y = bb, y2 = 0; y < projection.Dims(0); y += Nnum, y2++)
             for (int x = aa, x2 = 0; x < projection.Dims(1); x += Nnum, x2++)
-                (*fftArray)[y2][x2] = projection[y][x];
+                fftArray[y2][x2] = projection[y][x];
         
         // Compute the full 2D FFT (i.e. not just the RFFT)
-        fftwf_execute(plan);
+        fftwf_execute_dft(plan, (fftwf_complex *)fftArray.Data(), (fftwf_complex *)fftArray.Data());
         
         // Tile the result up to the length that is implied by expandXMultiplier (using that length saves us figuring out the length for ourselves)
         int outputLength = expandXMultiplier.Dims(0);
-        for (int y = 0; y < fftArray->Dims(0); y++)
+        for (int y = 0; y < fftArray.Dims(0); y++)
         {
             JPythonArray1D<TYPE> _result = result[y];
-            JPythonArray1D<TYPE> _fftArray = (*fftArray)[y];
+            JPythonArray1D<TYPE> _fftArray = fftArray[y];
             for (int x = 0, inputX = 0; x < outputLength; x++, inputX++)
             {
-                if (inputX == fftArray->Dims(1))     // Modulo operator is surprisingly time-consuming - it is faster to do this test instead
+                if (inputX == fftArray.Dims(1))     // Modulo operator is surprisingly time-consuming - it is faster to do this test instead
                     inputX = 0;
                 _result[x] = _fftArray[inputX] * expandXMultiplier[x];
             }
         }
     }
     
-    void ConvolvePart4(int bb, int aa, bool mirrorX, JPythonArray2D<TYPE> yAxisMultipliers)
+    void ConvolvePart4(int bb, int aa, bool mirrorX, JPythonArray2D<TYPE> yAxisMultipliers, int convolveNumber)
     {
         // This plays the role that special_fftconvolve2 does in the python code.
         // We take advantage of the fact that we have been passed fHTsFull, to tell us what the padded array dimensions should be for the FFT.
         
-        npy_intp output_dims[2] = { fftArray->Dims(0), xAxisMultipliers.Dims(1) };
+        npy_intp output_dims[2] = { fhWorkItem_unXmirrored->fshapeY/Nnum, xAxisMultipliers.Dims(1) };
         JPythonArray2D<TYPE> partialFourierOfProjection(output_dims);
         special_fftconvolve_part1(partialFourierOfProjection, xAxisMultipliers[kXAxisMultiplierExpandXStart+aa], bb, aa);
-        
+
+        /*  Protect accum with a mutex, to avoid multiple threads potentially overwriting each other.
+            It is up to the caller to provide scope for parallelism by providing fine-grained mutexes
+            (e.g. different timepoints, and different z coordinates, are not using the same actual 2D accum array).
+            In reality I think what we are protecting against is a tiny window condition in the += operator,
+            but I cannot in good conscience ignore it, since it would lead to incorrect numerical results.   */
+        mutexWaitStartTime[convolveNumber] = GetTime();
+        LocalGetMutex lgm(accumMutex);
+        mutexWaitEndTime[convolveNumber] = GetTime();
+        // Do the actual updates to accum
         for (int y = 0; y < accum.Dims(0); y++)
         {
             int ya = y % partialFourierOfProjection.Dims(0);
@@ -441,145 +500,21 @@ public:
             // By directly accessing the pointers, I bypass range checks and implicitly assume contiguous arrays (the latter makes a difference to speed).
             // What I'd really like to do is to profile this code and see how well it does, because there may be other things I can improve.
             if (!mirrorX)
-                CalculateRow(&accum[y][0], &partialFourierOfProjection[ya][0], &(*fftWorkItem_unXmirrored->fftResult)[y][0], yAxisMultipliers[bb][y], accum.Dims(1));
+                CalculateRow(&accum[y][0], &partialFourierOfProjection[ya][0], &(*fhWorkItem_unXmirrored->fftResult)[y][0], yAxisMultipliers[bb][y], accum.Dims(1));
             else
-                CalculateRowMirror(&accum[y][0], &partialFourierOfProjection[ya][0], &(*fftWorkItem_unXmirrored->fftResult)[y][0], yAxisMultipliers[bb][y], accum.Dims(1), fftWorkItem_unXmirrored->fftResult->Dims(1));
+                CalculateRowMirror(&accum[y][0], &partialFourierOfProjection[ya][0], &(*fhWorkItem_unXmirrored->fftResult)[y][0], yAxisMultipliers[bb][y], accum.Dims(1), fhWorkItem_unXmirrored->fftResult->Dims(1));
         }
     }
     
     void Run(void)
     {
-        ConvolvePart4(bbUnmirrored, aaUnmirrored, false, yAxisMultipliers3[kYAxisMultiplierNoMirror]);
+        ConvolvePart4(bbUnmirrored, aaUnmirrored, false, yAxisMultipliers3[kYAxisMultiplierNoMirror], 0);
         if (mirrorX)
-            ConvolvePart4(Nnum-bbUnmirrored-1, aaUnmirrored, true, yAxisMultipliers3[kYAxisMultiplierMirrorX]);
+            ConvolvePart4(Nnum-bbUnmirrored-1, aaUnmirrored, true, yAxisMultipliers3[kYAxisMultiplierMirrorX], 1);
+        RunComplete();
     }
     
 };
-
-#if 0
-struct ThreadInfo
-{
-    int imageCounter;
-    int numThreads;
-    double idle[kMaxThreads];
-    double t1[kMaxThreads];
-    double t2[kMaxThreads];
-    double t3[kMaxThreads];
-    JPythonArray3D<RTYPE> *projection;
-    int bb;
-    int aa;
-    int Nnum;
-    bool mirrorX;
-    JPythonArray2D<TYPE> *fHTsFull_unmirrored;
-    JPythonArray2D<TYPE> *xAxisMultipliers;
-    JPythonArray2D<TYPE> *yAxisMultipliers;
-    JPythonArray3D<TYPE> *accum;
-    fftwf_plan plan;
-    
-    bool WorkAvailable(void) { ALWAYS_ASSERT(accum != NULL); return (imageCounter < accum->Dims(0)); }
-    bool WorkInProgress(void)
-    {
-        bool anyBusy = false;
-        for (int i = 0; i < numThreads; i++)
-            if (!idle[i])
-                anyBusy = true;
-        return anyBusy;
-    }
-};
-
-pthread_t gThreads[kMaxThreads];  // Since this is global, it will start as all NULL.
-int gNumThreadsRunning = 0;
-int gThreadIDCounter;
-ThreadInfo *gThreadInfo;
-JMutex workThreadMutex;
-pthread_cond_t	workAvailableSignal, workCompletedSignal;
-
-void *ThreadFunc(void *params)
-{
-    int *threadIDCounter = (int *)params;
-    int thisThreadID = __sync_fetch_and_add(threadIDCounter, 1);
-    while (1)
-    {
-        ThreadInfo *t = NULL;
-        int i;
-        {
-            LocalGetMutex lgm(&workThreadMutex);
-            t = gThreadInfo;
-            if (!t->WorkAvailable())
-                t->t3[thisThreadID] = GetTime();
-            while (!t->WorkAvailable())
-            {
-                // We are out of work. Wait until fresh work appears
-                t->idle[thisThreadID] = true;
-                pthread_cond_broadcast(&workCompletedSignal);
-                workThreadMutex.BlockWaitingForSignal(&workAvailableSignal, __LINE__, true);
-                t = gThreadInfo;
-                t->t1[thisThreadID] = GetTime();
-            }
-            i = t->imageCounter++;
-        }
-
-        JPythonArray3D<RTYPE> *projection = t->projection;
-        int bb = t->bb;
-        int aa = t->aa;
-        int Nnum = t->Nnum;
-        bool mirrorX = t->mirrorX;
-        JPythonArray2D<TYPE> *fHTsFull_unmirrored = t->fHTsFull_unmirrored;
-        JPythonArray2D<TYPE> *xAxisMultipliers = t->xAxisMultipliers;
-        JPythonArray2D<TYPE> *yAxisMultipliers = t->yAxisMultipliers;
-        JPythonArray3D<TYPE> *accum = t->accum;
-        fftwf_plan plan = t->plan;
-        ALWAYS_ASSERT(plan != NULL);
-
-        JPythonArray2D<TYPE> partialFourierOfProjection = PartialFourierOfInputArray((*projection)[i], bb, aa, fHTsFull_unmirrored->Dims(0), fHTsFull_unmirrored->Dims(1), Nnum, (*xAxisMultipliers)[kXAxisMultiplierExpandXStart+aa], plan);
-        if (t->t2[thisThreadID] == 0)
-            t->t2[thisThreadID] = GetTime();
-        for (int y = 0; y < accum->Dims(1); y++)
-        {
-            int ya = y % partialFourierOfProjection.Dims(0);
-            // Note that the array accessors take time, so should be lifted out of CalculateRow.
-            // By directly accessing the pointers, I bypass range checks and implicitly assume contiguous arrays (the latter makes a difference to speed).
-            // What I'd really like to do is to profile this code and see how well it does, because there may be other things I can improve.
-            if (!mirrorX)
-                CalculateRow(&(*accum)[i][y][0], &partialFourierOfProjection[ya][0], &(*fHTsFull_unmirrored)[y][0], (*yAxisMultipliers)[bb][y], accum->Dims(2));
-            else
-                CalculateRowMirror(&(*accum)[i][y][0], &partialFourierOfProjection[ya][0], &(*fHTsFull_unmirrored)[y][0], (*yAxisMultipliers)[bb][y], accum->Dims(2), fHTsFull_unmirrored->Dims(1));
-        }
-    }
-    return NULL;
-}
-
-void RunThreads(ThreadInfo *thisThreadInfo)
-{
-    int numThreadsToUse = thisThreadInfo->numThreads;
-    ALWAYS_ASSERT(numThreadsToUse <= kMaxThreads);
-    ALWAYS_ASSERT(numThreadsToUse == gNumThreadsToUse);     // TODO: still need to know whether this is the number of threads we actually launched
-    
-    LocalGetMutex lgm(&workThreadMutex);
-    
-    if (gNumThreadsRunning == 0)
-    {
-        int result = pthread_cond_init(&workAvailableSignal, NULL);
-        ALWAYS_ASSERT(result == 0);
-        result = pthread_cond_init(&workCompletedSignal, NULL);
-        ALWAYS_ASSERT(result == 0);
-    }
-    if (gNumThreadsRunning != numThreadsToUse)
-    {
-        for (int i = 0; i < kMaxThreads; i++)
-            if (gThreads[i] != NULL)
-                pthread_kill(gThreads[i], -9);
-        gThreadIDCounter = 0;
-        for (int i = 0; i < numThreadsToUse; i++)
-            pthread_create(&gThreads[i], NULL, ThreadFunc, &gThreadIDCounter);
-        gNumThreadsRunning = numThreadsToUse;
-    }
-    gThreadInfo = thisThreadInfo;
-    pthread_cond_broadcast(&workAvailableSignal);
-    while (thisThreadInfo->WorkInProgress())
-        workThreadMutex.BlockWaitingForSignal(&workCompletedSignal, __LINE__, false);
-}
-#endif
 
 enum
 {
@@ -589,29 +524,162 @@ enum
     kNumWorkTypes
 };
 
-void ConvolvePart2(JPythonArray2D<RTYPE> projection, int bb, int aa, int Nnum, bool mirrorY, bool mirrorX, FHWorkItem *fftWorkItem, JPythonArray2D<TYPE> xAxisMultipliers, JPythonArray3D<TYPE> yAxisMultipliers, JPythonArray2D<TYPE> accum, std::vector<WorkItem *> work[kNumWorkTypes])
+struct ThreadInfo
 {
-    ConvolveWorkItem *workConvolve = new ConvolveWorkItem(projection, bb, aa, Nnum, fftWorkItem, mirrorX, xAxisMultipliers, yAxisMultipliers, accum);
-    work[kWorkConvolve].push_back(workConvolve);
-    if (mirrorY)
+    int                     threadIDCounter;
+    size_t                  workCounter[kNumWorkTypes];
+    JMutex                  *workQueueMutex;
+    long                    *workQueueMutexBlock_us;
+    double                  *pollingTime;
+    std::vector<WorkItem *> *work[kNumWorkTypes];
+    
+    void *ThreadFunc(void)
     {
-        MirrorWorkItem *workCalcMirror = new MirrorWorkItem(fftWorkItem, xAxisMultipliers[kXAxisMultiplierMirrorY]);
-        work[kWorkMirrorY].push_back(workCalcMirror);
-        ConvolveWorkItem *workConvolveMirror = new ConvolveWorkItem(projection, bb, Nnum-aa-1, Nnum, workCalcMirror, mirrorX, xAxisMultipliers, yAxisMultipliers, accum);
-        work[kWorkConvolve].push_back(workConvolveMirror);
+        int         thisThreadID;
+        {
+            LocalGetMutex lgm(workQueueMutex, workQueueMutexBlock_us);
+            thisThreadID = threadIDCounter++;
+        }
+        while (1)
+        {
+            WorkItem *workItem = NULL;
+            // Pick a work item to run.
+            double t1 = GetTime();
+            bool polled = false;
+            {
+            repeat:
+                LocalGetMutex lgm(workQueueMutex, workQueueMutexBlock_us);
+                // Run anything that is not blocked, prioritising the convolution work
+                for (int w = kNumWorkTypes - 1; w >= 0; w--)
+                {
+                    if (workCounter[w] < work[w]->size())
+                    {
+                        workItem = (*work[w])[workCounter[w]];
+                        if (workItem->CanRun())
+                        {
+                            // First item of work[w] is not blocked - we should run it
+                            workCounter[w]++;
+                            break;
+                        }
+                        else
+                            workItem = NULL;
+                    }
+                }
+                if (workItem == NULL)
+                {
+                    // All work types are either complete or are blocked.
+                    // We should wait for something to unblock.
+                    // We *MUST* prioritise the early work types (which in practice means the mirror),
+                    // because otherwise we could end up deadlocked.
+                    for (int w = 0; w < kNumWorkTypes; w++)
+                    {
+                        if (workCounter[w] < work[w]->size())
+                        {
+                            /*  There is work remaining, but nothing was ready to run.
+                                Rather than set up a complicated semaphore scheme here,
+                                I really am just going to poll, by going back around the loop again until work is available.
+                                This is inefficient, but in practice it will only happen for a short period at the very end
+                                of the work list, so I am not concerned about this wasteful CPU load. 
+                                (In practice, only one thread will be burning at any one time, since they will all be fighting
+                                 for workQueueMutex!) */
+                            //printf("%d polling!\n", thisThreadID);
+                            polled = true;
+                            workItem = NULL;
+                            goto repeat;
+                        }
+                    }
+                    // If we get here then all work is complete
+                    break;
+                }
+                if (polled)
+                    *pollingTime += GetTime()-t1;
+            }
+            // If we get here then we should have a work item to run
+            ALWAYS_ASSERT(workItem != NULL);
+            ALWAYS_ASSERT(workItem->CanRun());
+            workItem->ranOnThread = thisThreadID;
+            workItem->runStartTime = GetTime();
+            workItem->Run();
+            workItem->runEndTime = GetTime();
+        }
+        return NULL;
     }
+};
+
+void *ThreadFunc(void *params)
+{
+    ThreadInfo  *threadInfo = (ThreadInfo *)params;
+    return threadInfo->ThreadFunc();
 }
 
 void RunWork(std::vector<WorkItem *> work[kNumWorkTypes])
 {
-    // Initially doing this single-threaded (and in the correct order of work types)
-    for (int w = 0; w < kNumWorkTypes; w++)
-        for (size_t i = 0; i < work[w].size(); i++)
-            work[w][i]->Run();
+    JMutex workQueueMutex;
+    long workQueueMutexBlock_us = 0;
+    double pollingTime = 0;
+    if ((false))
+    {
+        // Initially doing this single-threaded (and in the correct order of work types), for test purposes
+        printf("Running single-threaded\n");
+        for (int w = 0; w < kNumWorkTypes; w++)
+            for (size_t i = 0; i < work[w].size(); i++)
+                work[w][i]->Run();
+    }
+    else if ((false))
+    {
+        // Intermediate code, for test purposes. This code is parallelised but does all the FFT work first, then all mirroring, then the actual convolutions
+        ALWAYS_ASSERT(gNumThreadsToUse <= kMaxThreads);
+        printf("Running semi-parallelised\n");
+        for (int w = 0; w < kNumWorkTypes; w++)
+        {
+            printf("Run work (%d)\n", w);
+            ThreadInfo threadInfo { 0, {0, 0, 0}, &workQueueMutex, &workQueueMutexBlock_us, &pollingTime, {&work[w], new std::vector<WorkItem *>(), new std::vector<WorkItem *>()} };     // 'new' leaks, but this is only temporary code anyway
+            pthread_t threads[kMaxThreads];
+            for (int i = 0; i < gNumThreadsToUse; i++)
+                pthread_create(&threads[i], NULL, ThreadFunc, &threadInfo);
+            for (int i = 0; i < gNumThreadsToUse; i++)
+                pthread_join(threads[i], NULL);
+        }
+        printf("Returning from RunWork\n");
+    }
+    else
+    {
+        // Final parallelised code
+        ALWAYS_ASSERT(gNumThreadsToUse <= kMaxThreads);
+        ThreadInfo threadInfo { 0, {0, 0, 0}, &workQueueMutex, &workQueueMutexBlock_us, &pollingTime, {&work[0], &work[1], &work[2]} };
+        pthread_t threads[kMaxThreads];
+        for (int i = 0; i < gNumThreadsToUse; i++)
+            pthread_create(&threads[i], NULL, ThreadFunc, &threadInfo);
+        for (int i = 0; i < gNumThreadsToUse; i++)
+            pthread_join(threads[i], NULL);
+        printf("%.1lfms spent waiting to acquire work queue mutex. %.1lfms spent polling.\n", workQueueMutexBlock_us/1e3, pollingTime*1e3);
+    }
 }
-             
+
+void ConvolvePart2(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, bool mirrorY, bool mirrorX, FHWorkItem *fftWorkItem, JPythonArray2D<TYPE> xAxisMultipliers, JPythonArray3D<TYPE> yAxisMultipliers, JPythonArray3D<TYPE> accum, std::vector<JMutex*> &accumMutex, fftwf_plan plan, std::vector<WorkItem *> work[kNumWorkTypes])
+{
+    // Note that this function does not actually do the work, it just sets up the WorkItems that will be run later.
+    ALWAYS_ASSERT(projection.Dims(0) == accum.Dims(0));
+    for (int i = 0; i < projection.Dims(0); i++)
+    {
+        ConvolveWorkItem *workConvolve = new ConvolveWorkItem(projection[i], bb, aa, Nnum, fftWorkItem, mirrorX, xAxisMultipliers, yAxisMultipliers, accum[i], accumMutex[i], plan);
+        work[kWorkConvolve].push_back(workConvolve);
+    }
+    if (mirrorY)
+    {
+        MirrorWorkItem *workCalcMirror = new MirrorWorkItem(fftWorkItem, xAxisMultipliers[kXAxisMultiplierMirrorY]);
+        work[kWorkMirrorY].push_back(workCalcMirror);
+        for (int i = 0; i < projection.Dims(0); i++)
+        {
+            ConvolveWorkItem *workConvolveMirror = new ConvolveWorkItem(projection[i], bb, Nnum-aa-1, Nnum, workCalcMirror, mirrorX, xAxisMultipliers, yAxisMultipliers, accum[i], accumMutex[i], plan);
+            work[kWorkConvolve].push_back(workConvolveMirror);
+        }
+    }
+}
+
 extern "C" PyObject *ProjectForZ(PyObject *self, PyObject *args)
 {
+    double t0 = GetTime();
     PyArrayObject *_projection, *_HtsFull, *_xAxisMultipliers, *_yAxisMultipliers;
     int Nnum, fshapeY, fshapeX, rfshapeY, rfshapeX;
 #if TESTING
@@ -655,7 +723,12 @@ extern "C" PyObject *ProjectForZ(PyObject *self, PyObject *args)
     JPythonArray3D<TYPE> accum(_accum);
 
     // Set up the work items describing this complete projection operation
+    double t1 = GetTime();
     std::vector<WorkItem *> work[kNumWorkTypes];
+    fftwf_plan plan = NULL;
+    std::vector<JMutex*> accumMutex(accum.Dims(0));
+    for (size_t i = 0; i < accumMutex.size(); i++)
+        accumMutex[i] = new JMutex;
     for (int bb = 0; bb < HtsFull.Dims(0); bb++)
     {
         for (int aa = bb; aa < int(Nnum+1)/2; aa++)
@@ -671,29 +744,71 @@ extern "C" PyObject *ProjectForZ(PyObject *self, PyObject *args)
             FHWorkItem *f1 = new FHWorkItem(HtsFull[bb][aa], fshapeY, fshapeX, false);
             work[kWorkFFT].push_back(f1);
 
-            ALWAYS_ASSERT(projection.Dims(0) == accum.Dims(0));
-            for (int i = 0; i < projection.Dims(0); i++)
+            FHWorkItem *f2 = NULL;
+            if (transpose)
             {
-                ConvolvePart2(projection[i], bb, aa, Nnum, mirrorY, mirrorX, f1, xAxisMultipliers, yAxisMultipliers, accum[i], work);
-
-                if (transpose)
-                {
-                    FHWorkItem *f2 = new FHWorkItem(HtsFull[bb][aa], fshapeY, fshapeX, true);
-                    work[kWorkFFT].push_back(f2);
-                    // Note that my,mx (and bb,aa) have been swapped here, which is necessary following the transpose.
-                    ConvolvePart2(projection[i], aa, bb, Nnum, mirrorX, mirrorY, f2, xAxisMultipliers, yAxisMultipliers, accum[i], work);
-                }
+                f2 = new FHWorkItem(HtsFull[bb][aa], fshapeY, fshapeX, true);
+                work[kWorkFFT].push_back(f2);
+            }
+            
+            if (plan == NULL)
+                plan = ConvolveWorkItem::GetFFTPlan(f1, Nnum);
+            
+            ConvolvePart2(projection, bb, aa, Nnum, mirrorY, mirrorX, f1, xAxisMultipliers, yAxisMultipliers, accum, accumMutex, plan, work);
+            if (transpose)
+            {
+                // Note that my,mx (and bb,aa) have been swapped here, which is necessary following the transpose.
+                ConvolvePart2(projection, aa, bb, Nnum, mirrorX, mirrorY, f2, xAxisMultipliers, yAxisMultipliers, accum, accumMutex, plan, work);
             }
         }
     }
+    
     // Do the actual hard work (parallelised)
+    double t2 = GetTime();
+    TimeStruct before;
     RunWork(work);
+    double t3 = GetTime();
+    TimeStruct after;
     // Clean up work items
+    // TODO: it is only at this point that I free up any memory at all! I will run out. I need to track dependencies and free memory once all dependencies have completed.
+    FILE *threadFile = fopen("threads.txt", "w");
     for (int w = 0; w < kNumWorkTypes; w++)
         for (size_t i = 0; i < work[w].size(); i++)
+        {
+            fprintf(threadFile, "%d\t%d\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\n", work[w][i]->ranOnThread, w, work[w][i]->runStartTime, work[w][i]->runEndTime, work[w][i]->mutexWaitStartTime[0], work[w][i]->mutexWaitEndTime[0], work[w][i]->mutexWaitStartTime[1], work[w][i]->mutexWaitEndTime[1]);
             delete work[w][i];
+        }
+    fclose(threadFile);
+    for (size_t i = 0; i < accumMutex.size(); i++)
+        delete accumMutex[i];
+    fftwf_destroy_plan(plan);
+    double t4 = GetTime();
+    double utime = TimeStruct::Secs(after._self.ru_utime)-TimeStruct::Secs(before._self.ru_utime);
+    double stime = TimeStruct::Secs(after._self.ru_stime)-TimeStruct::Secs(before._self.ru_stime);
+    printf("ProjectForZ took %.3lf %.3lf %.3lf %.3lf. User work %.3lf system %.3lf. Parallelism %.2lf\n", t1-t0, t2-t1, t3-t2, t4-t3, utime, stime, (utime+stime)/(t3-t2));
     
     return PyArray_Return(_accum);
+}
+
+extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
+{
+    // For now this is just a placeholder that calls through to ProjectForZ, but ultimately I intend to do all the work in one massive batch.
+    // Doing that will help reduce lock contention when we only have a few timepoints to process.
+    PyObject *workList;
+    if (!PyArg_ParseTuple(args, "O!",
+                          &PyList_Type, &workList))
+    {
+        PyErr_Format(PyErr_NewException((char*)"exceptions.TypeError", NULL, NULL), "Unable to parse input parameters!");
+        return NULL;
+    }
+    
+    PyObject *resultList = PyList_New(PyList_Size(workList));
+    for (int cc = 0; cc < PyList_Size(workList); cc++)
+    {
+        PyObject *planeResult = ProjectForZ(self, PyList_GetItem(workList, cc));
+        PyList_SetItem(resultList, cc, planeResult);        // Steals reference
+    }
+    return resultList;
 }
 
 extern "C" PyObject *InverseRFFT(PyObject *self, PyObject *args)
@@ -856,6 +971,7 @@ static PyMethodDef plf_methods[] = {
 	{"mirrorX", mirrorX, METH_VARARGS},
     {"mirrorY", mirrorY, METH_VARARGS},
     {"ProjectForZ", ProjectForZ, METH_VARARGS},
+    {"ProjectForZList", ProjectForZList, METH_VARARGS},
     {"InverseRFFT", InverseRFFT, METH_VARARGS},
     {"PrintStats", PrintStats, METH_NOARGS},
     {"ResetStats", ResetStats, METH_NOARGS},

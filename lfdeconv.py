@@ -125,6 +125,7 @@ def main(argv, projectorClass=projector.Projector_allC, maxiter=8, numParallel=3
     # This is purely intended to replicate the previous results obtained by Prevedel's code.
     hMatrix = psfmatrix.LoadMatrix('PSFmatrix/PSFmatrix_M40NA0.95MLPitch150fml3000from-26to0zspacing2Nnum15lambda520n1.mat')
     print('Reminder: this test code will use a matrix that is not fully normalised')
+    print('** Tests will run with projector type: {0} **'.format(projectorClass().name))
     deconvolvedResult = None
     
     if (len(argv) == 1):
@@ -244,4 +245,4 @@ def main(argv, projectorClass=projector.Projector_allC, maxiter=8, numParallel=3
     return deconvolvedResult
 
 if __name__ == "__main__":
-    main(sys.argv, projectorClass=projector.Projector_python)
+    main(sys.argv, projectorClass=projector.Projector_allC)
