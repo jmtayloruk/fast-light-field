@@ -105,8 +105,7 @@ extern "C" PyObject *SetStatsFile(PyObject *self, PyObject *args)
     int append;
     if (!PyArg_ParseTuple(args, "si", &path, &append))
     {
-        PyErr_Format(PyErr_NewException((char*)"exceptions.TypeError", NULL, NULL), "Unable to parse string!");
-        return NULL;
+        return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
     }
     if (gStatsFile != NULL)
         fclose(gStatsFile);
@@ -175,8 +174,7 @@ extern "C" PyObject *mirrorXY(PyObject *self, PyObject *args, bool x)
                           &PyArray_Type, &a,
                           &PyArray_Type, &_multiplier))
     {
-        PyErr_Format(PyErr_NewException((char*)"exceptions.TypeError", NULL, NULL), "Unable to parse array!");
-        return NULL;
+        return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
     }
     if ((PyArray_TYPE(a) != NPY_CFLOAT) ||
         (PyArray_TYPE(_multiplier) != NPY_CFLOAT))
@@ -260,21 +258,31 @@ void CalculateRowMirror(TYPE *ac, const TYPE *fap, const TYPE *fbu, const TYPE e
 
 class WorkItem
 {
-private:  // To ensure callers go through our mutex-protected accessor functions
+private:  // To ensure callers go through our accessor functions
     bool        complete;
-public:
     WorkItem    *dependency;
+    int         dependencyCount;
+public:
+    int         cc, order;
     double      runStartTime, runEndTime, mutexWaitStartTime[2], mutexWaitEndTime[2];
     int         ranOnThread;
     
-    WorkItem() : complete(false), dependency(NULL) { mutexWaitStartTime[0] = mutexWaitEndTime[0] = 0; mutexWaitStartTime[1] = mutexWaitEndTime[1] = 0; }
-    virtual ~WorkItem() { }
+    WorkItem(int _cc, int _order) : complete(false), dependency(NULL), dependencyCount(0), cc(_cc), order(_order)
+    {
+        mutexWaitStartTime[0] = mutexWaitEndTime[0] = 0;
+        mutexWaitStartTime[1] = mutexWaitEndTime[1] = 0;
+    }
+    virtual ~WorkItem() { ALWAYS_ASSERT(dependencyCount == 0); }
     virtual void Run(void) = 0;
+    virtual void CleanUpAllocations(void) = 0;
     void RunComplete(void)
     {
-        // TODO: thought will be needed here about thread safety, but for now I think I am ok to do this without a mutex, since I am just polling
+        // TODO: care is needed here about thread safety, but for now I think I am ok to do this without a mutex, since I am just polling
         // in the case where a thread is blocked waiting on another piece of work.
         complete = true;
+        // And here again, AdjustDependencyCount is designed to be threadsafe
+        if (dependency != NULL)
+            dependency->AdjustDependencyCount(-1);
     }
     bool Complete(void)
     {
@@ -287,6 +295,27 @@ public:
         else
             return true;
     }
+    void AdjustDependencyCount(int delta)
+    {
+        // This function is designed to be threadsafe. We update dependencyCount in a threadsafe manner,
+        // and only one thread will cause CleanUpAllocations to be called for a given object.
+        int newVal = __sync_add_and_fetch(&dependencyCount, delta);
+        ALWAYS_ASSERT(newVal >= 0);
+        if (newVal == 0)
+        {
+            // All dependencies have run. We should be safe to free any allocated memory now
+            CleanUpAllocations();
+        }
+    }
+    void AddDependency(WorkItem *dep)
+    {
+        dependency = dep;
+        dep->AdjustDependencyCount(+1);
+    }
+    static int Compare(WorkItem *a, WorkItem *b)        // Note that the pointers are because the std::vector itself is a vector of pointers
+    {
+        return a->order < b->order;
+    }
 };
 
 class FHWorkItemBase : public WorkItem
@@ -295,7 +324,7 @@ public:
     int                     fshapeY, fshapeX;
     JPythonArray2D<TYPE>    *fftResult;
     
-    FHWorkItemBase(int _fshapeY, int _fshapeX) : fshapeY(_fshapeY), fshapeX(_fshapeX), fftResult(NULL)
+    FHWorkItemBase(int _fshapeY, int _fshapeX, int _cc, int _order) : WorkItem(_cc, _order), fshapeY(_fshapeY), fshapeX(_fshapeX), fftResult(NULL)
     {
     }
     
@@ -310,8 +339,16 @@ public:
     
     virtual ~FHWorkItemBase()
     {
-        if (fftResult != NULL)
-            delete fftResult;
+        // Memory should already have been freed by a call to CleanUpAllocations
+        // (Note that that's only the case because we know all FHWorkItems have a dependency count)
+        ALWAYS_ASSERT(fftResult == NULL);
+    }
+
+    virtual void CleanUpAllocations(void)
+    {
+        ALWAYS_ASSERT(fftResult != NULL);
+        delete fftResult;
+        fftResult = NULL;
     }
 };
 
@@ -323,7 +360,8 @@ public:
     fftwf_plan              plan, plan2;
     
     
-    FHWorkItem(JPythonArray2D<RTYPE> _Hts, int fshapeY, int fshapeX, bool _transpose) : FHWorkItemBase(fshapeY, fshapeX), Hts(_Hts), transpose(_transpose)
+    FHWorkItem(JPythonArray2D<RTYPE> _Hts, int fshapeY, int fshapeX, bool _transpose, int _cc, int _order)
+        : FHWorkItemBase(fshapeY, fshapeX, _cc, _order), Hts(_Hts), transpose(_transpose)
     {
         /*  Set up the FFT plan.
             The complication here is that we cannot afford to allocate memory for every 
@@ -395,10 +433,10 @@ public:
     FHWorkItem            *sourceFFTWorkItem;
     JPythonArray1D<TYPE>  mirrorYMultiplier;
     
-    MirrorWorkItem(FHWorkItem *_sourceFFTWorkItem, JPythonArray1D<TYPE> _mirrorYMultiplier) : FHWorkItemBase(_sourceFFTWorkItem->fshapeY, _sourceFFTWorkItem->fshapeX),
-                                                                                                sourceFFTWorkItem(_sourceFFTWorkItem), mirrorYMultiplier(_mirrorYMultiplier)
+    MirrorWorkItem(FHWorkItem *_sourceFFTWorkItem, JPythonArray1D<TYPE> _mirrorYMultiplier, int _cc, int _order)
+        : FHWorkItemBase(_sourceFFTWorkItem->fshapeY, _sourceFFTWorkItem->fshapeX, _cc, _order), sourceFFTWorkItem(_sourceFFTWorkItem), mirrorYMultiplier(_mirrorYMultiplier)
     {
-        dependency = sourceFFTWorkItem;
+        AddDependency(sourceFFTWorkItem);
     }
     void Run(void)
     {
@@ -422,11 +460,11 @@ class ConvolveWorkItem : public WorkItem
     fftwf_plan            plan;     // Pointer to plan held by the caller
 
 public:
-    ConvolveWorkItem(JPythonArray2D<RTYPE> _projection, int _bb, int _aa, int _Nnum, FHWorkItemBase *_fhWorkItem_unXmirrored, bool _mirrorX, JPythonArray2D<TYPE> _xAxisMultipliers, JPythonArray3D<TYPE> _yAxisMultipliers3, JPythonArray2D<TYPE> _accum, JMutex *_accumMutex, fftwf_plan _plan)
-                       : projection(_projection), bbUnmirrored(_bb), aaUnmirrored(_aa), Nnum(_Nnum), fhWorkItem_unXmirrored(_fhWorkItem_unXmirrored), mirrorX(_mirrorX),
+    ConvolveWorkItem(JPythonArray2D<RTYPE> _projection, int _bb, int _aa, int _Nnum, FHWorkItemBase *_fhWorkItem_unXmirrored, bool _mirrorX, JPythonArray2D<TYPE> _xAxisMultipliers, JPythonArray3D<TYPE> _yAxisMultipliers3, JPythonArray2D<TYPE> _accum, JMutex *_accumMutex, fftwf_plan _plan, int _cc, int _order)
+                       : WorkItem(_cc, _order), projection(_projection), bbUnmirrored(_bb), aaUnmirrored(_aa), Nnum(_Nnum), fhWorkItem_unXmirrored(_fhWorkItem_unXmirrored), mirrorX(_mirrorX),
                          xAxisMultipliers(_xAxisMultipliers), yAxisMultipliers3(_yAxisMultipliers3), accum(_accum), accumMutex(_accumMutex), plan(_plan)
     {
-        dependency = fhWorkItem_unXmirrored;
+        AddDependency(fhWorkItem_unXmirrored);
     }
     
     static fftwf_plan GetFFTPlan(FHWorkItemBase *_fhWorkItem_unXmirrored, int Nnum)
@@ -445,6 +483,11 @@ public:
     
     virtual ~ConvolveWorkItem()
     {
+    }
+    
+    virtual void CleanUpAllocations(void)
+    {
+        
     }
     
     void special_fftconvolve_part1(JPythonArray2D<TYPE> &result, JPythonArray1D<TYPE> expandXMultiplier, int bb, int aa)
@@ -652,122 +695,150 @@ void RunWork(std::vector<WorkItem *> work[kNumWorkTypes])
             pthread_create(&threads[i], NULL, ThreadFunc, &threadInfo);
         for (int i = 0; i < gNumThreadsToUse; i++)
             pthread_join(threads[i], NULL);
-        printf("%.1lfms spent waiting to acquire work queue mutex. %.1lfms spent polling.\n", workQueueMutexBlock_us/1e3, pollingTime*1e3);
+//        printf("%.1lfms spent waiting to acquire work queue mutex. %.1lfms spent polling.\n", workQueueMutexBlock_us/1e3, pollingTime*1e3);
     }
 }
 
-void ConvolvePart2(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, bool mirrorY, bool mirrorX, FHWorkItem *fftWorkItem, JPythonArray2D<TYPE> xAxisMultipliers, JPythonArray3D<TYPE> yAxisMultipliers, JPythonArray3D<TYPE> accum, std::vector<JMutex*> &accumMutex, fftwf_plan plan, std::vector<WorkItem *> work[kNumWorkTypes])
+void ConvolvePart2(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, bool mirrorY, bool mirrorX, FHWorkItem *fftWorkItem, JPythonArray2D<TYPE> xAxisMultipliers, JPythonArray3D<TYPE> yAxisMultipliers, JPythonArray3D<TYPE> accum, std::vector<JMutex*> &accumMutex, fftwf_plan plan, std::vector<WorkItem *> work[kNumWorkTypes], int cc, int &mCounter, int &cCounter)
 {
     // Note that this function does not actually do the work, it just sets up the WorkItems that will be run later.
     ALWAYS_ASSERT(projection.Dims(0) == accum.Dims(0));
     for (int i = 0; i < projection.Dims(0); i++)
     {
-        ConvolveWorkItem *workConvolve = new ConvolveWorkItem(projection[i], bb, aa, Nnum, fftWorkItem, mirrorX, xAxisMultipliers, yAxisMultipliers, accum[i], accumMutex[i], plan);
+        ConvolveWorkItem *workConvolve = new ConvolveWorkItem(projection[i], bb, aa, Nnum, fftWorkItem, mirrorX, xAxisMultipliers, yAxisMultipliers, accum[i], accumMutex[i], plan, cc, cCounter++);
         work[kWorkConvolve].push_back(workConvolve);
     }
     if (mirrorY)
     {
-        MirrorWorkItem *workCalcMirror = new MirrorWorkItem(fftWorkItem, xAxisMultipliers[kXAxisMultiplierMirrorY]);
+        MirrorWorkItem *workCalcMirror = new MirrorWorkItem(fftWorkItem, xAxisMultipliers[kXAxisMultiplierMirrorY], cc, mCounter++);
         work[kWorkMirrorY].push_back(workCalcMirror);
         for (int i = 0; i < projection.Dims(0); i++)
         {
-            ConvolveWorkItem *workConvolveMirror = new ConvolveWorkItem(projection[i], bb, Nnum-aa-1, Nnum, workCalcMirror, mirrorX, xAxisMultipliers, yAxisMultipliers, accum[i], accumMutex[i], plan);
+            ConvolveWorkItem *workConvolveMirror = new ConvolveWorkItem(projection[i], bb, Nnum-aa-1, Nnum, workCalcMirror, mirrorX, xAxisMultipliers, yAxisMultipliers, accum[i], accumMutex[i], plan, cc, cCounter++);
             work[kWorkConvolve].push_back(workConvolveMirror);
         }
     }
 }
 
-extern "C" PyObject *ProjectForZ(PyObject *self, PyObject *args)
+extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
 {
-    double t0 = GetTime();
-    PyArrayObject *_projection, *_HtsFull, *_xAxisMultipliers, *_yAxisMultipliers;
-    int Nnum, fshapeY, fshapeX, rfshapeY, rfshapeX;
-#if TESTING
+    // For now this is just a placeholder that calls through to ProjectForZ, but ultimately I intend to do all the work in one massive batch.
+    // Doing that will help reduce lock contention when we only have a few timepoints to process.
+    PyObject *workList;
+#if 0//TESTING
     // PyArg_ParseTuple doesn't seem to work when I use it on my own synthesized tuple.
     // I don't know why that is, but this code exists as a workaround for that problem.
-    _projection = (PyArrayObject *)PyTuple_GetItem(args, 0);
-    _HtsFull = (PyArrayObject *)PyTuple_GetItem(args, 1);
-    Nnum = (int)PyLong_AsLong(PyTuple_GetItem(args, 2));
-    fshapeY = (int)PyLong_AsLong(PyTuple_GetItem(args, 3));
-    fshapeX = (int)PyLong_AsLong(PyTuple_GetItem(args, 4));
-    rfshapeY = (int)PyLong_AsLong(PyTuple_GetItem(args, 5));
-    rfshapeX = (int)PyLong_AsLong(PyTuple_GetItem(args, 6));
-    _xAxisMultipliers = (PyArrayObject *)PyTuple_GetItem(args, 7);
-    _yAxisMultipliers = (PyArrayObject *)PyTuple_GetItem(args, 8);
+    workList = PyTuple_GetItem(args, 0);
 #else
-    if (!PyArg_ParseTuple(args, "O!O!iiiiiO!O!",
-                          &PyArray_Type, &_projection,
-                          &PyArray_Type, &_HtsFull,
-                          &Nnum, &fshapeY, &fshapeX, &rfshapeY, &rfshapeX,
-                          &PyArray_Type, &_xAxisMultipliers,
-                          &PyArray_Type, &_yAxisMultipliers))
+    if (!PyArg_ParseTuple(args, "O!",
+                          &PyList_Type, &workList))
     {
-        PyErr_Format(PyErr_NewException((char*)"exceptions.TypeError", NULL, NULL), "Unable to parse input parameters!");
-        return NULL;
+        return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
     }
 #endif
-    
-    JPythonArray3D<RTYPE> projection(_projection);
-    JPythonArray4D<RTYPE> HtsFull(_HtsFull);
-    JPythonArray2D<TYPE> xAxisMultipliers(_xAxisMultipliers);
-    JPythonArray3D<TYPE> yAxisMultipliers(_yAxisMultipliers);
-    
-    if (!(projection.FinalDimensionUnitStride() && HtsFull.FinalDimensionUnitStride() && xAxisMultipliers.FinalDimensionUnitStride() && yAxisMultipliers.FinalDimensionUnitStride()))
-    {
-        PyErr_Format(PyErr_NewException((char*)"exceptions.TypeError", NULL, NULL), "Input arrays must have unit stride in the final dimension");
-        return NULL;
-    }
-    
-    npy_intp output_dims[3] = { projection.Dims(0), rfshapeY, rfshapeX };
-    PyArrayObject *_accum = (PyArrayObject *)PyArray_ZEROS(3, output_dims, NPY_CFLOAT, 0);
-    JPythonArray3D<TYPE> accum(_accum);
+    long numZPlanes = PyList_Size(workList);
 
-    // Set up the work items describing this complete projection operation
-    double t1 = GetTime();
+    double t0 = GetTime();
     std::vector<WorkItem *> work[kNumWorkTypes];
-    fftwf_plan plan = NULL;
-    std::vector<JMutex*> accumMutex(accum.Dims(0));
-    for (size_t i = 0; i < accumMutex.size(); i++)
-        accumMutex[i] = new JMutex;
-    for (int bb = 0; bb < HtsFull.Dims(0); bb++)
+    std::vector<JMutex*> allMutexes;
+    std::vector<fftwf_plan> allPlans;
+    PyObject *resultList = PyList_New(numZPlanes);
+    for (int cc = 0; cc < numZPlanes; cc++)
     {
-        for (int aa = bb; aa < int(Nnum+1)/2; aa++)
+        PyObject *planeInfo = PyList_GetItem(workList, cc);
+        PyArrayObject *_projection, *_HtsFull, *_xAxisMultipliers, *_yAxisMultipliers;
+        int Nnum, fshapeY, fshapeX, rfshapeY, rfshapeX;
+    #if 0//TESTING
+        // PyArg_ParseTuple doesn't seem to work when I use it on my own synthesized tuple.
+        // I don't know why that is, but this code exists as a workaround for that problem.
+        // -> Actually, the parsing code seems to work now. I've disabled this, but left it in case the problem returns!
+        _projection = (PyArrayObject *)PyTuple_GetItem(planeInfo, 0);
+        _HtsFull = (PyArrayObject *)PyTuple_GetItem(planeInfo, 1);
+        Nnum = (int)PyLong_AsLong(PyTuple_GetItem(planeInfo, 2));
+        fshapeY = (int)PyLong_AsLong(PyTuple_GetItem(planeInfo, 3));
+        fshapeX = (int)PyLong_AsLong(PyTuple_GetItem(planeInfo, 4));
+        rfshapeY = (int)PyLong_AsLong(PyTuple_GetItem(planeInfo, 5));
+        rfshapeX = (int)PyLong_AsLong(PyTuple_GetItem(planeInfo, 6));
+        _xAxisMultipliers = (PyArrayObject *)PyTuple_GetItem(planeInfo, 7);
+        _yAxisMultipliers = (PyArrayObject *)PyTuple_GetItem(planeInfo, 8);
+    #else
+        if (!PyArg_ParseTuple(planeInfo, "O!O!iiiiiO!O!",
+                              &PyArray_Type, &_projection,
+                              &PyArray_Type, &_HtsFull,
+                              &Nnum, &fshapeY, &fshapeX, &rfshapeY, &rfshapeX,
+                              &PyArray_Type, &_xAxisMultipliers,
+                              &PyArray_Type, &_yAxisMultipliers))
         {
-            int cent = int(Nnum/2);
-            bool mirrorX = (bb != cent);
-            bool mirrorY = (aa != cent);
-            // We do not currently support the transpose here, although that can speed things up in certain circumstances (see python code in projector.convolve()).
-            // The only scenario where we could gain (by avoiding recalculating the FFT) is if the image array is square.
-            // At the moment, we process the case with the transpose, but simply by recalculating the appropriate FFT(H) from scratch
-            bool transpose = ((aa != bb) && (aa != (Nnum-bb-1)));
+            return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
+        }
+    #endif
+        
+        JPythonArray3D<RTYPE> projection(_projection);
+        JPythonArray4D<RTYPE> HtsFull(_HtsFull);
+        JPythonArray2D<TYPE> xAxisMultipliers(_xAxisMultipliers);
+        JPythonArray3D<TYPE> yAxisMultipliers(_yAxisMultipliers);
+        
+        if (!(projection.FinalDimensionUnitStride() && HtsFull.FinalDimensionUnitStride() && xAxisMultipliers.FinalDimensionUnitStride() && yAxisMultipliers.FinalDimensionUnitStride()))
+        {
+            PyErr_Format(PyErr_NewException((char*)"exceptions.TypeError", NULL, NULL), "Input arrays must have unit stride in the final dimension");
+            return NULL;
+        }
+    
+        npy_intp output_dims[3] = { projection.Dims(0), rfshapeY, rfshapeX };
+        PyArrayObject *_accum = (PyArrayObject *)PyArray_ZEROS(3, output_dims, NPY_CFLOAT, 0);
+        JPythonArray3D<TYPE> accum(_accum);
+        PyList_SetItem(resultList, cc, (PyObject *)_accum);  // Steals reference
 
-            FHWorkItem *f1 = new FHWorkItem(HtsFull[bb][aa], fshapeY, fshapeX, false);
-            work[kWorkFFT].push_back(f1);
+        // Set up the work items describing the complete projection operation for this z plane
+        fftwf_plan plan = NULL;
+        std::vector<JMutex*> accumMutex(projection.Dims(0));
+        for (size_t i = 0; i < accumMutex.size(); i++)
+            accumMutex[i] = new JMutex;
+        allMutexes.insert(allMutexes.end(), accumMutex.begin(), accumMutex.end());
+        int fhCounter = 0, mCounter = 0, cCounter = 0;
+        for (int bb = 0; bb < HtsFull.Dims(0); bb++)
+        {
+            for (int aa = bb; aa < int(Nnum+1)/2; aa++)
+            {
+                int cent = int(Nnum/2);
+                bool mirrorX = (bb != cent);
+                bool mirrorY = (aa != cent);
+                // We do not currently support the transpose here, although that can speed things up in certain circumstances (see python code in projector.convolve()).
+                // The only scenario where we could gain (by avoiding recalculating the FFT) is if the image array is square.
+                // At the moment, we process the case with the transpose, but simply by recalculating the appropriate FFT(H) from scratch
+                bool transpose = ((aa != bb) && (aa != (Nnum-bb-1)));
 
-            FHWorkItem *f2 = NULL;
-            if (transpose)
-            {
-                f2 = new FHWorkItem(HtsFull[bb][aa], fshapeY, fshapeX, true);
-                work[kWorkFFT].push_back(f2);
-            }
-            
-            if (plan == NULL)
-                plan = ConvolveWorkItem::GetFFTPlan(f1, Nnum);
-            
-            ConvolvePart2(projection, bb, aa, Nnum, mirrorY, mirrorX, f1, xAxisMultipliers, yAxisMultipliers, accum, accumMutex, plan, work);
-            if (transpose)
-            {
-                // Note that my,mx (and bb,aa) have been swapped here, which is necessary following the transpose.
-                ConvolvePart2(projection, aa, bb, Nnum, mirrorX, mirrorY, f2, xAxisMultipliers, yAxisMultipliers, accum, accumMutex, plan, work);
+                FHWorkItem *f1 = new FHWorkItem(HtsFull[bb][aa], fshapeY, fshapeX, false, cc, fhCounter++);
+                work[kWorkFFT].push_back(f1);
+
+                FHWorkItem *f2 = NULL;
+                if (transpose)
+                {
+                    f2 = new FHWorkItem(HtsFull[bb][aa], fshapeY, fshapeX, true, cc, fhCounter++);
+                    work[kWorkFFT].push_back(f2);
+                }
+                
+                if (plan == NULL)
+                    plan = ConvolveWorkItem::GetFFTPlan(f1, Nnum);
+                
+                ConvolvePart2(projection, bb, aa, Nnum, mirrorY, mirrorX, f1, xAxisMultipliers, yAxisMultipliers, accum, accumMutex, plan, work, cc, mCounter, cCounter);
+                if (transpose)
+                {
+                    // Note that my,mx (and bb,aa) have been swapped here, which is necessary following the transpose.
+                    ConvolvePart2(projection, aa, bb, Nnum, mirrorX, mirrorY, f2, xAxisMultipliers, yAxisMultipliers, accum, accumMutex, plan, work, cc, mCounter, cCounter);
+                }
             }
         }
+        allPlans.push_back(plan);
     }
+    for (int w = 0; w < kNumWorkTypes; w++)
+        std::stable_sort(work[w].begin(), work[w].end(), WorkItem::Compare);
     
     // Do the actual hard work (parallelised)
-    double t2 = GetTime();
     TimeStruct before;
+    double t1 = GetTime();
     RunWork(work);
-    double t3 = GetTime();
+    double t2 = GetTime();
     TimeStruct after;
     // Clean up work items
     // TODO: it is only at this point that I free up any memory at all! I will run out. I need to track dependencies and free memory once all dependencies have completed.
@@ -779,36 +850,40 @@ extern "C" PyObject *ProjectForZ(PyObject *self, PyObject *args)
             delete work[w][i];
         }
     fclose(threadFile);
-    for (size_t i = 0; i < accumMutex.size(); i++)
-        delete accumMutex[i];
-    fftwf_destroy_plan(plan);
-    double t4 = GetTime();
+    for (size_t i = 0; i < allMutexes.size(); i++)
+        delete allMutexes[i];
+    for (size_t i = 0; i < allPlans.size(); i++)
+        fftwf_destroy_plan(allPlans[i]);
+    double t3 = GetTime();
     double utime = TimeStruct::Secs(after._self.ru_utime)-TimeStruct::Secs(before._self.ru_utime);
     double stime = TimeStruct::Secs(after._self.ru_stime)-TimeStruct::Secs(before._self.ru_stime);
-    printf("ProjectForZ took %.3lf %.3lf %.3lf %.3lf. User work %.3lf system %.3lf. Parallelism %.2lf\n", t1-t0, t2-t1, t3-t2, t4-t3, utime, stime, (utime+stime)/(t3-t2));
+//    printf("ProjectForZ took %.3lf %.3lf %.3lf. User work %.3lf system %.3lf. Parallelism %.2lf\n", t1-t0, t2-t1, t3-t2, utime, stime, (utime+stime)/(t2-t1));
     
-    return PyArray_Return(_accum);
+    return resultList;
 }
 
-extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
+extern "C" PyObject *ProjectForZ(PyObject *self, PyObject *args)
 {
-    // For now this is just a placeholder that calls through to ProjectForZ, but ultimately I intend to do all the work in one massive batch.
-    // Doing that will help reduce lock contention when we only have a few timepoints to process.
-    PyObject *workList;
-    if (!PyArg_ParseTuple(args, "O!",
-                          &PyList_Type, &workList))
+    // Convenience function to project for a single z plane.
+    // However, ProjectForZList should be used for optimal parallelism
+    PyObject *planeList = PyList_New(1);
+    Py_INCREF(args);                            // So that the reference can be stolen!
+    PyList_SetItem(planeList, 0, args);         // Steals reference
+    PyObject *planeTuple = PyTuple_New(1);
+    PyTuple_SetItem(planeTuple, 0, planeList);         // Steals reference
+    PyObject *resultList = ProjectForZList(self, planeTuple);
+    PyObject_Free(planeTuple);
+    if (resultList == NULL)
     {
-        PyErr_Format(PyErr_NewException((char*)"exceptions.TypeError", NULL, NULL), "Unable to parse input parameters!");
+        // An error occurred, presumably when parsing the planeList.
+        // The error will be a bit confusing (since it refers to the parameters taken by "the function"),
+        // but I'll return it and the user will hopefully be able to figure it out!
         return NULL;
     }
-    
-    PyObject *resultList = PyList_New(PyList_Size(workList));
-    for (int cc = 0; cc < PyList_Size(workList); cc++)
-    {
-        PyObject *planeResult = ProjectForZ(self, PyList_GetItem(workList, cc));
-        PyList_SetItem(resultList, cc, planeResult);        // Steals reference
-    }
-    return resultList;
+    PyObject *result = PyList_GetItem(resultList, 0);
+    Py_INCREF(result);                          // So that we can return it
+    PyObject_Free(resultList);
+    return result;
 }
 
 extern "C" PyObject *InverseRFFT(PyObject *self, PyObject *args)
@@ -819,8 +894,7 @@ extern "C" PyObject *InverseRFFT(PyObject *self, PyObject *args)
                           &PyArray_Type, &_mat,
                           &inputShapeY, &inputShapeX))
     {
-        PyErr_Format(PyErr_NewException((char*)"exceptions.TypeError", NULL, NULL), "Unable to parse input parameters!");
-        return NULL;
+        return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
     }
 
     double t0 = GetTime();
@@ -957,6 +1031,9 @@ void *TestMe(void)
         
         if (result != NULL)
             Py_DECREF(result);
+        else
+            PyErr_Print();
+        
         Py_DECREF(pArgs);       // Should also release the arrays (and other objects) that I added to the tuple
     }
 
