@@ -11,21 +11,25 @@
 
 // Note: the TESTING macro is set when we build within Xcode, but not when we build using setup.py
 
+int NumActualProcessorsAvailable(void)
+{
+    /*  Frustratingly, I haven't found a good way (in C or Python) to identify that we are running with hyperthreaded CPUs.
+        Performance is best when *not* using extra hyperthreads, so I just divide the reported number of processors by 2.
+        TODO: if this is run on a machine where no hyperthreading is available, it will not use the optimum number of processors.
+        An ideal solution might be to actually have a function that runs timing tests on dummy data and decides how many processors to use,
+        but that is probably overkill for now!  */
+    return int(sysconf(_SC_NPROCESSORS_ONLN) / 2);
+}
+
 /* Define the FFTW planning strategy we will use. Run times:
     FFTW_ESTIMATE took 5.46
     FFTW_MEASURE took 5.01   (after 2s the first time, and <1ms on the later times)
     FFTW_PATIENT took 4.58   (after 29s the first time)
    In other words, there is a further gain available from FFTW_PATIENT, but it's too slow to be convenient until I really am running in anger with large datasets
  */
-const int fftPlanMethod = FFTW_MEASURE;
-/*  Define the number of threads we will use for parallel processing.
-    Frustratingly, I haven't found a good way (in C or Python) to identify that we are running with hyperthreaded CPUs.
-    Performance is best when *not* using extra hyperthreads, so I just divide the reported number of processors by 2.
-    TODO: if this is run on a machine where no hyperthreading is available, it will not use the optimum number of processors.
-    An ideal solution might be to actually have a function that runs timing tests on dummy data and decides how many processors to use,
-    but that is probably overkill for now!  */
-const int kMaxThreads = 16;
-const int gNumThreadsToUse = int(sysconf(_SC_NPROCESSORS_ONLN) / 2);
+int gFFTPlanMethod = FFTW_MEASURE;
+const int kMaxThreads = 128;
+int gNumThreadsToUse = NumActualProcessorsAvailable();        // But can be modified using API call
 
 template<class TYPE> void SetImageWindowForPythonWindow(ImageWindow<TYPE> &imageWindow, JPythonArray2D<TYPE> &pythonWindow)
 {
@@ -99,14 +103,39 @@ struct TimeStruct
     }
 };
 
+extern "C" PyObject *GetNumThreadsInUse(PyObject *self, PyObject *args)
+{
+    return Py_BuildValue("i", gNumThreadsToUse);
+}
+
+extern "C" PyObject *SetNumThreadsInUse(PyObject *self, PyObject *args)
+{
+    if (!PyArg_ParseTuple(args, "i", &gNumThreadsToUse))
+        return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
+    if (gNumThreadsToUse <= 0)
+        gNumThreadsToUse = NumActualProcessorsAvailable();
+    Py_RETURN_NONE;
+}
+
+extern "C" PyObject *GetPlanningMode(PyObject *self, PyObject *args)
+{
+    
+    return Py_BuildValue("i", gFFTPlanMethod);
+}
+
+extern "C" PyObject *SetPlanningMode(PyObject *self, PyObject *args)
+{
+    if (!PyArg_ParseTuple(args, "i", &gFFTPlanMethod))
+        return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
+    Py_RETURN_NONE;
+}
+
 extern "C" PyObject *SetStatsFile(PyObject *self, PyObject *args)
 {
     const char *path;
     int append;
     if (!PyArg_ParseTuple(args, "si", &path, &append))
-    {
         return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
-    }
     if (gStatsFile != NULL)
         fclose(gStatsFile);
     if (strlen(path) > 0)
@@ -256,6 +285,17 @@ void CalculateRowMirror(TYPE *ac, const TYPE *fap, const TYPE *fbu, const TYPE e
     }
 }
 
+void CalculateRowBoth(TYPE *ac, const TYPE *fap1, const TYPE *fap2, const TYPE *fbu, const TYPE emy1, const TYPE emy2, int lim, int trueLength)
+{
+    ac[0] += fap1[0] * fbu[0] * emy1;
+    ac[0] += fap2[0] * conj(fbu[0]) * emy2;
+    for (int x = 1; x < lim; x++)
+    {
+        ac[x] += fap1[x] * fbu[x] * emy1;
+        ac[x] += fap2[x] * conj(fbu[trueLength-x]) * emy2;
+    }
+}
+
 class WorkItem
 {
 private:  // To ensure callers go through our accessor functions
@@ -378,7 +418,7 @@ public:
                                    fftResult->Strides(1), fftResult->Strides(0),
                                    (fftwf_complex *)fftResult->Data(), NULL,
                                    fftResult->Strides(1), fftResult->Strides(0),
-                                   FFTW_FORWARD, fftPlanMethod);
+                                   FFTW_FORWARD, gFFTPlanMethod);
         // Compute the vertical 1D FFTs
         int ny[1] = { fftResult->Dims(0) };
         plan2 = fftwf_plan_many_dft(1, ny, fftResult->Dims(1),
@@ -386,7 +426,7 @@ public:
                                     fftResult->Strides(0), fftResult->Strides(1),
                                     (fftwf_complex *)fftResult->Data(), NULL,
                                     fftResult->Strides(0), fftResult->Strides(1),
-                                    FFTW_FORWARD, fftPlanMethod);
+                                    FFTW_FORWARD, gFFTPlanMethod);
         delete fftResult; fftResult = NULL;
     }
     
@@ -449,7 +489,7 @@ public:
 class ConvolveWorkItem : public WorkItem
 {
     JPythonArray2D<RTYPE> projection;
-    int                   bbUnmirrored, aaUnmirrored, Nnum;
+    int                   bbUnmirrored, aa, Nnum;
     FHWorkItemBase        *fhWorkItem_unXmirrored;
     bool                  mirrorX;
     JPythonArray2D<TYPE>  xAxisMultipliers;
@@ -461,7 +501,7 @@ class ConvolveWorkItem : public WorkItem
 
 public:
     ConvolveWorkItem(JPythonArray2D<RTYPE> _projection, int _bb, int _aa, int _Nnum, FHWorkItemBase *_fhWorkItem_unXmirrored, bool _mirrorX, JPythonArray2D<TYPE> _xAxisMultipliers, JPythonArray3D<TYPE> _yAxisMultipliers3, JPythonArray2D<TYPE> _accum, JMutex *_accumMutex, fftwf_plan _plan, int _cc, int _order)
-                       : WorkItem(_cc, _order), projection(_projection), bbUnmirrored(_bb), aaUnmirrored(_aa), Nnum(_Nnum), fhWorkItem_unXmirrored(_fhWorkItem_unXmirrored), mirrorX(_mirrorX),
+                       : WorkItem(_cc, _order), projection(_projection), bbUnmirrored(_bb), aa(_aa), Nnum(_Nnum), fhWorkItem_unXmirrored(_fhWorkItem_unXmirrored), mirrorX(_mirrorX),
                          xAxisMultipliers(_xAxisMultipliers), yAxisMultipliers3(_yAxisMultipliers3), accum(_accum), accumMutex(_accumMutex), plan(_plan)
     {
         AddDependency(fhWorkItem_unXmirrored);
@@ -476,7 +516,7 @@ public:
         JPythonArray2D<TYPE> fftArray(smallDims);
         // A reminder that this planning may modify the data in fftArray, especially if using FFTW_MEASURE.
         // That's fine, becasue we have not filled it in yet.
-        fftwf_plan result = fftwf_plan_dft_2d((int)smallDims[0], (int)smallDims[1], (fftwf_complex *)fftArray.Data(), (fftwf_complex *)fftArray.Data(), FFTW_FORWARD, fftPlanMethod);
+        fftwf_plan result = fftwf_plan_dft_2d((int)smallDims[0], (int)smallDims[1], (fftwf_complex *)fftArray.Data(), (fftwf_complex *)fftArray.Data(), FFTW_FORWARD, gFFTPlanMethod);
         ALWAYS_ASSERT(result != NULL);
         return result;
     }
@@ -518,45 +558,76 @@ public:
         }
     }
     
-    void ConvolvePart4(int bb, int aa, bool mirrorX, JPythonArray2D<TYPE> yAxisMultipliers, int convolveNumber)
+    void ConvolvePart4Nomirror(int bb, int aa, JPythonArray2D<TYPE> yAxisMultipliers)
     {
-        // This plays the role that special_fftconvolve2 does in the python code.
+        ALWAYS_ASSERT(!mirrorX);
         // We take advantage of the fact that we have been passed fHTsFull, to tell us what the padded array dimensions should be for the FFT.
-        
         npy_intp output_dims[2] = { fhWorkItem_unXmirrored->fshapeY/Nnum, xAxisMultipliers.Dims(1) };
         JPythonArray2D<TYPE> partialFourierOfProjection(output_dims);
         special_fftconvolve_part1(partialFourierOfProjection, xAxisMultipliers[kXAxisMultiplierExpandXStart+aa], bb, aa);
-
+        
         /*  Protect accum with a mutex, to avoid multiple threads potentially overwriting each other.
-            It is up to the caller to provide scope for parallelism by providing fine-grained mutexes
-            (e.g. different timepoints, and different z coordinates, are not using the same actual 2D accum array).
-            In reality I think what we are protecting against is a tiny window condition in the += operator,
-            but I cannot in good conscience ignore it, since it would lead to incorrect numerical results.   */
-        mutexWaitStartTime[convolveNumber] = GetTime();
+         It is up to the caller to provide scope for parallelism by providing fine-grained mutexes
+         (e.g. different timepoints, and different z coordinates, are not using the same actual 2D accum array).
+         In reality I think what we are protecting against is a tiny window condition in the += operator,
+         but I cannot in good conscience ignore it, since it would lead to incorrect numerical results.   */
+        mutexWaitStartTime[0] = GetTime();
         LocalGetMutex lgm(accumMutex);
-        mutexWaitEndTime[convolveNumber] = GetTime();
+        mutexWaitEndTime[0] = GetTime();
         // Do the actual updates to accum
         for (int y = 0; y < accum.Dims(0); y++)
         {
             int ya = y % partialFourierOfProjection.Dims(0);
-            // Note that the array accessors take time, so should be lifted out of CalculateRow.
+            // Note that the array accessors take time, so need to be lifted out of CalculateRow.
             // By directly accessing the pointers, I bypass range checks and implicitly assume contiguous arrays (the latter makes a difference to speed).
-            // What I'd really like to do is to profile this code and see how well it does, because there may be other things I can improve.
-            if (!mirrorX)
-                CalculateRow(&accum[y][0], &partialFourierOfProjection[ya][0], &(*fhWorkItem_unXmirrored->fftResult)[y][0], yAxisMultipliers[bb][y], accum.Dims(1));
-            else
-                CalculateRowMirror(&accum[y][0], &partialFourierOfProjection[ya][0], &(*fhWorkItem_unXmirrored->fftResult)[y][0], yAxisMultipliers[bb][y], accum.Dims(1), fhWorkItem_unXmirrored->fftResult->Dims(1));
+            CalculateRow(&accum[y][0], &partialFourierOfProjection[ya][0], &(*fhWorkItem_unXmirrored->fftResult)[y][0], yAxisMultipliers[bb][y], accum.Dims(1));
         }
     }
     
+    void ConvolvePart4Mirror(int bb1, int bb2, int aa, JPythonArray2D<TYPE> yAxisMultipliers1, JPythonArray2D<TYPE> yAxisMultipliers2)
+    {
+        // This code does both the standard and the x-mirrored convolution in parallel.
+        // By reducing overall memory accesses, this gives a ~12% speedup to the entire projection operation
+        
+        // We take advantage of the fact that we have been passed fHTsFull, to tell us what the padded array dimensions should be for the FFT.
+        npy_intp output_dims[2] = { fhWorkItem_unXmirrored->fshapeY/Nnum, xAxisMultipliers.Dims(1) };
+        JPythonArray2D<TYPE> partialFourierOfProjection1(output_dims);
+        special_fftconvolve_part1(partialFourierOfProjection1, xAxisMultipliers[kXAxisMultiplierExpandXStart+aa], bb1, aa);
+        JPythonArray2D<TYPE> partialFourierOfProjection2(output_dims);
+        special_fftconvolve_part1(partialFourierOfProjection2, xAxisMultipliers[kXAxisMultiplierExpandXStart+aa], bb2, aa);
+        
+        /*  Protect accum with a mutex, to avoid multiple threads potentially overwriting each other.
+         It is up to the caller to provide scope for parallelism by providing fine-grained mutexes
+         (e.g. different timepoints, and different z coordinates, are not using the same actual 2D accum array).
+         In reality I think what we are protecting against is a tiny window condition in the += operator,
+         but I cannot in good conscience ignore it, since it would lead to incorrect numerical results.   */
+        mutexWaitStartTime[0] = GetTime();
+        LocalGetMutex lgm(accumMutex);
+        mutexWaitEndTime[0] = GetTime();
+        // Do the actual updates to accum
+        for (int y = 0; y < accum.Dims(0); y++)
+        {
+            int ya = y % partialFourierOfProjection1.Dims(0);
+            // Note that the array accessors take time, so need to be lifted out of CalculateRow.
+            // By directly accessing the pointers, I bypass range checks and implicitly assume contiguous arrays (the latter makes a difference to speed).
+            CalculateRowBoth(&accum[y][0],
+                             &partialFourierOfProjection1[ya][0], &partialFourierOfProjection2[ya][0],
+                             &(*fhWorkItem_unXmirrored->fftResult)[y][0],
+                             yAxisMultipliers1[bb1][y], yAxisMultipliers2[bb2][y],
+                             accum.Dims(1), fhWorkItem_unXmirrored->fftResult->Dims(1));
+        }
+    }
+
     void Run(void)
     {
-        ConvolvePart4(bbUnmirrored, aaUnmirrored, false, yAxisMultipliers3[kYAxisMultiplierNoMirror], 0);
+        // This operation plays the role that special_fftconvolve2 does in the python code.
         if (mirrorX)
-            ConvolvePart4(Nnum-bbUnmirrored-1, aaUnmirrored, true, yAxisMultipliers3[kYAxisMultiplierMirrorX], 1);
+            ConvolvePart4Mirror(bbUnmirrored, Nnum-bbUnmirrored-1, aa, yAxisMultipliers3[kYAxisMultiplierNoMirror], yAxisMultipliers3[kYAxisMultiplierMirrorX]);
+        else
+            ConvolvePart4Nomirror(bbUnmirrored, aa, yAxisMultipliers3[kYAxisMultiplierNoMirror]);
+        
         RunComplete();
     }
-    
 };
 
 enum
@@ -705,18 +776,21 @@ void ConvolvePart2(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, b
     ALWAYS_ASSERT(projection.Dims(0) == accum.Dims(0));
     for (int i = 0; i < projection.Dims(0); i++)
     {
-        ConvolveWorkItem *workConvolve = new ConvolveWorkItem(projection[i], bb, aa, Nnum, fftWorkItem, mirrorX, xAxisMultipliers, yAxisMultipliers, accum[i], accumMutex[i], plan, cc, cCounter++);
+        ConvolveWorkItem *workConvolve = new ConvolveWorkItem(projection[i], bb, aa, Nnum, fftWorkItem, mirrorX, xAxisMultipliers, yAxisMultipliers, accum[i], accumMutex[i], plan, cc, cCounter);
         work[kWorkConvolve].push_back(workConvolve);
     }
+    cCounter++;
     if (mirrorY)
     {
-        MirrorWorkItem *workCalcMirror = new MirrorWorkItem(fftWorkItem, xAxisMultipliers[kXAxisMultiplierMirrorY], cc, mCounter++);
+        MirrorWorkItem *workCalcMirror = new MirrorWorkItem(fftWorkItem, xAxisMultipliers[kXAxisMultiplierMirrorY], cc, mCounter);
         work[kWorkMirrorY].push_back(workCalcMirror);
         for (int i = 0; i < projection.Dims(0); i++)
         {
-            ConvolveWorkItem *workConvolveMirror = new ConvolveWorkItem(projection[i], bb, Nnum-aa-1, Nnum, workCalcMirror, mirrorX, xAxisMultipliers, yAxisMultipliers, accum[i], accumMutex[i], plan, cc, cCounter++);
+            ConvolveWorkItem *workConvolveMirror = new ConvolveWorkItem(projection[i], bb, Nnum-aa-1, Nnum, workCalcMirror, mirrorX, xAxisMultipliers, yAxisMultipliers, accum[i], accumMutex[i], plan, cc, cCounter);
             work[kWorkConvolve].push_back(workConvolveMirror);
         }
+        mCounter++;
+        cCounter++;
     }
 }
 
@@ -728,6 +802,7 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
 #if 0//TESTING
     // PyArg_ParseTuple doesn't seem to work when I use it on my own synthesized tuple.
     // I don't know why that is, but this code exists as a workaround for that problem.
+    // -> Actually, the parsing code seems to work now. I've disabled this, but left it in case the problem returns!
     workList = PyTuple_GetItem(args, 0);
 #else
     if (!PyArg_ParseTuple(args, "O!",
@@ -821,6 +896,15 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
                 if (plan == NULL)
                     plan = ConvolveWorkItem::GetFFTPlan(f1, Nnum);
                 
+                /*  It is not totally obvious whether I should increment cCounter and mCounter just at the end of all this, or after each chunk.
+                    Since its purpose is to separate out work that is contending for the same mutex, I think I should be doing it after each chunk.
+                    But note that there is only any need for any of that re-sorting when the number of timepoints is low - so possibly
+                    what I should be doing is just not sorting things at all, in the case where the number of timepoints is significantly larger than
+                    the number of threads...?   
+                    For my 30-timepoint benchmark, there is no consistent change to performance in the 4-threaded case if I disabled the sorting
+                    This suggests it doesn't seem to have an impact on the cases where there is no lock contention in the first place. 
+                    Good to know it doesn't have a big detrimental impact.
+                 */
                 ConvolvePart2(projection, bb, aa, Nnum, mirrorY, mirrorX, f1, xAxisMultipliers, yAxisMultipliers, accum, accumMutex, plan, work, cc, mCounter, cCounter);
                 if (transpose)
                 {
@@ -925,7 +1009,7 @@ extern "C" PyObject *InverseRFFT(PyObject *self, PyObject *args)
                                      1/*stride*/, 0/*unused*/,
                                      result.Data(), outFullShape,
                                      1/*stride*/, 0/*unused*/,
-                                     fftPlanMethod);
+                                     gFFTPlanMethod);
     fftwf_plan_with_nthreads(1);
 
     double t2 = GetTime();
@@ -1053,6 +1137,10 @@ static PyMethodDef plf_methods[] = {
     {"PrintStats", PrintStats, METH_NOARGS},
     {"ResetStats", ResetStats, METH_NOARGS},
     {"SetStatsFile", SetStatsFile, METH_VARARGS},
+    {"GetNumThreadsInUse", GetNumThreadsInUse, METH_NOARGS},
+    {"SetNumThreadsInUse", SetNumThreadsInUse, METH_VARARGS},
+    {"GetPlanningMode", GetPlanningMode, METH_NOARGS},
+    {"SetPlanningMode", SetPlanningMode, METH_VARARGS},
 	{NULL,NULL} };
 
 

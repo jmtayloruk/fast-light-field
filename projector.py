@@ -668,11 +668,14 @@ class Projector_allC(Projector_base):
         super().__init__()
         self.zProjectorClass = ProjectorForZ_allC
         self.name = 'Pure C'
+        # Patient planning does not actually lead to a noticable overall improvement, and takes >5 minutes to plan!
+        #plf.SetPlanningMode(32)   #patient
 
     def BackwardProjectACC(self, hMatrix, projection, planes, progress, logPrint, numjobs, keepNative=False):
         Backprojection = np.zeros((hMatrix.numZ, projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
         pos = 0
         planeWork = []
+        plf.SetNumThreadsInUse(numjobs)
         for cc in planes:
             proj = self.zProjectorClass(projection, hMatrix, cc)
             planeWork.append((projection, hMatrix.Hcc(cc, True), hMatrix.Nnum, proj.fshape[-2], proj.fshape[-1], proj.rfshape[-2], proj.rfshape[-1], proj.xAxisMultipliers, proj.yAxisMultipliers))
@@ -686,6 +689,7 @@ class Projector_allC(Projector_base):
     def ForwardProjectACC(self, hMatrix, realspace, planes, progress, logPrint, numjobs, keepNative=False):
         TOTALprojection = None
         planeWork = []
+        plf.SetNumThreadsInUse(numjobs)
         for cc in planes:
             # Project each z plane forward to the camera image plane
             proj = self.zProjectorClass(realspace[0], hMatrix, cc)
@@ -706,6 +710,7 @@ class Projector_allC(Projector_base):
     def BackwardProjectACC_old(self, hMatrix, projection, planes, progress, logPrint, numjobs, keepNative=False):
         # Plane-by-plane code left for reference
         Backprojection = np.zeros((hMatrix.numZ, projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
+        plf.SetNumThreadsInUse(numjobs)
         for cc in progress(planes, 'Backward-project - z', leave=False):
             proj = self.zProjectorClass(projection, hMatrix, cc)
             Hcc = hMatrix.Hcc(cc, True)
@@ -719,6 +724,7 @@ class Projector_allC(Projector_base):
 
     def ForwardProjectACC_old(self, hMatrix, realspace, planes, progress, logPrint, numjobs, keepNative=False):
         TOTALprojection = None
+        plf.SetNumThreadsInUse(numjobs)
         for cc in progress(planes, 'Forward-project - z', leave=False):
             # Project each z plane forward to the camera image plane
             proj = self.zProjectorClass(realspace[0], hMatrix, cc)
@@ -740,7 +746,7 @@ class Projector_allC(Projector_base):
 
 
 class Projector_pythonSkeleton(Projector_base):
-    def BackwardProjectACC(self, hMatrix, projection, planes, progress, logPrint, numjobs, keepNative=False):
+    def BackwardProjectACC(self, hMatrix, projection, planes, progress, logPrint, numjobs, keepNative=False): # Ignores numjobs
         projection = self.asnative(projection)
         # Project each z plane in turn
         fourierZPlanes = []     # This has to be a list because in Fourier space the shapes are different for each z plane
@@ -761,7 +767,7 @@ class Projector_pythonSkeleton(Projector_base):
             Backprojection[cc] = special.special_fftconvolve_part3(fourierZPlanes[cc], fshape, fslice, s1)
         return Backprojection
 
-    def ForwardProjectACC(self, hMatrix, realspace, planes, progress, logPrint, numjobs, keepNative=False):
+    def ForwardProjectACC(self, hMatrix, realspace, planes, progress, logPrint, numjobs, keepNative=False): # Ignores numjobs
         realspace = self.asnative(realspace)
         # Project each z plane in turn
         fourierProjections = []     # This has to be a list because in Fourier space the shapes are different for each z plane

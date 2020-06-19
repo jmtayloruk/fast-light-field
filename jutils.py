@@ -45,7 +45,7 @@ def isnotebook():
 # Callers can import the correct one into their own environment via:
 #   from jutils import tqdm_alias as tqdm
 if isnotebook():
-    from tqdm import tqdm_notebook as tqdm_alias
+    from tqdm.notebook import tqdm as tqdm_alias
 else:
     from tqdm import tqdm as tqdm_alias
 

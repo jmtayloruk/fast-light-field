@@ -6,7 +6,9 @@ py_light_field/test-py-light-field/DerivedData/
 *.pyc
 piv-raw-data
 PSFmatrix
+Data/03_Reconstructed/Left
 perf_diags
+threads*txt
 .ipynb_checkpoints
 .DS_Store
 light-field-integrands/build
