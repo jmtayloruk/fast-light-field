@@ -125,18 +125,7 @@ def main(argv, planesToProcess=None, projectorClass=projector.Projector_allC):
     # Test code for performance measurement
     #########################################################################
     matPath = 'PSFmatrix/PSFmatrix_M40NA0.95MLPitch150fml3000from-13to0zspacing0.5Nnum15lambda520n1.0.mat'
-    if ('no-raw' in argv):
-        print('Warning - we will not load the raw H matrices. Not all command line options will be usable - some (old code) will hit errors')
-    else:
-        (_H, _Ht, _CAindex, hPathFormat, htPathFormat, hReducedShape, htReducedShape) = psfmatrix.LoadRawMatrixData(matPath)
-    cacheH = ('cache-H' in argv)
-    if ('smaller-H' in argv):
-        # This matrix is small enough to allow matrix caching (for backprojection only) with 8GB of RAM available
-        # Note that it does not affect the 'old' code, which uses the full PSF regardless
-        hMatrix = psfmatrix.LoadMatrix(matPath, numZ=16, cacheH=cacheH)
-    else:
-        hMatrix = psfmatrix.LoadMatrix(matPath, cacheH=cacheH)
-
+    hMatrix = psfmatrix.LoadMatrix(matPath)
     inputImage = lfimage.LoadLightFieldTiff('Data/02_Rectified/exampleData/20131219WORM2_small_full_neg_X1_N15_cropped_uncompressed.tif')
     if ('smaller-image' in argv):
         inputImage = inputImage[0:20*15,0:15*15]
@@ -174,6 +163,7 @@ def main(argv, planesToProcess=None, projectorClass=projector.Projector_allC):
 
     if ('profile-old' in argv):
         # Profile old code (single-threaded)
+        (_H, _Ht, _CAindex, _, _, _, _) = psfmatrix.LoadRawMatrixData(matPath)
         pr = cProfile.Profile()
         pr.enable()
         ru1 = util.cpuTime('both')
@@ -190,21 +180,17 @@ def main(argv, planesToProcess=None, projectorClass=projector.Projector_allC):
         pr.enable()
         temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, projector=projectorClass())
         print('Cache has been primed')
-        print('hMatrix hits {0} misses {1}. Cache size {2}GB'.format(hMatrix.cacheHits, hMatrix.cacheMisses, hMatrix.cacheSize/1e9))
         pr.disable()
         pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
         
     if ('profile-new' in argv):
         # Profile my code (single-threaded)
-        plf.ResetStats()
         pr = cProfile.Profile()
         pr.enable()
         ru1 = util.cpuTime('both')
         temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, numjobs=numJobsForTesting, projector=projectorClass())
         ru2 = util.cpuTime('both')
         print('overall delta rusage:', ru2-ru1)
-        plf.PrintStats()
-        print('hMatrix hits {0} misses {1}. Cache size {2}GB'.format(hMatrix.cacheHits, hMatrix.cacheMisses, hMatrix.cacheSize/1e9))
         pr.disable()
         pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
 
@@ -219,12 +205,9 @@ def main(argv, planesToProcess=None, projectorClass=projector.Projector_allC):
 
     if ('profile-new-batch' in argv):
         # Profile my code (single-threaded) in the sort of scenario I would expect to run it in when batch-processing video
-        plf.ResetStats()
         pr = cProfile.Profile()
         pr.enable()
         temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage_x30, planes=planesToProcess, numjobs=numJobsForTesting, projector=projectorClass())
-        plf.PrintStats()
-        print('hMatrix hits {0} misses {1}. Cache size {2}GB'.format(hMatrix.cacheHits, hMatrix.cacheMisses, hMatrix.cacheSize/1e9))
         pr.disable()
         pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
 

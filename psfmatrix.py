@@ -23,7 +23,7 @@ class HMatrix(object):
         self.Nnum = self.HReducedShape[0][0]*2-1
         self.iterableBRange = range(self.HReducedShape[0][0])
 
-        self.cacheH = cacheH
+        self.cacheH = cacheH   # Obsolete feature that was only useful for small problem sizes (and ignored by my C code anyway)
         self.Hcache = dict()
         self.cacheHits = 0
         self.cacheMisses = 0

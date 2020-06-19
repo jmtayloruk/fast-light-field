@@ -675,7 +675,7 @@ class Projector_allC(Projector_base):
         Backprojection = np.zeros((hMatrix.numZ, projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
         pos = 0
         planeWork = []
-        plf.SetNumThreadsInUse(numjobs)
+        plf.SetNumThreadsToUse(numjobs)
         for cc in planes:
             proj = self.zProjectorClass(projection, hMatrix, cc)
             planeWork.append((projection, hMatrix.Hcc(cc, True), hMatrix.Nnum, proj.fshape[-2], proj.fshape[-1], proj.rfshape[-2], proj.rfshape[-1], proj.xAxisMultipliers, proj.yAxisMultipliers))
@@ -689,7 +689,7 @@ class Projector_allC(Projector_base):
     def ForwardProjectACC(self, hMatrix, realspace, planes, progress, logPrint, numjobs, keepNative=False):
         TOTALprojection = None
         planeWork = []
-        plf.SetNumThreadsInUse(numjobs)
+        plf.SetNumThreadsToUse(numjobs)
         for cc in planes:
             # Project each z plane forward to the camera image plane
             proj = self.zProjectorClass(realspace[0], hMatrix, cc)
@@ -710,7 +710,7 @@ class Projector_allC(Projector_base):
     def BackwardProjectACC_old(self, hMatrix, projection, planes, progress, logPrint, numjobs, keepNative=False):
         # Plane-by-plane code left for reference
         Backprojection = np.zeros((hMatrix.numZ, projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
-        plf.SetNumThreadsInUse(numjobs)
+        plf.SetNumThreadsToUse(numjobs)
         for cc in progress(planes, 'Backward-project - z', leave=False):
             proj = self.zProjectorClass(projection, hMatrix, cc)
             Hcc = hMatrix.Hcc(cc, True)
@@ -724,7 +724,7 @@ class Projector_allC(Projector_base):
 
     def ForwardProjectACC_old(self, hMatrix, realspace, planes, progress, logPrint, numjobs, keepNative=False):
         TOTALprojection = None
-        plf.SetNumThreadsInUse(numjobs)
+        plf.SetNumThreadsToUse(numjobs)
         for cc in progress(planes, 'Forward-project - z', leave=False):
             # Project each z plane forward to the camera image plane
             proj = self.zProjectorClass(realspace[0], hMatrix, cc)

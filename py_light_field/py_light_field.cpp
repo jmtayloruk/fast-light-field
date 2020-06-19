@@ -28,16 +28,7 @@ int NumActualProcessorsAvailable(void)
    In other words, there is a further gain available from FFTW_PATIENT, but it's too slow to be convenient until I really am running in anger with large datasets
  */
 int gFFTPlanMethod = FFTW_MEASURE;
-const int kMaxThreads = 128;
 int gNumThreadsToUse = NumActualProcessorsAvailable();        // But can be modified using API call
-
-template<class TYPE> void SetImageWindowForPythonWindow(ImageWindow<TYPE> &imageWindow, JPythonArray2D<TYPE> &pythonWindow)
-{
-    imageWindow.baseAddr = pythonWindow.Data();
-    imageWindow.width = pythonWindow.Dims(1);
-    imageWindow.height = pythonWindow.Dims(0);
-    imageWindow.elementsPerRow = pythonWindow.Strides(0);
-}
 
 typedef complex<float> TYPE;
 typedef float RTYPE;
@@ -103,12 +94,12 @@ struct TimeStruct
     }
 };
 
-extern "C" PyObject *GetNumThreadsInUse(PyObject *self, PyObject *args)
+extern "C" PyObject *GetNumThreadsToUse(PyObject *self, PyObject *args)
 {
     return Py_BuildValue("i", gNumThreadsToUse);
 }
 
-extern "C" PyObject *SetNumThreadsInUse(PyObject *self, PyObject *args)
+extern "C" PyObject *SetNumThreadsToUse(PyObject *self, PyObject *args)
 {
     if (!PyArg_ParseTuple(args, "i", &gNumThreadsToUse))
         return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
@@ -132,6 +123,8 @@ extern "C" PyObject *SetPlanningMode(PyObject *self, PyObject *args)
 
 extern "C" PyObject *SetStatsFile(PyObject *self, PyObject *args)
 {
+    // I will leave this here in case it is of future use, but this feature is much less interesting
+    // now that I am doing full parallelism rather than block-parallelism across individual discrete tasks.
     const char *path;
     int append;
     if (!PyArg_ParseTuple(args, "si", &path, &append))
@@ -147,30 +140,6 @@ extern "C" PyObject *SetStatsFile(PyObject *self, PyObject *args)
             return NULL;
         }
     }
-    Py_RETURN_NONE;
-}
-
-double gFFTWPlanTime = 0, gFFTWInitializeTime1 = 0, gFFTWInitializeTime2 = 0, gFFTExecuteTime = 0, gFFTWTime2 = 0, gTotalHTime = 0, gSpecialTime = 0, gMirrorTime = 0;
-
-extern "C" PyObject *PrintStats(PyObject *self, PyObject *args)
-{
-    double total = gTotalHTime + gSpecialTime + gMirrorTime;
-    printf("Times: Total H %.2lf (plan %.2lf, initialize %.2lf+%.2lf, execute %.2lf). Special %.2lf (of which FFT %.2lf). Mirror %.2lf\n", gTotalHTime, gFFTWPlanTime, gFFTWInitializeTime1, gFFTWInitializeTime2, gFFTExecuteTime, gSpecialTime, gFFTWTime2, gMirrorTime);
-    printf("(plan %.1lf%%, initialize %.1lf%%, execute %.1lf%%)\n", gFFTWPlanTime/gTotalHTime*100, (gFFTWInitializeTime1+gFFTWInitializeTime2)/gTotalHTime*100, gFFTExecuteTime/gTotalHTime*100);
-    printf("(H %.1lf%%, special %.1lf%%)\n", gTotalHTime/total*100, gSpecialTime/total*100);
-    Py_RETURN_NONE;
-}
-
-extern "C" PyObject *ResetStats(PyObject *self, PyObject *args)
-{
-    gFFTWPlanTime = 0;
-    gFFTWInitializeTime1 = 0;
-    gFFTWInitializeTime2 = 0;
-    gFFTExecuteTime = 0;
-    gFFTWTime2 = 0;
-    gSpecialTime = 0;
-    gTotalHTime = 0;
-    gMirrorTime = 0;
     Py_RETURN_NONE;
 }
 
@@ -191,81 +160,6 @@ void MirrorYArray(JPythonArray2D<TYPE> &fHtsFull, JPythonArray1D<TYPE> &mirrorYM
         for (int x = 0; x < width; x++)
             _result[x] = conj(_fHtsFull[x]) * mirrorYMultiplier[x];
     }
-}
-
-extern "C" PyObject *mirrorXY(PyObject *self, PyObject *args, bool x)
-{
-    // inputs
-    PyArrayObject *a, *_multiplier;
-    
-    // parse the input arrays from *args
-    if (!PyArg_ParseTuple(args, "O!O!",
-                          &PyArray_Type, &a,
-                          &PyArray_Type, &_multiplier))
-    {
-        return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
-    }
-    if ((PyArray_TYPE(a) != NPY_CFLOAT) ||
-        (PyArray_TYPE(_multiplier) != NPY_CFLOAT))
-    {
-        PyErr_Format(PyErr_NewException((char*)"exceptions.TypeError", NULL, NULL), "Unsuitable array types %d %d passed in", (int)PyArray_TYPE(a), (int)PyArray_TYPE(_multiplier));
-        return NULL;
-    }
-    
-    JPythonArray2D<TYPE> aa(a);
-    ImageWindow<TYPE> fHtsFull;
-    SetImageWindowForPythonWindow(fHtsFull, aa);
-    
-    JPythonArray1D<TYPE> multiplier(_multiplier);
-    
-    int height = aa.Dims(0);
-    int width = aa.Dims(1);
-    PyArrayObject *r;
-    if (x)
-    {
-        // result = np.empty(fHtsFull.shape, dtype=fHtsFull.dtype)
-        npy_intp output_dims[2] = { aa.Dims(0), aa.Dims(1) };
-        r = (PyArrayObject *)PyArray_SimpleNew(2, output_dims, NPY_CFLOAT);
-        JPythonArray2D<TYPE> rr(r);
-        ImageWindow<TYPE> result;
-        SetImageWindowForPythonWindow(result, rr);
-        
-        // result[:,0] = fHtsFull[:,0].conj()*temp
-        for (int y = 0; y < height; y++)
-            result.SetXY(0, y, conj(fHtsFull.PixelXY(0,y)) * multiplier[y]);
-        // for i in range(1,fHtsFull.shape[1]):
-        //     result[:,i] = (fHtsFull[:,fHtsFull.shape[1]-i].conj()*temp)
-        for (int y = 0; y < height; y++)
-        {
-            int x = 1;
-#if 0
-            // This would be where I would write my own vectorized code.
-            // However, the experience with the y case (below) is that actually the auto-vectorized code
-            // is better than anything I can write by hand myself! (Which is no bad thing - saves me the effort!)
-            for (; x+2 <= width; x++) {}
-#endif
-            
-            for (; x < width; x++)
-                result.SetXY(x, y, conj(fHtsFull.PixelXY(width-x,y)) * multiplier[y]);
-        }
-    }
-    else
-    {
-        r = (PyArrayObject *)PyArray_SimpleNew(2, aa.Dims(), NPY_CFLOAT);
-        JPythonArray2D<TYPE> result(r);
-        MirrorYArray(aa, multiplier, result);
-    }
-    return PyArray_Return(r);
-}
-
-extern "C" PyObject *mirrorX(PyObject *self, PyObject *args)
-{
-    return mirrorXY(self, args, true);
-}
-
-extern "C" PyObject *mirrorY(PyObject *self, PyObject *args)
-{
-    return mirrorXY(self, args, false);
 }
 
 void CalculateRow(TYPE *ac, const TYPE *fap, const TYPE *fbu, const TYPE emy, int lim)
@@ -317,8 +211,10 @@ public:
     virtual void CleanUpAllocations(void) = 0;
     void RunComplete(void)
     {
-        // TODO: care is needed here about thread safety, but for now I think I am ok to do this without a mutex, since I am just polling
-        // in the case where a thread is blocked waiting on another piece of work.
+        // Care is needed here about thread safety, but for now I think I am ok to do this without a mutex,
+        // since I am just polling in the case where a thread is blocked waiting on another piece of work.
+        // That case only happens at the end of the entire projection operation - until then, *something*
+        // should always be available to run.
         complete = true;
         // And here again, AdjustDependencyCount is designed to be threadsafe
         if (dependency != NULL)
@@ -742,13 +638,12 @@ void RunWork(std::vector<WorkItem *> work[kNumWorkTypes])
     else if ((false))
     {
         // Intermediate code, for test purposes. This code is parallelised but does all the FFT work first, then all mirroring, then the actual convolutions
-        ALWAYS_ASSERT(gNumThreadsToUse <= kMaxThreads);
         printf("Running semi-parallelised\n");
         for (int w = 0; w < kNumWorkTypes; w++)
         {
             printf("Run work (%d)\n", w);
             ThreadInfo threadInfo { 0, {0, 0, 0}, &workQueueMutex, &workQueueMutexBlock_us, &pollingTime, {&work[w], new std::vector<WorkItem *>(), new std::vector<WorkItem *>()} };     // 'new' leaks, but this is only temporary code anyway
-            pthread_t threads[kMaxThreads];
+            std::vector<pthread_t> threads(gNumThreadsToUse);
             for (int i = 0; i < gNumThreadsToUse; i++)
                 pthread_create(&threads[i], NULL, ThreadFunc, &threadInfo);
             for (int i = 0; i < gNumThreadsToUse; i++)
@@ -759,9 +654,8 @@ void RunWork(std::vector<WorkItem *> work[kNumWorkTypes])
     else
     {
         // Final parallelised code
-        ALWAYS_ASSERT(gNumThreadsToUse <= kMaxThreads);
         ThreadInfo threadInfo { 0, {0, 0, 0}, &workQueueMutex, &workQueueMutexBlock_us, &pollingTime, {&work[0], &work[1], &work[2]} };
-        pthread_t threads[kMaxThreads];
+        std::vector<pthread_t> threads(gNumThreadsToUse);
         for (int i = 0; i < gNumThreadsToUse; i++)
             pthread_create(&threads[i], NULL, ThreadFunc, &threadInfo);
         for (int i = 0; i < gNumThreadsToUse; i++)
@@ -1034,10 +928,6 @@ extern "C" PyObject *InverseRFFT(PyObject *self, PyObject *args)
     fftwf_execute_dft_c2r(plan, (fftwf_complex *)paddedMatrix.Data(), result.Data());
 
     double t4 = GetTime();
-    gFFTWPlanTime += t2-t1;
-    gFFTWInitializeTime1 += t2a-t2;
-    gFFTWInitializeTime2 += t3-t2a;
-    gFFTExecuteTime += t4-t3;
     fftwf_destroy_plan(plan);
     double t5 = GetTime();
     
@@ -1129,16 +1019,12 @@ void *TestMe(void)
 /* Define a methods table for the module */
 
 static PyMethodDef plf_methods[] = {
-	{"mirrorX", mirrorX, METH_VARARGS},
-    {"mirrorY", mirrorY, METH_VARARGS},
     {"ProjectForZ", ProjectForZ, METH_VARARGS},
     {"ProjectForZList", ProjectForZList, METH_VARARGS},
     {"InverseRFFT", InverseRFFT, METH_VARARGS},
-    {"PrintStats", PrintStats, METH_NOARGS},
-    {"ResetStats", ResetStats, METH_NOARGS},
     {"SetStatsFile", SetStatsFile, METH_VARARGS},
-    {"GetNumThreadsInUse", GetNumThreadsInUse, METH_NOARGS},
-    {"SetNumThreadsInUse", SetNumThreadsInUse, METH_VARARGS},
+    {"GetNumThreadsToUse", GetNumThreadsToUse, METH_NOARGS},
+    {"SetNumThreadsToUse", SetNumThreadsToUse, METH_VARARGS},
     {"GetPlanningMode", GetPlanningMode, METH_NOARGS},
     {"SetPlanningMode", SetPlanningMode, METH_VARARGS},
 	{NULL,NULL} };
