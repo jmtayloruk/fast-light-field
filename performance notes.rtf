@@ -47,12 +47,14 @@ Note some timing anomalies with the old code:\
 \
 \ul Things I should still investigate\
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
-\cf0 \ulnone - Why is my code not getting a better threading gain? I believe I am getting 800% CPU load, but I don\'92t seem to be getting more than 5.7x speedup overall. I think the issue is memory bandwidth (on my 2cpu x 4core machine). Basically, everything just takes a little bit longer. I did see a ~10% speedup by combining operations into CalculateRowBoth(), but I reckon any further batching would be a lot of effort for marginal gain.\
-- Check for memory leaks in my code. I haven\'92t re-checked since making it multithreaded, and I do allocate a few more arrays now (for scratch space)\
+\cf0 \ulnone - Can I improve the speedup obtained from 8-way threading? I am getting 800% CPU load, but am only getting 5.7x speedup overall. I believe the issue is memory bandwidth (on my 2cpu x 4core machine). Basically, everything just takes a little bit longer. I did see a ~10% speedup by combining operations into CalculateRowBoth() to reduce memory bandwidth demands, but I reckon any further batching would be a lot of effort for marginal gain. For the combining operations, I eliminated 25% of what I think are the uncached reads, so the net 10% speedup is perhaps a bit disappointing, but not completely out of the ballpark I would have expected.\
 - Why am I getting away without calling fftwf_init_threads when running as part of my jps module?? Shouldn\'92t I be calling that somewhere?\
+\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
+\cf0 \ul Low priority\ulnone \
 - I can probably speed up my ifft a bit by doing it in one go (it wastes a lot of time at the moment, and shouldn\'92t need to clear the whole array - we only need a little bit of zero-padding))\
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
-\cf0 - Is fft performance impacted by the prime factors of the input array? (FFTs aren\'92t the main bottleneck, though)\ul \
+\cf0 - Is fft performance impacted by the prime factors of the input array? (FFTs aren\'92t the main bottleneck, though, for large batch sizes)\ul \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
 
 \b \cf0 \ulnone \
