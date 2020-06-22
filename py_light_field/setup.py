@@ -23,6 +23,7 @@ if (result != 0):
 
 BUILD_MODULES = []
 
+# Note: using -Ofast (and/or -ffast-math -funsafe-math-optimizations) does not seem to offer any additional speed gain beyond -O3.
 py_light_field = Extension('py_light_field',
 	include_dirs = ['/usr/local/include', numpy.get_include()],
 	sources = ['py_light_field.cpp', 'common/jPythonArray.cpp', 'common/PIVImageWindow.cpp', 'common/jPythonCommon.cpp', 'common/jMutex.cpp', 'common/jAssert.cpp', 'common/DebugPrintf_Unix.cpp'],

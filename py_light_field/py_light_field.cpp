@@ -30,7 +30,107 @@ int NumActualProcessorsAvailable(void)
 int gFFTPlanMethod = FFTW_MEASURE;
 int gNumThreadsToUse = NumActualProcessorsAvailable();        // But can be modified using API call
 
-typedef complex<float> TYPE;
+#if 1
+    /*  This whole subclass exists to work around a weird shortcoming of the std::complex implementation that comes with LLVM.
+        Its implementation for operator* has some bizarre additional tests for NaN which appear to be intended to handle some
+        sort of obscure edge case in a pedantically-correct manner. The gcc std::complex does not do this, so I'm not sure why
+        the LLVM implementation feels the need to do that.
+        Anyway, this causes a huge problem on OS X, because my code runs at half speed overall(!) when these extra tests are present.
+        I haven't found a way of overloading or anything like that, to force the extra code to be eliminated.
+        The only solution I have found is to subclass std::complex and provide my own implementation for operator*=.
+        I then am forced to also implement various constructors etc, to make my subclass work, and I have also placed various
+        "landmines" to protect against accidental reversion to std::complex for intermediate values during composite calculations.
+        This is not perfect, but it's more than enough for my code as it stands right now. I will however need to keep an eye on performance,
+        and maybe even examine disassembly of inner loops if I have any concerns in future. */
+    template<class T> class complex_fast : public std::complex<T>
+    {
+    public:
+        typedef T value_type;
+        complex_fast(const value_type& __re = value_type(), const value_type& __im = value_type()) : std::complex<T>(__re, __im) {}
+        template<class _Xp> _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX11
+        complex_fast(const complex_fast<_Xp>& __c) : std::complex<T>(__c.real(), __c.imag()) {}
+        _LIBCPP_INLINE_VISIBILITY complex_fast& operator= (const value_type& __re)
+        {std::complex<T>::operator=(__re); return *this;}
+        template<class _Xp> _LIBCPP_INLINE_VISIBILITY complex_fast& operator= (const complex_fast<_Xp>& __c)
+        {std::complex<T>::operator=(__c); return *this;}
+
+        template<class _Tp>
+        static inline _LIBCPP_INLINE_VISIBILITY
+        complex_fast<_Tp>
+        conj(const complex<_Tp>& __c)
+        {
+            return complex_fast<_Tp>(__c.real(), -__c.imag());
+        }
+
+        /*  This exists as a landmine to prevent operator+= from allowing accidental use of vanilla 'complex' in intermediate values.
+            That could happen for example by the use of a function call (e.g. exp) that I have not anticipated like I have with conj().
+            It surprised me that operator+= 'worked' with a vanilla complex input, but I suppose it's because
+            I don't actually *use* the result (with the return type of the base class).
+            Anyway, this protects against that eventuality. Obviously other operators exist, but I can't rewrite the whole class...
+         
+         */
+        template<class _Xp> _LIBCPP_INLINE_VISIBILITY complex_fast& operator+=(const complex<_Xp>& __c) =delete;
+        template<class _Xp> _LIBCPP_INLINE_VISIBILITY complex_fast& operator+=(const complex_fast<_Xp>& __c)
+        {
+            complex<_Xp>::operator+=(__c); return *this;
+        };
+    };
+
+    /*  This exists as a landmine, to ensure that code that calls vanilla conj() fails at compile-time.
+        *Because* that code fails, I cannot just define this function, as far as I can see.
+        Instead we must call TYPE::conj() - see definition above, within complex_fast.  */
+    template<class _Tp>
+    static inline _LIBCPP_INLINE_VISIBILITY
+    complex_fast<_Tp>
+    conj(const complex<_Tp>& __c)
+    {
+        return complex_fast<_Tp>(__c.real(), -__c.imag());
+    }
+
+    template<class _Tp>
+    complex_fast<_Tp>
+    operator*(const complex_fast<_Tp>& __z, const complex_fast<_Tp>& __w)
+    {
+        _Tp __a = __z.real();
+        _Tp __b = __z.imag();
+        _Tp __c = __w.real();
+        _Tp __d = __w.imag();
+        _Tp __ac = __a * __c;
+        _Tp __bd = __b * __d;
+        _Tp __ad = __a * __d;
+        _Tp __bc = __b * __c;
+        _Tp __x = __ac - __bd;
+        _Tp __y = __ad + __bc;
+        return complex_fast<_Tp>(__x, __y);
+    }
+
+    // Note specialisation to float-only here, to make sure we don't accidentally accept valilla 'complex' inputs.
+    template<class _Tp>
+    inline _LIBCPP_INLINE_VISIBILITY
+    complex_fast<_Tp>
+    operator*(const complex_fast<_Tp>& __x, const float& __y)
+    {
+        complex_fast<_Tp> __t(__x);
+        __t *= __y;
+        return __t;
+    }
+
+    template<class _Tp>
+    inline _LIBCPP_INLINE_VISIBILITY
+    complex_fast<_Tp>
+    operator*(const float& __x, const complex_fast<_Tp>& __y)
+    {
+        complex_fast<_Tp> __t(__y);
+        __t *= __x;
+        return __t;
+    }
+
+    typedef complex_fast<float> TYPE;
+    template<> int ArrayType<TYPE>(void) { return NPY_CFLOAT; }
+#else
+    // This ought to be all that is needed, were it not for the issue (described above) that I need to work around!
+    typedef complex<float> TYPE;
+#endif
 typedef float RTYPE;
 
 // Constants used to index into the x/yAxisMultipliers arrays we are passed from the python code
@@ -62,6 +162,7 @@ void PauseFor(double secs)
     select(0, NULL, NULL, NULL, &timeout);
 }
 
+const char *gThreadFileName = NULL;
 FILE *gStatsFile = NULL;
 
 struct TimeStruct
@@ -143,13 +244,22 @@ extern "C" PyObject *SetStatsFile(PyObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 
+extern "C" PyObject *SetThreadFileName(PyObject *self, PyObject *args)
+{
+    // If this is set to something non-empty, we will dump information about multithreaded performance
+    // to a file at the end of each projection run.
+    if (!PyArg_ParseTuple(args, "s", &gThreadFileName))
+        return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
+    Py_RETURN_NONE;
+}
+
 void MirrorYArray(JPythonArray2D<TYPE> &fHtsFull, JPythonArray1D<TYPE> &mirrorYMultiplier, JPythonArray2D<TYPE> &result)
 {
     // Given F(H), return F(mirrorY(H)), where mirrorY(H) is the vertical reflection of H.
     int height = fHtsFull.Dims(0);
     int width = fHtsFull.Dims(1);
     for (int x = 0; x < width; x++)
-        result[0][x] = conj(fHtsFull[0][x]) * mirrorYMultiplier[x];
+        result[0][x] = TYPE::conj(fHtsFull[0][x]) * mirrorYMultiplier[x];
     for (int y = 1; y < height; y++)
     {
         // Note that I tried writing hand-optimized SSE code and the longhand C code was faster.
@@ -158,7 +268,7 @@ void MirrorYArray(JPythonArray2D<TYPE> &fHtsFull, JPythonArray1D<TYPE> &mirrorYM
         JPythonArray1D<TYPE> _result = result[y];
         JPythonArray1D<TYPE> _fHtsFull = fHtsFull[height-y];
         for (int x = 0; x < width; x++)
-            _result[x] = conj(_fHtsFull[x]) * mirrorYMultiplier[x];
+            _result[x] = TYPE::conj(_fHtsFull[x]) * mirrorYMultiplier[x];
     }
 }
 
@@ -172,21 +282,21 @@ void CalculateRow(TYPE *ac, const TYPE *fap, const TYPE *fbu, const TYPE emy, in
 
 void CalculateRowMirror(TYPE *ac, const TYPE *fap, const TYPE *fbu, const TYPE emy, int lim, int trueLength)
 {
-    ac[0] += fap[0] * conj(fbu[0]) * emy;
+    ac[0] += fap[0] * TYPE::conj(fbu[0]) * emy;
     for (int x = 1; x < lim; x++)
     {
-        ac[x] += fap[x] * conj(fbu[trueLength-x]) * emy;
+        ac[x] += fap[x] * TYPE::conj(fbu[trueLength-x]) * emy;
     }
 }
 
 void CalculateRowBoth(TYPE *ac, const TYPE *fap1, const TYPE *fap2, const TYPE *fbu, const TYPE emy1, const TYPE emy2, int lim, int trueLength)
 {
     ac[0] += fap1[0] * fbu[0] * emy1;
-    ac[0] += fap2[0] * conj(fbu[0]) * emy2;
+    ac[0] += fap2[0] * TYPE::conj(fbu[0]) * emy2;
     for (int x = 1; x < lim; x++)
     {
         ac[x] += fap1[x] * fbu[x] * emy1;
-        ac[x] += fap2[x] * conj(fbu[trueLength-x]) * emy2;
+        ac[x] += fap2[x] * TYPE::conj(fbu[trueLength-x]) * emy2;
     }
 }
 
@@ -666,7 +776,8 @@ void RunWork(std::vector<WorkItem *> work[kNumWorkTypes])
 
 void ConvolvePart2(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, bool mirrorY, bool mirrorX, FHWorkItem *fftWorkItem, JPythonArray2D<TYPE> xAxisMultipliers, JPythonArray3D<TYPE> yAxisMultipliers, JPythonArray3D<TYPE> accum, std::vector<JMutex*> &accumMutex, fftwf_plan plan, std::vector<WorkItem *> work[kNumWorkTypes], int cc, int &mCounter, int &cCounter)
 {
-    // Note that this function does not actually do the work, it just sets up the WorkItems that will be run later.
+    // Note that (in contrast to the python function of the same name) this function does not actually do the work,
+    // it just sets up the WorkItems that will be run later.
     ALWAYS_ASSERT(projection.Dims(0) == accum.Dims(0));
     for (int i = 0; i < projection.Dims(0); i++)
     {
@@ -819,15 +930,17 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
     double t2 = GetTime();
     TimeStruct after;
     // Clean up work items
-    // TODO: it is only at this point that I free up any memory at all! I will run out. I need to track dependencies and free memory once all dependencies have completed.
-    FILE *threadFile = fopen("threads.txt", "w");
-    for (int w = 0; w < kNumWorkTypes; w++)
-        for (size_t i = 0; i < work[w].size(); i++)
-        {
-            fprintf(threadFile, "%d\t%d\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\n", work[w][i]->ranOnThread, w, work[w][i]->runStartTime, work[w][i]->runEndTime, work[w][i]->mutexWaitStartTime[0], work[w][i]->mutexWaitEndTime[0], work[w][i]->mutexWaitStartTime[1], work[w][i]->mutexWaitEndTime[1]);
-            delete work[w][i];
-        }
-    fclose(threadFile);
+    if ((gThreadFileName != NULL) && (strlen(gThreadFileName) > 0))
+    {
+        FILE *threadFile = fopen(gThreadFileName, "w");
+        for (int w = 0; w < kNumWorkTypes; w++)
+            for (size_t i = 0; i < work[w].size(); i++)
+            {
+                fprintf(threadFile, "%d\t%d\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\n", work[w][i]->ranOnThread, w, work[w][i]->runStartTime, work[w][i]->runEndTime, work[w][i]->mutexWaitStartTime[0], work[w][i]->mutexWaitEndTime[0], work[w][i]->mutexWaitStartTime[1], work[w][i]->mutexWaitEndTime[1]);
+                delete work[w][i];
+            }
+        fclose(threadFile);
+    }
     for (size_t i = 0; i < allMutexes.size(); i++)
         delete allMutexes[i];
     for (size_t i = 0; i < allPlans.size(); i++)
@@ -875,7 +988,6 @@ extern "C" PyObject *InverseRFFT(PyObject *self, PyObject *args)
         return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
     }
 
-    double t0 = GetTime();
     JPythonArray2D<TYPE> mat(_mat);
 
     npy_intp paddedInputDims[2] = { inputShapeY, int(inputShapeX/2)+1 };
@@ -888,7 +1000,6 @@ extern "C" PyObject *InverseRFFT(PyObject *self, PyObject *args)
     // We do need to define the plan *before* the data is initialized, especially if using FFTW_MEASURE (which will overwrite the contents of the buffers)
     
     ALWAYS_ASSERT(!(((size_t)result.Data()) & 0xF));        // Check alignment. Just plain malloc seems to give sufficient alignment.
-    double t1 = GetTime();
     
     fftwf_plan_with_nthreads(gNumThreadsToUse);
 
@@ -906,9 +1017,7 @@ extern "C" PyObject *InverseRFFT(PyObject *self, PyObject *args)
                                      gFFTPlanMethod);
     fftwf_plan_with_nthreads(1);
 
-    double t2 = GetTime();
     result.SetZero();
-    double t2a = GetTime();
     // TODO: need to confirm whether I use result.Dims() or the dims of something else, if I consider a case with extra padding.
     // The answer seems to be result.Dims since my code works like this, but I should check for sure and write a definitive comment here.
     float inverseTotalSize = 1.0f / (float(result.Dims(0)) * float(result.Dims(1)));
@@ -917,22 +1026,16 @@ extern "C" PyObject *InverseRFFT(PyObject *self, PyObject *args)
     paddedMatrix.SetZero();     // Inefficient, but I will do this for now. TODO: update this code to only zero out the (small number of) values we won't be overwriting in the loop
     for (int y = 0; y < mat.Dims(0); y++)
     {
-        auto _mat = mat[y];
-        auto _paddedMatrix = paddedMatrix[y];
+        JPythonArray1D<TYPE> _mat = mat[y];
+        JPythonArray1D<TYPE> _paddedMatrix = paddedMatrix[y];
         for (int x = 0; x < mat.Dims(1); x++)
             _paddedMatrix[x] = _mat[x] * inverseTotalSize;
     }
-    double t3 = GetTime();
     
     // Compute the full 2D FFT (i.e. not just the RFFT)
     fftwf_execute_dft_c2r(plan, (fftwf_complex *)paddedMatrix.Data(), result.Data());
 
-    double t4 = GetTime();
     fftwf_destroy_plan(plan);
-    double t5 = GetTime();
-    
-    //printf("iFFT times %.2lf plan %.2lf init {%.2lf, %.2lf} ex %.2lf %.2lf\n", (t1-t0)*1e6, (t2-t1)*1e6, (t2a-t2)*1e6, (t3-t2a)*1e6, (t4-t3)*1e6, (t5-t4)*1e6);
-    
     return PyArray_Return(_result);
 }
 
@@ -1023,6 +1126,7 @@ static PyMethodDef plf_methods[] = {
     {"ProjectForZList", ProjectForZList, METH_VARARGS},
     {"InverseRFFT", InverseRFFT, METH_VARARGS},
     {"SetStatsFile", SetStatsFile, METH_VARARGS},
+    {"SetThreadFileName", SetThreadFileName, METH_VARARGS},
     {"GetNumThreadsToUse", GetNumThreadsToUse, METH_NOARGS},
     {"SetNumThreadsToUse", SetNumThreadsToUse, METH_VARARGS},
     {"GetPlanningMode", GetPlanningMode, METH_NOARGS},

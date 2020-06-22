@@ -1,7 +1,7 @@
 {\rtf1\ansi\ansicpg1252\cocoartf1404\cocoasubrtf470
 {\fonttbl\f0\fswiss\fcharset0 Helvetica;\f1\fnil\fcharset0 Menlo-Regular;}
 {\colortbl;\red255\green255\blue255;}
-\paperw11900\paperh16840\margl1440\margr1440\vieww22960\viewh22400\viewkind0
+\paperw11900\paperh16840\margl1440\margr1440\vieww18780\viewh22220\viewkind0
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
 \f0\fs24 \cf0 \ul \ulc0 Jun 2020 status\ulnone \
@@ -14,10 +14,10 @@ Command-line parameters are for lf_performance_analysis.py - 27 z planes). All t
 MATLAB (multithreaded, backprojection)	27s (using 4-500% CPU)\
 \pard\tx7633\tx13337\pardirnatural\partightenfactor0
 \cf0 profile-old: Single video frame, old code:	243.5s\
-profile-new2: Single video frame:	50.7s\
+profile-new: Single video frame:	50.7s\
 	8.8s with 8 threads (5.8x speedup)       [8.4 with patient planning - which takes 227s for the irfft!]\
-profile-new-batch2: Batch of 10 video frames:	145s\
-profile-new-batch2: Batch of 30 video frames:	339s (95% in C ProjectForZ)\
+profile-new-batch: Batch of 10 video frames:	145s\
+profile-new-batch: Batch of 30 video frames:	339s (95% in C ProjectForZ)\
 	96s with 4 threads (3.5x speedup).\
 	59s with 8 threads (5.7x speedup). \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
@@ -39,6 +39,7 @@ Note some timing anomalies with the old code:\
 - A single thread of my code is ~2.4x faster than the MATLAB code, if I am allowed to process batch of 30 frames. With threads is it almost 14x faster. It will be hard to speed the code up any more, but see comments below for possible things to try.\
 - My code is primarily focused on processing batches, but I shouldn\'92t forget that I am personally interested in deconvolving small numbers of planes from one or two images, for my PIV work. \
 - Note that there is detailed examination of performance in deconvolution-performance-analysis.ipynb.\
+- Hit a weird issue with implementation of complex operator* with LLVM which led to a factor of 2 slowdown in my entire projection code(!). Workaround added to py_light_field source code.\
 \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
 \cf0 \ul Dead ends\ulnone \

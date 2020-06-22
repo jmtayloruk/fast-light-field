@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		FB4FC288249D24C300211A22 /* libpython3.7m.a in Frameworks */ = {isa = PBXBuildFile; fileRef = FB4FC287249D24C300211A22 /* libpython3.7m.a */; };
 		FB62DF0923F310B600DCC6BB /* main.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FB62DF0823F310B600DCC6BB /* main.cpp */; };
 		FB62DF1023F310C900DCC6BB /* py_light_field.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FB62DF0F23F310C900DCC6BB /* py_light_field.cpp */; };
 		FB62DF1823F3110B00DCC6BB /* jPythonArray.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FB62DF1323F3110B00DCC6BB /* jPythonArray.cpp */; };
@@ -15,7 +16,6 @@
 		FB62DF1F23F313CB00DCC6BB /* jAssert.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FB62DF1E23F313CB00DCC6BB /* jAssert.cpp */; };
 		FB62DF2123F313DC00DCC6BB /* DebugPrintf_Unix.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FB62DF2023F313DC00DCC6BB /* DebugPrintf_Unix.cpp */; };
 		FB62DF2823F5AC7A00DCC6BB /* libfftw3f_threads.a in Frameworks */ = {isa = PBXBuildFile; fileRef = FB62DF2723F5AC7A00DCC6BB /* libfftw3f_threads.a */; };
-		FB7FF260248E81CD001F9D13 /* libpython3.5m.a in Frameworks */ = {isa = PBXBuildFile; fileRef = FB7FF25F248E81CD001F9D13 /* libpython3.5m.a */; };
 		FB7FF262248E81E4001F9D13 /* jMutex.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FB7FF261248E81E4001F9D13 /* jMutex.cpp */; };
 /* End PBXBuildFile section */
 
@@ -32,6 +32,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		FB4FC287249D24C300211A22 /* libpython3.7m.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libpython3.7m.a; path = ../../../../../../Users/jonny/opt/anaconda3/lib/libpython3.7m.a; sourceTree = "<group>"; };
 		FB62DF0523F310B600DCC6BB /* test-py-light-field */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "test-py-light-field"; sourceTree = BUILT_PRODUCTS_DIR; };
 		FB62DF0823F310B600DCC6BB /* main.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = main.cpp; sourceTree = "<group>"; };
 		FB62DF0F23F310C900DCC6BB /* py_light_field.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = py_light_field.cpp; path = ../../py_light_field.cpp; sourceTree = "<group>"; };
@@ -44,7 +45,6 @@
 		FB62DF1E23F313CB00DCC6BB /* jAssert.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = jAssert.cpp; path = ../../common/jAssert.cpp; sourceTree = "<group>"; };
 		FB62DF2023F313DC00DCC6BB /* DebugPrintf_Unix.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = DebugPrintf_Unix.cpp; path = ../../common/DebugPrintf_Unix.cpp; sourceTree = "<group>"; };
 		FB62DF2723F5AC7A00DCC6BB /* libfftw3f_threads.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libfftw3f_threads.a; path = "../../fftw-3.3.8/threads/.libs/libfftw3f_threads.a"; sourceTree = "<group>"; };
-		FB7FF25F248E81CD001F9D13 /* libpython3.5m.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libpython3.5m.a; path = ../../../../../../Users/jonny/anaconda/lib/libpython3.5m.a; sourceTree = "<group>"; };
 		FB7FF261248E81E4001F9D13 /* jMutex.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = jMutex.cpp; path = ../../common/jMutex.cpp; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -53,8 +53,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FB4FC288249D24C300211A22 /* libpython3.7m.a in Frameworks */,
 				FB62DF2823F5AC7A00DCC6BB /* libfftw3f_threads.a in Frameworks */,
-				FB7FF260248E81CD001F9D13 /* libpython3.5m.a in Frameworks */,
 				FB62DF1D23F313C100DCC6BB /* libfftw3f.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -84,7 +84,7 @@
 				FB62DF1223F310F600DCC6BB /* common */,
 				FB62DF0823F310B600DCC6BB /* main.cpp */,
 				FB62DF0F23F310C900DCC6BB /* py_light_field.cpp */,
-				FB7FF25F248E81CD001F9D13 /* libpython3.5m.a */,
+				FB4FC287249D24C300211A22 /* libpython3.7m.a */,
 				FB62DF1C23F313C100DCC6BB /* libfftw3f.a */,
 				FB62DF2723F5AC7A00DCC6BB /* libfftw3f_threads.a */,
 			);
@@ -212,14 +212,14 @@
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/include,
-					"$(HOME)/anaconda/lib/python3.5/site-packages/numpy/core/include",
-					"$(HOME)/anaconda/include/python3.5m",
+					"$(HOME)/opt/anaconda3/lib/python3.7/site-packages/numpy/core/include",
+					"$(HOME)/opt/anaconda3/include/python3.7m",
 					/usr/local/include,
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(HOME)/opt/anaconda3/lib",
-					"fftw-3.3.8/.libs",
-					"fftw-3.3.8/threads/.libs",
+					"../fftw-3.3.8/.libs",
+					"../fftw-3.3.8/threads/.libs",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.10;
 				MTL_ENABLE_DEBUG_INFO = YES;
@@ -227,7 +227,7 @@
 				OTHER_LDFLAGS = (
 					"-ldl",
 					"-weak_library",
-					"$(HOME)/anaconda/lib/libpython3.5m.dylib",
+					"$(HOME)/opt/anaconda3/lib/libpython3.7m.dylib",
 				);
 				SDKROOT = macosx;
 			};
@@ -268,21 +268,21 @@
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/include,
-					"$(HOME)/anaconda/lib/python3.5/site-packages/numpy/core/include",
-					"$(HOME)/anaconda/include/python3.5m",
+					"$(HOME)/opt/anaconda3/lib/python3.7/site-packages/numpy/core/include",
+					"$(HOME)/opt/anaconda3/include/python3.7m",
 					/usr/local/include,
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(HOME)/opt/anaconda3/lib",
-					"fftw-3.3.8/.libs",
-					"fftw-3.3.8/threads/.libs",
+					"../fftw-3.3.8/.libs",
+					"../fftw-3.3.8/threads/.libs",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.10;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				OTHER_LDFLAGS = (
 					"-ldl",
 					"-weak_library",
-					"$(HOME)/anaconda/lib/libpython3.5m.dylib",
+					"$(HOME)/opt/anaconda3/lib/libpython3.7m.dylib",
 				);
 				SDKROOT = macosx;
 			};
@@ -292,10 +292,9 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				LIBRARY_SEARCH_PATHS = (
-					"$(HOME)/anaconda/lib",
+					"$(HOME)/opt/anaconda3/lib",
 					"../fftw-3.3.8/.libs",
 					"../fftw-3.3.8/threads/.libs",
-					/Users/jonny/anaconda/lib,
 				);
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -305,10 +304,9 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				LIBRARY_SEARCH_PATHS = (
-					"$(HOME)/anaconda/lib",
+					"$(HOME)/opt/anaconda3/lib",
 					"../fftw-3.3.8/.libs",
 					"../fftw-3.3.8/threads/.libs",
-					/Users/jonny/anaconda/lib,
 				);
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};

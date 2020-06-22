@@ -64,7 +64,7 @@
       <EnvironmentVariables>
          <EnvironmentVariable
             key = "LD_LIBRARY_PATH"
-            value = "/Users/jonny/anaconda/lib"
+            value = "/Users/jonny/opt/anaconda3/lib"
             isEnabled = "YES">
          </EnvironmentVariable>
          <EnvironmentVariable
