@@ -1108,8 +1108,18 @@ void *TestMe(void)
     const char *anacondaFolder = "/Users/jonny/opt/anaconda3";
     // Remember to set up LD_LIBRARY_PATH under Scheme/Environment variables, when running under Xcode.
     
+#if PY_MAJOR_VERSION < 3
+    Py_SetPythonHome((char *)anacondaFolder);
+    // Retain 'anacondaFolder', effectively causing it to leak intentionally.
+    // The docs say that the memory must remain valid for the whole time the program is running.
+    [anacondaFolder retain];
+#else
     wchar_t *tempString = Py_DecodeLocale(anacondaFolder, NULL);
     Py_SetPythonHome(tempString);
+    // Do not free tempString, because the docs say that the memory must remain valid for the whole time the program is running.
+    // As a result, I effectively just leak the memory intentionally!
+    //    *do not call * PyMem_RawFree(tempString);
+#endif
     
     unsetenv("PATH");
     setenv("PATH", anacondaFolder, 1);
