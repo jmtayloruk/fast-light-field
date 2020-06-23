@@ -1,4 +1,5 @@
 #include <unistd.h>
+#include <sys/resource.h>
 #include "common/jAssert.h"
 #include "common/VectorFunctions.h"
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
@@ -47,17 +48,14 @@ int gNumThreadsToUse = NumActualProcessorsAvailable();        // But can be modi
     public:
         typedef T value_type;
         complex_fast(const value_type& __re = value_type(), const value_type& __im = value_type()) : std::complex<T>(__re, __im) {}
-        template<class _Xp> _LIBCPP_INLINE_VISIBILITY _LIBCPP_CONSTEXPR_AFTER_CXX11
+        template<class _Xp> _LIBCPP_CONSTEXPR_AFTER_CXX11
         complex_fast(const complex_fast<_Xp>& __c) : std::complex<T>(__c.real(), __c.imag()) {}
-        _LIBCPP_INLINE_VISIBILITY complex_fast& operator= (const value_type& __re)
-        {std::complex<T>::operator=(__re); return *this;}
-        template<class _Xp> _LIBCPP_INLINE_VISIBILITY complex_fast& operator= (const complex_fast<_Xp>& __c)
-        {std::complex<T>::operator=(__c); return *this;}
+        complex_fast& operator= (const value_type& __re)
+          {std::complex<T>::operator=(__re); return *this;}
+        template<class _Xp> complex_fast& operator= (const complex_fast<_Xp>& __c)
+          {std::complex<T>::operator=(__c); return *this;}
 
-        template<class _Tp>
-        static inline _LIBCPP_INLINE_VISIBILITY
-        complex_fast<_Tp>
-        conj(const complex<_Tp>& __c)
+        template<class _Tp> static inline complex_fast<_Tp> conj(const complex<_Tp>& __c)
         {
             return complex_fast<_Tp>(__c.real(), -__c.imag());
         }
@@ -69,8 +67,8 @@ int gNumThreadsToUse = NumActualProcessorsAvailable();        // But can be modi
             Anyway, this protects against that eventuality. Obviously other operators exist, but I can't rewrite the whole class...
          
          */
-        template<class _Xp> _LIBCPP_INLINE_VISIBILITY complex_fast& operator+=(const complex<_Xp>& __c) =delete;
-        template<class _Xp> _LIBCPP_INLINE_VISIBILITY complex_fast& operator+=(const complex_fast<_Xp>& __c)
+        template<class _Xp> complex_fast& operator+=(const complex<_Xp>& __c) =delete;
+        template<class _Xp> complex_fast& operator+=(const complex_fast<_Xp>& __c)
         {
             complex<_Xp>::operator+=(__c); return *this;
         };
@@ -79,17 +77,12 @@ int gNumThreadsToUse = NumActualProcessorsAvailable();        // But can be modi
     /*  This exists as a landmine, to ensure that code that calls vanilla conj() fails at compile-time.
         *Because* that code fails, I cannot just define this function, as far as I can see.
         Instead we must call TYPE::conj() - see definition above, within complex_fast.  */
-    template<class _Tp>
-    static inline _LIBCPP_INLINE_VISIBILITY
-    complex_fast<_Tp>
-    conj(const complex<_Tp>& __c)
+    template<class _Tp> static inline complex_fast<_Tp> conj(const complex<_Tp>& __c)
     {
         return complex_fast<_Tp>(__c.real(), -__c.imag());
     }
 
-    template<class _Tp>
-    complex_fast<_Tp>
-    operator*(const complex_fast<_Tp>& __z, const complex_fast<_Tp>& __w)
+    template<class _Tp> complex_fast<_Tp> operator*(const complex_fast<_Tp>& __z, const complex_fast<_Tp>& __w)
     {
         _Tp __a = __z.real();
         _Tp __b = __z.imag();
@@ -105,20 +98,14 @@ int gNumThreadsToUse = NumActualProcessorsAvailable();        // But can be modi
     }
 
     // Note specialisation to float-only here, to make sure we don't accidentally accept valilla 'complex' inputs.
-    template<class _Tp>
-    inline _LIBCPP_INLINE_VISIBILITY
-    complex_fast<_Tp>
-    operator*(const complex_fast<_Tp>& __x, const float& __y)
+    template<class _Tp> inline complex_fast<_Tp> operator*(const complex_fast<_Tp>& __x, const float& __y)
     {
         complex_fast<_Tp> __t(__x);
         __t *= __y;
         return __t;
     }
 
-    template<class _Tp>
-    inline _LIBCPP_INLINE_VISIBILITY
-    complex_fast<_Tp>
-    operator*(const float& __x, const complex_fast<_Tp>& __y)
+    template<class _Tp> inline complex_fast<_Tp> operator*(const float& __x, const complex_fast<_Tp>& __y)
     {
         complex_fast<_Tp> __t(__y);
         __t *= __x;
@@ -162,7 +149,7 @@ void PauseFor(double secs)
     select(0, NULL, NULL, NULL, &timeout);
 }
 
-const char *gThreadFileName = NULL;
+char *gThreadFileName = NULL;
 FILE *gStatsFile = NULL;
 
 struct TimeStruct
@@ -248,8 +235,20 @@ extern "C" PyObject *SetThreadFileName(PyObject *self, PyObject *args)
 {
     // If this is set to something non-empty, we will dump information about multithreaded performance
     // to a file at the end of each projection run.
-    if (!PyArg_ParseTuple(args, "s", &gThreadFileName))
+    const char *filename;
+    if (!PyArg_ParseTuple(args, "z", &filename))
         return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
+    if (filename == NULL)
+    {
+        if (gThreadFileName != NULL)
+            delete[] gThreadFileName;
+        gThreadFileName = NULL;
+    }
+    else
+    {
+        gThreadFileName = new char[strlen(filename)+1];
+        strcpy(gThreadFileName, filename);
+    }
     Py_RETURN_NONE;
 }
 
@@ -444,6 +443,10 @@ public:
     
     void Run(void)
     {
+        /*  Performance note: examination of threads.txt reveals that there is huge variation in how long it takes to do
+            the initial zeroing and the setting of the array. It is often very fast, but occasionally takes almost as long
+            as the FFT itself. I don't know why that is, but it could be something to do with whether or not we are reusing
+            a previously-allocated block of memory. I'm not too worried about this, though, since my aim is to amortise away the FFTs anyway.  */
         AllocateResultArray();
         fftResult->SetZero();
         assert(Hts.Dims(0) == Hts.Dims(1));     // Sanity check - this should be true. If it is not, then among other things our whole transpose logic gets messed up.
@@ -473,13 +476,44 @@ public:
     
 };
 
+class TransposeWorkItem : public FHWorkItemBase
+{
+public:
+    FHWorkItemBase        *sourceFFTWorkItem;
+    
+    TransposeWorkItem(FHWorkItemBase *_sourceFFTWorkItem, int _cc, int _order)
+    : FHWorkItemBase(_sourceFFTWorkItem->fshapeY, _sourceFFTWorkItem->fshapeX, _cc, _order), sourceFFTWorkItem(_sourceFFTWorkItem)
+    {
+        ALWAYS_ASSERT(fshapeY == fshapeX);  // Transpose only works when FFT(H) is a square array
+        AddDependency(sourceFFTWorkItem);
+    }
+    void Run(void)
+    {
+        ALWAYS_ASSERT(fshapeY == sourceFFTWorkItem->fshapeY);
+        ALWAYS_ASSERT(fshapeX == sourceFFTWorkItem->fshapeX);
+        ALWAYS_ASSERT(sourceFFTWorkItem->fftResult->Strides(1) == 1);   // Assumption relied on in inner loop
+        AllocateResultArray();
+        for (int y = 0; y < fshapeY; y++)
+        {
+            JPythonArray1D<TYPE> _result = (*fftResult)[y];
+            /*  Performance is measurably impacted if I write a naive inner loop that uses (*sourceFFTWorkItem->fftResult)[x][y].
+                Instead, I manually compute the strides myself (to avoid creating temporary objects)    */
+            TYPE *sourceColBase = sourceFFTWorkItem->fftResult->Data() + y;
+            size_t stride = sourceFFTWorkItem->fftResult->Strides(0);
+            for (int x = 0; x < fshapeX; x++)
+                _result[x] = sourceColBase[x*stride];
+        }
+        RunComplete();
+    }
+};
+
 class MirrorWorkItem : public FHWorkItemBase
 {
 public:
-    FHWorkItem            *sourceFFTWorkItem;
+    FHWorkItemBase        *sourceFFTWorkItem;
     JPythonArray1D<TYPE>  mirrorYMultiplier;
     
-    MirrorWorkItem(FHWorkItem *_sourceFFTWorkItem, JPythonArray1D<TYPE> _mirrorYMultiplier, int _cc, int _order)
+    MirrorWorkItem(FHWorkItemBase *_sourceFFTWorkItem, JPythonArray1D<TYPE> _mirrorYMultiplier, int _cc, int _order)
         : FHWorkItemBase(_sourceFFTWorkItem->fshapeY, _sourceFFTWorkItem->fshapeX, _cc, _order), sourceFFTWorkItem(_sourceFFTWorkItem), mirrorYMultiplier(_mirrorYMultiplier)
     {
         AddDependency(sourceFFTWorkItem);
@@ -638,7 +672,10 @@ public:
 
 enum
 {
+    // Reminder: if I add another work type then I need to manually update
+    // the ThreadInfo initializers in RunWork(). I may not get a compiler warning about that.
     kWorkFFT = 0,
+    kWorkTranspose,
     kWorkMirrorY,
     kWorkConvolve,
     kNumWorkTypes
@@ -752,7 +789,7 @@ void RunWork(std::vector<WorkItem *> work[kNumWorkTypes])
         for (int w = 0; w < kNumWorkTypes; w++)
         {
             printf("Run work (%d)\n", w);
-            ThreadInfo threadInfo { 0, {0, 0, 0}, &workQueueMutex, &workQueueMutexBlock_us, &pollingTime, {&work[w], new std::vector<WorkItem *>(), new std::vector<WorkItem *>()} };     // 'new' leaks, but this is only temporary code anyway
+            ThreadInfo threadInfo { 0, {0, 0, 0, 0}, &workQueueMutex, &workQueueMutexBlock_us, &pollingTime, {&work[w], new std::vector<WorkItem *>(), new std::vector<WorkItem *>(), new std::vector<WorkItem *>()} };     // 'new' leaks, but this is only temporary code anyway
             std::vector<pthread_t> threads(gNumThreadsToUse);
             for (int i = 0; i < gNumThreadsToUse; i++)
                 pthread_create(&threads[i], NULL, ThreadFunc, &threadInfo);
@@ -764,7 +801,7 @@ void RunWork(std::vector<WorkItem *> work[kNumWorkTypes])
     else
     {
         // Final parallelised code
-        ThreadInfo threadInfo { 0, {0, 0, 0}, &workQueueMutex, &workQueueMutexBlock_us, &pollingTime, {&work[0], &work[1], &work[2]} };
+        ThreadInfo threadInfo { 0, {0, 0, 0, 0}, &workQueueMutex, &workQueueMutexBlock_us, &pollingTime, {&work[0], &work[1], &work[2], &work[3]} };
         std::vector<pthread_t> threads(gNumThreadsToUse);
         for (int i = 0; i < gNumThreadsToUse; i++)
             pthread_create(&threads[i], NULL, ThreadFunc, &threadInfo);
@@ -774,7 +811,7 @@ void RunWork(std::vector<WorkItem *> work[kNumWorkTypes])
     }
 }
 
-void ConvolvePart2(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, bool mirrorY, bool mirrorX, FHWorkItem *fftWorkItem, JPythonArray2D<TYPE> xAxisMultipliers, JPythonArray3D<TYPE> yAxisMultipliers, JPythonArray3D<TYPE> accum, std::vector<JMutex*> &accumMutex, fftwf_plan plan, std::vector<WorkItem *> work[kNumWorkTypes], int cc, int &mCounter, int &cCounter)
+void ConvolvePart2(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, bool mirrorY, bool mirrorX, FHWorkItemBase *fftWorkItem, JPythonArray2D<TYPE> xAxisMultipliers, JPythonArray3D<TYPE> yAxisMultipliers, JPythonArray3D<TYPE> accum, std::vector<JMutex*> &accumMutex, fftwf_plan plan, std::vector<WorkItem *> work[kNumWorkTypes], int cc, int &mCounter, int &cCounter)
 {
     // Note that (in contrast to the python function of the same name) this function does not actually do the work,
     // it just sets up the WorkItems that will be run later.
@@ -801,156 +838,176 @@ void ConvolvePart2(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, b
 
 extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
 {
-    // For now this is just a placeholder that calls through to ProjectForZ, but ultimately I intend to do all the work in one massive batch.
-    // Doing that will help reduce lock contention when we only have a few timepoints to process.
-    PyObject *workList;
+    try
+    {
+        // For now this is just a placeholder that calls through to ProjectForZ, but ultimately I intend to do all the work in one massive batch.
+        // Doing that will help reduce lock contention when we only have a few timepoints to process.
+        PyObject *workList;
 #if 0//TESTING
-    // PyArg_ParseTuple doesn't seem to work when I use it on my own synthesized tuple.
-    // I don't know why that is, but this code exists as a workaround for that problem.
-    // -> Actually, the parsing code seems to work now. I've disabled this, but left it in case the problem returns!
-    workList = PyTuple_GetItem(args, 0);
-#else
-    if (!PyArg_ParseTuple(args, "O!",
-                          &PyList_Type, &workList))
-    {
-        return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
-    }
-#endif
-    long numZPlanes = PyList_Size(workList);
-
-    double t0 = GetTime();
-    std::vector<WorkItem *> work[kNumWorkTypes];
-    std::vector<JMutex*> allMutexes;
-    std::vector<fftwf_plan> allPlans;
-    PyObject *resultList = PyList_New(numZPlanes);
-    for (int cc = 0; cc < numZPlanes; cc++)
-    {
-        PyObject *planeInfo = PyList_GetItem(workList, cc);
-        PyArrayObject *_projection, *_HtsFull, *_xAxisMultipliers, *_yAxisMultipliers;
-        int Nnum, fshapeY, fshapeX, rfshapeY, rfshapeX;
-    #if 0//TESTING
         // PyArg_ParseTuple doesn't seem to work when I use it on my own synthesized tuple.
         // I don't know why that is, but this code exists as a workaround for that problem.
         // -> Actually, the parsing code seems to work now. I've disabled this, but left it in case the problem returns!
-        _projection = (PyArrayObject *)PyTuple_GetItem(planeInfo, 0);
-        _HtsFull = (PyArrayObject *)PyTuple_GetItem(planeInfo, 1);
-        Nnum = (int)PyLong_AsLong(PyTuple_GetItem(planeInfo, 2));
-        fshapeY = (int)PyLong_AsLong(PyTuple_GetItem(planeInfo, 3));
-        fshapeX = (int)PyLong_AsLong(PyTuple_GetItem(planeInfo, 4));
-        rfshapeY = (int)PyLong_AsLong(PyTuple_GetItem(planeInfo, 5));
-        rfshapeX = (int)PyLong_AsLong(PyTuple_GetItem(planeInfo, 6));
-        _xAxisMultipliers = (PyArrayObject *)PyTuple_GetItem(planeInfo, 7);
-        _yAxisMultipliers = (PyArrayObject *)PyTuple_GetItem(planeInfo, 8);
-    #else
-        if (!PyArg_ParseTuple(planeInfo, "O!O!iiiiiO!O!",
-                              &PyArray_Type, &_projection,
-                              &PyArray_Type, &_HtsFull,
-                              &Nnum, &fshapeY, &fshapeX, &rfshapeY, &rfshapeX,
-                              &PyArray_Type, &_xAxisMultipliers,
-                              &PyArray_Type, &_yAxisMultipliers))
+        workList = PyTuple_GetItem(args, 0);
+#else
+        if (!PyArg_ParseTuple(args, "O!",
+                              &PyList_Type, &workList))
         {
             return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
         }
-    #endif
-        
-        JPythonArray3D<RTYPE> projection(_projection);
-        JPythonArray4D<RTYPE> HtsFull(_HtsFull);
-        JPythonArray2D<TYPE> xAxisMultipliers(_xAxisMultipliers);
-        JPythonArray3D<TYPE> yAxisMultipliers(_yAxisMultipliers);
-        
-        if (!(projection.FinalDimensionUnitStride() && HtsFull.FinalDimensionUnitStride() && xAxisMultipliers.FinalDimensionUnitStride() && yAxisMultipliers.FinalDimensionUnitStride()))
-        {
-            PyErr_Format(PyErr_NewException((char*)"exceptions.TypeError", NULL, NULL), "Input arrays must have unit stride in the final dimension");
-            return NULL;
-        }
-    
-        npy_intp output_dims[3] = { projection.Dims(0), rfshapeY, rfshapeX };
-        PyArrayObject *_accum = (PyArrayObject *)PyArray_ZEROS(3, output_dims, NPY_CFLOAT, 0);
-        JPythonArray3D<TYPE> accum(_accum);
-        PyList_SetItem(resultList, cc, (PyObject *)_accum);  // Steals reference
+#endif
+        long numZPlanes = PyList_Size(workList);
 
-        // Set up the work items describing the complete projection operation for this z plane
-        fftwf_plan plan = NULL;
-        std::vector<JMutex*> accumMutex(projection.Dims(0));
-        for (size_t i = 0; i < accumMutex.size(); i++)
-            accumMutex[i] = new JMutex;
-        allMutexes.insert(allMutexes.end(), accumMutex.begin(), accumMutex.end());
-        int fhCounter = 0, mCounter = 0, cCounter = 0;
-        for (int bb = 0; bb < HtsFull.Dims(0); bb++)
+        double t0 = GetTime();
+        std::vector<WorkItem *> work[kNumWorkTypes];
+        std::vector<JMutex*> allMutexes;
+        std::vector<fftwf_plan> allPlans;
+        PyObject *resultList = PyList_New(numZPlanes);
+        for (int cc = 0; cc < numZPlanes; cc++)
         {
-            for (int aa = bb; aa < int(Nnum+1)/2; aa++)
+            PyObject *planeInfo = PyList_GetItem(workList, cc);
+            PyArrayObject *_projection, *_HtsFull, *_xAxisMultipliers, *_yAxisMultipliers;
+            int Nnum, fshapeY, fshapeX, rfshapeY, rfshapeX;
+#if 0//TESTING
+            // PyArg_ParseTuple doesn't seem to work when I use it on my own synthesized tuple.
+            // I don't know why that is, but this code exists as a workaround for that problem.
+            // -> Actually, the parsing code seems to work now. I've disabled this, but left it in case the problem returns!
+            _projection = (PyArrayObject *)PyTuple_GetItem(planeInfo, 0);
+            _HtsFull = (PyArrayObject *)PyTuple_GetItem(planeInfo, 1);
+            Nnum = (int)PyLong_AsLong(PyTuple_GetItem(planeInfo, 2));
+            fshapeY = (int)PyLong_AsLong(PyTuple_GetItem(planeInfo, 3));
+            fshapeX = (int)PyLong_AsLong(PyTuple_GetItem(planeInfo, 4));
+            rfshapeY = (int)PyLong_AsLong(PyTuple_GetItem(planeInfo, 5));
+            rfshapeX = (int)PyLong_AsLong(PyTuple_GetItem(planeInfo, 6));
+            _xAxisMultipliers = (PyArrayObject *)PyTuple_GetItem(planeInfo, 7);
+            _yAxisMultipliers = (PyArrayObject *)PyTuple_GetItem(planeInfo, 8);
+#else
+            if (!PyArg_ParseTuple(planeInfo, "O!O!iiiiiO!O!",
+                                  &PyArray_Type, &_projection,
+                                  &PyArray_Type, &_HtsFull,
+                                  &Nnum, &fshapeY, &fshapeX, &rfshapeY, &rfshapeX,
+                                  &PyArray_Type, &_xAxisMultipliers,
+                                  &PyArray_Type, &_yAxisMultipliers))
             {
-                int cent = int(Nnum/2);
-                bool mirrorX = (bb != cent);
-                bool mirrorY = (aa != cent);
-                // We do not currently support the transpose here, although that can speed things up in certain circumstances (see python code in projector.convolve()).
-                // The only scenario where we could gain (by avoiding recalculating the FFT) is if the image array is square.
-                // At the moment, we process the case with the transpose, but simply by recalculating the appropriate FFT(H) from scratch
-                bool transpose = ((aa != bb) && (aa != (Nnum-bb-1)));
+                return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
+            }
+#endif
 
-                FHWorkItem *f1 = new FHWorkItem(HtsFull[bb][aa], fshapeY, fshapeX, false, cc, fhCounter++);
-                work[kWorkFFT].push_back(f1);
+            JPythonArray3D<RTYPE> projection(_projection);
+            JPythonArray4D<RTYPE> HtsFull(_HtsFull);
+            JPythonArray2D<TYPE> xAxisMultipliers(_xAxisMultipliers);
+            JPythonArray3D<TYPE> yAxisMultipliers(_yAxisMultipliers);
+            
+            if (!(projection.FinalDimensionUnitStride() && HtsFull.FinalDimensionUnitStride() && xAxisMultipliers.FinalDimensionUnitStride() && yAxisMultipliers.FinalDimensionUnitStride()))
+            {
+                PyErr_Format(PyErr_NewException((char*)"exceptions.TypeError", NULL, NULL), "Input arrays must have unit stride in the final dimension");
+                return NULL;
+            }
+        
+            npy_intp output_dims[3] = { projection.Dims(0), rfshapeY, rfshapeX };
+            PyArrayObject *_accum = (PyArrayObject *)PyArray_ZEROS(3, output_dims, NPY_CFLOAT, 0);
+            JPythonArray3D<TYPE> accum(_accum);
+            PyList_SetItem(resultList, cc, (PyObject *)_accum);  // Steals reference
 
-                FHWorkItem *f2 = NULL;
-                if (transpose)
+            // Set up the work items describing the complete projection operation for this z plane
+            fftwf_plan plan = NULL;
+            std::vector<JMutex*> accumMutex(projection.Dims(0));
+            for (size_t i = 0; i < accumMutex.size(); i++)
+                accumMutex[i] = new JMutex;
+            allMutexes.insert(allMutexes.end(), accumMutex.begin(), accumMutex.end());
+            int fhCounter = 0, fhtCounter = 0, mCounter = 0, cCounter = 0;
+            for (int bb = 0; bb < HtsFull.Dims(0); bb++)
+            {
+                for (int aa = bb; aa < int(Nnum+1)/2; aa++)
                 {
-                    f2 = new FHWorkItem(HtsFull[bb][aa], fshapeY, fshapeX, true, cc, fhCounter++);
-                    work[kWorkFFT].push_back(f2);
-                }
-                
-                if (plan == NULL)
-                    plan = ConvolveWorkItem::GetFFTPlan(f1, Nnum);
-                
-                /*  It is not totally obvious whether I should increment cCounter and mCounter just at the end of all this, or after each chunk.
-                    Since its purpose is to separate out work that is contending for the same mutex, I think I should be doing it after each chunk.
-                    But note that there is only any need for any of that re-sorting when the number of timepoints is low - so possibly
-                    what I should be doing is just not sorting things at all, in the case where the number of timepoints is significantly larger than
-                    the number of threads...?   
-                    For my 30-timepoint benchmark, there is no consistent change to performance in the 4-threaded case if I disabled the sorting
-                    This suggests it doesn't seem to have an impact on the cases where there is no lock contention in the first place. 
-                    Good to know it doesn't have a big detrimental impact.
-                 */
-                ConvolvePart2(projection, bb, aa, Nnum, mirrorY, mirrorX, f1, xAxisMultipliers, yAxisMultipliers, accum, accumMutex, plan, work, cc, mCounter, cCounter);
-                if (transpose)
-                {
-                    // Note that my,mx (and bb,aa) have been swapped here, which is necessary following the transpose.
-                    ConvolvePart2(projection, aa, bb, Nnum, mirrorX, mirrorY, f2, xAxisMultipliers, yAxisMultipliers, accum, accumMutex, plan, work, cc, mCounter, cCounter);
+                    int cent = int(Nnum/2);
+                    bool mirrorX = (bb != cent);
+                    bool mirrorY = (aa != cent);
+                    bool transpose = ((aa != bb) && (aa != (Nnum-bb-1)));
+
+                    FHWorkItem *f1 = new FHWorkItem(HtsFull[bb][aa], fshapeY, fshapeX, false, cc, fhCounter++);
+                    work[kWorkFFT].push_back(f1);
+
+                    FHWorkItemBase *f2 = NULL;
+                    if (transpose)
+                    {
+                        if (fshapeY == fshapeX)
+                        {
+                            // We do not currently support the transpose here, although that can speed things up in certain circumstances (see python code in projector.convolve()).
+                            // The only scenario where we could gain (by avoiding recalculating the FFT) is if the image array is square.
+                            f2 = new TransposeWorkItem(f1, cc, fhtCounter++);
+                            work[kWorkTranspose].push_back(f2);
+                        }
+                        else
+                        {
+                            // There is no easy way to calculate FFT(h^T) when the padded array is non-square.
+                            // (If there was, then I think that in general FFTs of padded arrays could be computed very fast!)
+                            f2 = new FHWorkItem(HtsFull[bb][aa], fshapeY, fshapeX, true, cc, fhCounter++);
+                            work[kWorkFFT].push_back(f2);
+                        }
+                    }
+                    
+                    if (plan == NULL)
+                        plan = ConvolveWorkItem::GetFFTPlan(f1, Nnum);
+                    
+                    /*  It is not totally obvious whether I should increment cCounter and mCounter just at the end of all this, or after each chunk.
+                        Since its purpose is to separate out work that is contending for the same mutex, I think I should be doing it after each chunk.
+                        But note that there is only any need for any of that re-sorting when the number of timepoints is low - so possibly
+                        what I should be doing is just not sorting things at all, in the case where the number of timepoints is significantly larger than
+                        the number of threads...?   
+                        For my 30-timepoint benchmark, there is no consistent change to performance in the 4-threaded case if I disabled the sorting
+                        This suggests it doesn't seem to have an impact on the cases where there is no lock contention in the first place. 
+                        Good to know it doesn't have a big detrimental impact.
+                     */
+                    ConvolvePart2(projection, bb, aa, Nnum, mirrorY, mirrorX, f1, xAxisMultipliers, yAxisMultipliers, accum, accumMutex, plan, work, cc, mCounter, cCounter);
+                    if (transpose)
+                    {
+                        // Note that my,mx (and bb,aa) have been swapped here, which is necessary following the transpose.
+                        ConvolvePart2(projection, aa, bb, Nnum, mirrorX, mirrorY, f2, xAxisMultipliers, yAxisMultipliers, accum, accumMutex, plan, work, cc, mCounter, cCounter);
+                    }
                 }
             }
+            allPlans.push_back(plan);
         }
-        allPlans.push_back(plan);
-    }
-    for (int w = 0; w < kNumWorkTypes; w++)
-        std::stable_sort(work[w].begin(), work[w].end(), WorkItem::Compare);
-    
-    // Do the actual hard work (parallelised)
-    TimeStruct before;
-    double t1 = GetTime();
-    RunWork(work);
-    double t2 = GetTime();
-    TimeStruct after;
-    // Clean up work items
-    if ((gThreadFileName != NULL) && (strlen(gThreadFileName) > 0))
-    {
-        FILE *threadFile = fopen(gThreadFileName, "w");
         for (int w = 0; w < kNumWorkTypes; w++)
-            for (size_t i = 0; i < work[w].size(); i++)
-            {
-                fprintf(threadFile, "%d\t%d\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\n", work[w][i]->ranOnThread, w, work[w][i]->runStartTime, work[w][i]->runEndTime, work[w][i]->mutexWaitStartTime[0], work[w][i]->mutexWaitEndTime[0], work[w][i]->mutexWaitStartTime[1], work[w][i]->mutexWaitEndTime[1]);
-                delete work[w][i];
-            }
-        fclose(threadFile);
+            std::stable_sort(work[w].begin(), work[w].end(), WorkItem::Compare);
+        
+        // Do the actual hard work (parallelised)
+        TimeStruct before;
+        double t1 = GetTime();
+        RunWork(work);
+        double t2 = GetTime();
+        TimeStruct after;
+        // Clean up work items
+        if ((gThreadFileName != NULL) && (strlen(gThreadFileName) > 0))
+        {
+            FILE *threadFile = fopen(gThreadFileName, "w");
+            for (int w = 0; w < kNumWorkTypes; w++)
+                for (size_t i = 0; i < work[w].size(); i++)
+                {
+                    fprintf(threadFile, "%d\t%d\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\n", work[w][i]->ranOnThread, w, work[w][i]->runStartTime, work[w][i]->runEndTime, work[w][i]->mutexWaitStartTime[0], work[w][i]->mutexWaitEndTime[0], work[w][i]->mutexWaitStartTime[1], work[w][i]->mutexWaitEndTime[1]);
+                    delete work[w][i];
+                }
+            fclose(threadFile);
+        }
+        for (size_t i = 0; i < allMutexes.size(); i++)
+            delete allMutexes[i];
+        for (size_t i = 0; i < allPlans.size(); i++)
+            fftwf_destroy_plan(allPlans[i]);
+        double t3 = GetTime();
+        double utime = TimeStruct::Secs(after._self.ru_utime)-TimeStruct::Secs(before._self.ru_utime);
+        double stime = TimeStruct::Secs(after._self.ru_stime)-TimeStruct::Secs(before._self.ru_stime);
+    //    printf("ProjectForZ took %.3lf %.3lf %.3lf. User work %.3lf system %.3lf. Parallelism %.2lf\n", t1-t0, t2-t1, t3-t2, utime, stime, (utime+stime)/(t2-t1));
+        
+        return resultList;
     }
-    for (size_t i = 0; i < allMutexes.size(); i++)
-        delete allMutexes[i];
-    for (size_t i = 0; i < allPlans.size(); i++)
-        fftwf_destroy_plan(allPlans[i]);
-    double t3 = GetTime();
-    double utime = TimeStruct::Secs(after._self.ru_utime)-TimeStruct::Secs(before._self.ru_utime);
-    double stime = TimeStruct::Secs(after._self.ru_stime)-TimeStruct::Secs(before._self.ru_stime);
-//    printf("ProjectForZ took %.3lf %.3lf %.3lf. User work %.3lf system %.3lf. Parallelism %.2lf\n", t1-t0, t2-t1, t3-t2, utime, stime, (utime+stime)/(t2-t1));
-    
-    return resultList;
+    catch (const std::invalid_argument& e)
+    {
+        // Presumably an error with python arrays not matching expectations.
+        // The python exception will have already been set, so we just have to return NULL.
+        // At the moment, if this happens we will leak some memory, but we shouldn't be leaking huge amounts
+        // because exceptions will occur before we actually start doing the computational work.
+        return NULL;
+    }
 }
 
 extern "C" PyObject *ProjectForZ(PyObject *self, PyObject *args)
@@ -1049,7 +1106,7 @@ void *TestMe(void)
      
     // For reasons I don't yet understand, I seem to have to do this python initialization in the same source file where I am using the numpy arrays.
     // As a result, I cannot do this setup from my test code, and have to embed it in this module here...
-    const char *anacondaFolder = "/Users/jonny/anaconda";
+    const char *anacondaFolder = "/Users/jonny/opt/anaconda3";
     // Remember to set up LD_LIBRARY_PATH under Scheme/Environment variables, when running under Xcode.
     
     wchar_t *tempString = Py_DecodeLocale(anacondaFolder, NULL);

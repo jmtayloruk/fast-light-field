@@ -1,7 +1,13 @@
 from distutils.core import setup, Extension
 import numpy	# So we can work out where the numpy headers live!
 import platform
-import os
+import os, sys
+
+# py_light_field.cpp expects Python 3.
+# This could be changed (it's actually just the string handling in the test code),
+# but it seems reasonable to require Python 3 these days.
+if sys.version_info[0] < 3:
+    raise Exception("Must compile using Python 3")
 
 # Work out if we should be building a 32 or 64 bit library
 # Apparently this "can be a bit fragile" on OS X:

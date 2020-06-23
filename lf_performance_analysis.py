@@ -1,5 +1,5 @@
 # This file contains some snippets I use for investigating the performance of my light-field deconvolution code
-import os, sys, time
+import os, sys, time, warnings
 import csv, glob
 import cProfile, pstats
 import numpy as np
@@ -120,35 +120,36 @@ def AnalyzeTestResults2(statsFilePath):
     plt.legend(loc=2)
     plt.show()
 
-def main(argv, planesToProcess=None, projectorClass=projector.Projector_allC):
+def main(argv, inputImage=None, batchSize=30, matPath=None, planesToProcess=None, numJobs=plf.GetNumThreadsToUse(), printProfileOutput=True, projectorClass=projector.Projector_allC):
     #########################################################################
     # Test code for performance measurement
     #########################################################################
-    matPath = 'PSFmatrix/PSFmatrix_M40NA0.95MLPitch150fml3000from-13to0zspacing0.5Nnum15lambda520n1.0.mat'
+    if matPath is None:
+        matPath = 'PSFmatrix/PSFmatrix_M40NA0.95MLPitch150fml3000from-13to0zspacing0.5Nnum15lambda520n1.0.mat'
     hMatrix = psfmatrix.LoadMatrix(matPath)
-    inputImage = lfimage.LoadLightFieldTiff('Data/02_Rectified/exampleData/20131219WORM2_small_full_neg_X1_N15_cropped_uncompressed.tif')
-    if ('smaller-image' in argv):
-        inputImage = inputImage[0:20*15,0:15*15]
+
+    if inputImage is None:
+        inputImage = lfimage.LoadLightFieldTiff('Data/02_Rectified/exampleData/20131219WORM2_small_full_neg_X1_N15_cropped_uncompressed.tif')
+        if ('smaller-image' in argv):
+            inputImage = inputImage[0:20*15,0:15*15]
+    inputImageBatch = np.tile(inputImage[np.newaxis,:,:], (batchSize,1,1))
+
     if not 'profile-prime-cache' in argv:
         warnings.warn('Cache not primed - timings for new code will include FFT planning time')
 
-    inputImage_x30 = np.tile(inputImage[np.newaxis,:,:], (30,1,1))
-    inputImage_x10 = inputImage_x30[0:10]
-
-    numJobsForTesting = 8    # But may want to edit this!
-    print('== Running with {0} parallel threads =='.format(numJobsForTesting))
+    print('== Running with {0} parallel threads =='.format(numJobs))
 
     if ('parallel-scaling' in argv):
         # Investigate performance for different numbers of parallel threads
         # Note that this is just for a single inputImage - I haven't used this code for a while.
-        for numJobsForTesting in range(1,13):
-            print('Running with {0} parallel threads:'.format(numJobsForTesting))
+        for _numJobs in range(1,numJobs):
+            print('Profiling with {0} parallel threads:'.format(_numJobs))
             hMatrix.ClearCache()
             ru1 = util.cpuTime('both')
-            temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=None, numjobs=numJobsForTesting)
+            temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=None, numjobs=_numJobs)
             ru2 = util.cpuTime('both')
             print('overall delta rusage:', ru2-ru1)
-            AnalyzeTestResults(numJobsForTesting)
+            AnalyzeTestResults(_numJobs)
 
     if ('analyze-saved-data' in argv):
         # Plot some analysis based on previously-acquired performance statistics
@@ -171,45 +172,49 @@ def main(argv, planesToProcess=None, projectorClass=projector.Projector_allC):
         ru2 = util.cpuTime('both')
         print('overall delta rusage:', ru2-ru1)
         pr.disable()
-        pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
+        if printProfileOutput:
+            pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
 
     if ('profile-prime-cache' in argv):
         # Do a single-image run to take care of one-off work such as FFT planning,
         # so that is not included in the timings of subsequent tests
         pr = cProfile.Profile()
         pr.enable()
-        temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, projector=projectorClass())
+        temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, logPrint=False, projector=projectorClass())
         print('Cache has been primed')
         pr.disable()
-        pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
+        #pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
         
     if ('profile-new' in argv):
         # Profile my code (single-threaded)
         pr = cProfile.Profile()
         pr.enable()
         ru1 = util.cpuTime('both')
-        temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, numjobs=numJobsForTesting, projector=projectorClass())
+        temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, numjobs=numJobs, projector=projectorClass())
         ru2 = util.cpuTime('both')
         print('overall delta rusage:', ru2-ru1)
         pr.disable()
-        pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
+        if printProfileOutput:
+            pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
 
     if ('profile-new-piv' in argv):
         # Profile my code (single-threaded) in the sort of scenario I would expect to run it in for my PIV experiments.
         tempInputImage = np.zeros((2,hMatrix.Nnum(0)*20,hMatrix.Nnum(0)*20)).astype('float32')
         pr = cProfile.Profile()
         pr.enable()
-        temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage_x10[0:2], planes=planesToProcess, numjobs=numJobsForTesting, projector=projectorClass())
+        temp = lfdeconv.BackwardProjectACC(hMatrix, inputImageBatch[0:2], planes=planesToProcess, numjobs=numJobs, projector=projectorClass())
         pr.disable()
-        pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
+        if printProfileOutput:
+            pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
 
     if ('profile-new-batch' in argv):
         # Profile my code (single-threaded) in the sort of scenario I would expect to run it in when batch-processing video
         pr = cProfile.Profile()
         pr.enable()
-        temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage_x30, planes=planesToProcess, numjobs=numJobsForTesting, projector=projectorClass())
+        temp = lfdeconv.BackwardProjectACC(hMatrix, inputImageBatch, planes=planesToProcess, numjobs=numJobs, projector=projectorClass())
         pr.disable()
-        pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
+        if printProfileOutput:
+            pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
 
 if __name__ == "__main__":
     main(sys.argv)
