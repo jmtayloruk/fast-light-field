@@ -1,14 +1,17 @@
-{\rtf1\ansi\ansicpg1252\cocoartf1504\cocoasubrtf840
+{\rtf1\ansi\ansicpg1252\cocoartf1404\cocoasubrtf470
 {\fonttbl\f0\fswiss\fcharset0 Helvetica;}
 {\colortbl;\red255\green255\blue255;}
-{\*\expandedcolortbl;;}
 \paperw11900\paperh16840\margl1440\margr1440\vieww21260\viewh16500\viewkind0
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
-\f0\b\fs24 \cf0 A general note to myself about work-in-progress C code
-\b0 \
-My c code can't cope with an array that has been transposed (Probably because it assumes adjacent strides in x?). I should probably fix that, though I doubt it's a performance issue to just .copy() the transposed array, which is what I do at the moment. I should really be swapping the transpose to be the final operation (in the case of square inputs) anyway. However, it looks as if a decent chunk of the fft time is actually being spent in the other ffts (for the reduced arrays) anyway!
-\b \
+\f0\b\fs24 \cf0 General state for releasability\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+
+\b0 \cf0 I currently rely on gsl, which is ridiculous! I should try and work out how to strip things down to the bare minimum. That might involve cherry-picking from a few gsl source files and including them in my source distribution (or even finding a different source code for generating bessel functions).\
+I also have hard-coded paths in setup.py to point to gsl, and whatever happens I need to sort that out.\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+
+\b \cf0 \
 \
 Single-pixel imaging
 \b0 \
@@ -65,9 +68,5 @@ Things to investigate
 \b \
 Performance
 \b0 \
-- Look at how well my code is using multithreading.\
-\
-- Revisit what\'92s happening on mac pro - multithreading performance seems much worse. Is it a linux benefit, or something else?\
-\
-- The optimizer calculates the full gradients even if some variables are bounded to a constant. I should be able to do better if I write my own gradient function. That would also have the benefit that I should be able to parallelize the computations much better. Similarly, with a bit of faffing around rewriting the code myself, I should be able to run a Powell optimizer that tweaks all individual flow components in parallel.\
+- The optimizer calculates the full gradients even if some variables are bounded to a constant. I should be able to do better if I write my own gradient function. Writing my own gradient function would also have the benefit that I should be able to parallelize the computations much better. Similarly, with a bit of faffing around rewriting the code myself, I should be able to run a Powell optimizer that tweaks all individual flow components in parallel.\
 }
