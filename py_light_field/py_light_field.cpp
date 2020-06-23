@@ -48,8 +48,7 @@ int gNumThreadsToUse = NumActualProcessorsAvailable();        // But can be modi
     public:
         typedef T value_type;
         complex_fast(const value_type& __re = value_type(), const value_type& __im = value_type()) : std::complex<T>(__re, __im) {}
-        template<class _Xp> _LIBCPP_CONSTEXPR_AFTER_CXX11
-        complex_fast(const complex_fast<_Xp>& __c) : std::complex<T>(__c.real(), __c.imag()) {}
+        template<class _Xp> complex_fast(const complex_fast<_Xp>& __c) : std::complex<T>(__c.real(), __c.imag()) {}
         complex_fast& operator= (const value_type& __re)
           {std::complex<T>::operator=(__re); return *this;}
         template<class _Xp> complex_fast& operator= (const complex_fast<_Xp>& __c)

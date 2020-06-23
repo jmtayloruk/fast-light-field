@@ -30,11 +30,13 @@ if (result != 0):
 BUILD_MODULES = []
 
 # Note: using -Ofast (and/or -ffast-math -funsafe-math-optimizations) does not seem to offer any additional speed gain beyond -O3.
+# Note: -flax-vector-conversions is required to compile on some architectures (e.g. beag-shuil).
+# I need to improve my VectorTypes.h, but I'm not even using that in this code, so that's a problem for another day!
 py_light_field = Extension('py_light_field',
 	include_dirs = ['/usr/local/include', numpy.get_include()],
 	sources = ['py_light_field.cpp', 'common/jPythonArray.cpp', 'common/PIVImageWindow.cpp', 'common/jPythonCommon.cpp', 'common/jMutex.cpp', 'common/jAssert.cpp', 'common/DebugPrintf_Unix.cpp'],
 	extra_link_args = ARCH + ['-Lfftw-3.3.8/.libs', '-Lfftw-3.3.8/threads/.libs', '-lfftw3f', '-lfftw3f_threads'],
-	extra_compile_args = ['-O3', '-mssse3', '-std=c++11'] + ARCH
+	extra_compile_args = ['-O3', '-flax-vector-conversions', '-mssse3', '-std=c++11'] + ARCH
 )
 BUILD_MODULES.append(py_light_field)
 
