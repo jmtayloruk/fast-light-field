@@ -1104,15 +1104,12 @@ void *TestMe(void)
      */
      
     // For reasons I don't yet understand, I seem to have to do this python initialization in the same source file where I am using the numpy arrays.
-    // As a result, I cannot do this setup from my test code, and have to embed it in this module here...
+    // As a result, I cannot do this setup from my test function main.cpp, and have to embed it in this module here...
     const char *anacondaFolder = "/Users/jonny/opt/anaconda3";
     // Remember to set up LD_LIBRARY_PATH under Scheme/Environment variables, when running under Xcode.
     
 #if PY_MAJOR_VERSION < 3
     Py_SetPythonHome((char *)anacondaFolder);
-    // Retain 'anacondaFolder', effectively causing it to leak intentionally.
-    // The docs say that the memory must remain valid for the whole time the program is running.
-    [anacondaFolder retain];
 #else
     wchar_t *tempString = Py_DecodeLocale(anacondaFolder, NULL);
     Py_SetPythonHome(tempString);
