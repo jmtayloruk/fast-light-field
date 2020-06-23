@@ -525,6 +525,71 @@ public:
     }
 };
 
+class IFFTWorkItem : public FHWorkItemBase
+{
+    /*  This work item is a bit different - we run all the IFFTs in a separate batch, rather than mixing them in
+        with the other work items. Apart from anything else, this is because they have many, many dependencies!
+        Note also that I do not use fftResult from the base class - the caller sets up 'result' and passes it in to us.
+    */
+public:
+    JPythonArray2D<TYPE>    fab;
+    JPythonArray2D<TYPE>    *paddedMatrix;
+    JPythonArray2D<RTYPE>   result;
+    fftwf_plan              plan;
+    
+    IFFTWorkItem(JPythonArray2D<TYPE> _fab, JPythonArray2D<RTYPE> _result, int fshapeY, int fshapeX, int _cc, int _order)
+    : FHWorkItemBase(fshapeY, fshapeX, _cc, _order), fab(_fab), result(_result)
+    {
+        //  Set up the FFT plan.
+        fftwf_plan_with_nthreads(1);
+        npy_intp paddedInputDims[2] = { fshapeY, int(fshapeX/2)+1 };
+        paddedMatrix = new JPythonArray2D<TYPE>(NULL, paddedInputDims, NULL);
+        
+        int dims[2] = { result.Dims(0), result.Dims(1) };
+        int inFullShape[2] = { paddedMatrix->Dims(0), paddedMatrix->Strides(0) };
+        int outFullShape[2] = { result.Dims(0), result.Strides(0) };
+        ALWAYS_ASSERT(fab.Strides(1) == 1);     // We assume contiguous
+        ALWAYS_ASSERT(paddedMatrix->Strides(1) == 1);     // We assume contiguous
+        ALWAYS_ASSERT(result.Strides(1) == 1);  // We assume contiguous
+        fftwf_plan_with_nthreads(1);
+        plan = fftwf_plan_many_dft_c2r(2/*2D FFT*/, dims, 1/*howmany*/,
+                                       (fftwf_complex *)paddedMatrix->Data(), inFullShape,
+                                       1/*stride*/, 0/*unused*/,
+                                       result.Data(), outFullShape,
+                                       1/*stride*/, 0/*unused*/,
+                                       gFFTPlanMethod);
+        
+    }
+    
+    virtual ~IFFTWorkItem()
+    {
+        delete paddedMatrix;
+        fftwf_destroy_plan(plan);
+    }
+    
+    virtual void Run(void)
+    {
+        result.SetZero();
+        
+        // TODO: need to confirm whether I use result.Dims() or the dims of something else, if I consider a case with extra padding.
+        // The answer seems to be result.Dims since my code works like this, but I should check for sure and write a definitive comment here.
+        float inverseTotalSize = 1.0f / (float(result.Dims(0)) * float(result.Dims(1)));
+        ALWAYS_ASSERT(paddedMatrix->Dims(0) >= fab.Dims(0)); // This assertion is because we don't support cropping the input matrix, only padding
+        ALWAYS_ASSERT(paddedMatrix->Dims(1) >= fab.Dims(1));
+        paddedMatrix->SetZero();     // Inefficient, but I will do this for now. TODO: update this code to only zero out the (small number of) values we won't be overwriting in the loop
+        for (int y = 0; y < fab.Dims(0); y++)
+        {
+            JPythonArray1D<TYPE> _fab = fab[y];
+            JPythonArray1D<TYPE> _paddedMatrix = (*paddedMatrix)[y];
+            for (int x = 0; x < fab.Dims(1); x++)
+            _paddedMatrix[x] = _fab[x] * inverseTotalSize;
+        }
+        
+        // Compute the full 2D FFT (i.e. not just the RFFT)
+        fftwf_execute_dft_c2r(plan, (fftwf_complex *)paddedMatrix->Data(), result.Data());
+    }
+};
+
 class ConvolveWorkItem : public WorkItem
 {
     JPythonArray2D<RTYPE> projection;
@@ -1033,8 +1098,69 @@ extern "C" PyObject *ProjectForZ(PyObject *self, PyObject *args)
     return result;
 }
 
+extern "C" PyObject *InverseRFFTList(PyObject *self, PyObject *args)
+{
+    try
+    {
+        // For now this is just a placeholder that calls through to ProjectForZ, but ultimately I intend to do all the work in one massive batch.
+        // Doing that will help reduce lock contention when we only have a few timepoints to process.
+        PyObject *workList;
+        if (!PyArg_ParseTuple(args, "O!", &PyList_Type, &workList))
+            return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
+        long numZPlanes = PyList_Size(workList);
+        PyObject *resultList = PyList_New(numZPlanes);
+        
+        double t0 = GetTime();
+
+        std::vector<WorkItem *> work[kNumWorkTypes];
+        std::vector<JMutex*> allMutexes;
+        std::vector<fftwf_plan> allPlans;
+        for (int cc = 0; cc < numZPlanes; cc++)
+        {
+            PyObject *planeInfo = PyList_GetItem(workList, cc);
+            PyArrayObject *_fab;
+            int fshapeY, fshapeX;
+            if (!PyArg_ParseTuple(planeInfo, "O!ii",
+                                  &PyArray_Type, &_fab,
+                                  &fshapeY, &fshapeX))
+            {
+                return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
+            }
+            
+            JPythonArray3D<TYPE> fab(_fab);
+            
+            npy_intp output_dims[3] = { fab.Dims(0), fshapeY, fshapeX };
+            PyArrayObject *_result = (PyArrayObject *)PyArray_EMPTY(3, output_dims, NPY_FLOAT, 0);
+            PyList_SetItem(resultList, cc, (PyObject *)_result);  // Steals reference
+            JPythonArray3D<RTYPE> result(_result);
+            ALWAYS_ASSERT(!(((size_t)result.Data()) & 0xF));        // Check alignment. Just plain malloc seems to give sufficient alignment.
+            
+            int ifCounter = 0;
+            for (int i = 0; i < fab.Dims(0); i++)
+            {
+                IFFTWorkItem *f = new IFFTWorkItem(fab[i], result[i], fshapeY, fshapeX, cc, ifCounter++);
+                work[kWorkFFT].push_back(f);
+            }
+        }
+        RunWork(work);
+        for (int w = 0; w < kNumWorkTypes; w++)
+            for (size_t i = 0; i < work[w].size(); i++)
+                delete work[w][i];
+        return resultList;
+    }
+    catch (const std::invalid_argument& e)
+    {
+        // Presumably an error with python arrays not matching expectations.
+        // The python exception will have already been set, so we just have to return NULL.
+        // At the moment, if this happens we will leak some memory, but we shouldn't be leaking huge amounts
+        // because exceptions will occur before we actually start doing the computational work.
+        return NULL;
+    }
+}
+
 extern "C" PyObject *InverseRFFT(PyObject *self, PyObject *args)
 {
+    // This is old code that should be retired, or made to call through to InverseRFFTList
     PyArrayObject *_mat;
     int inputShapeY, inputShapeX;
     if (!PyArg_ParseTuple(args, "O!ii",
@@ -1188,6 +1314,7 @@ static PyMethodDef plf_methods[] = {
     {"ProjectForZ", ProjectForZ, METH_VARARGS},
     {"ProjectForZList", ProjectForZList, METH_VARARGS},
     {"InverseRFFT", InverseRFFT, METH_VARARGS},
+    {"InverseRFFTList", InverseRFFTList, METH_VARARGS},
     {"SetStatsFile", SetStatsFile, METH_VARARGS},
     {"SetThreadFileName", SetThreadFileName, METH_VARARGS},
     {"GetNumThreadsToUse", GetNumThreadsToUse, METH_NOARGS},

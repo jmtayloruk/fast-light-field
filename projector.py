@@ -663,6 +663,12 @@ class Projector_base(object):
         return np.zeros(shape, dtype)
 
 
+def CropAfterFFT(realZPlane, proj):
+    result = []
+    for n in range(realZPlane.shape[0]):
+        result.append(special._centered(realZPlane[n][proj.fslice], proj.s1))
+    return np.array(result)
+
 class Projector_allC(Projector_base):
     def __init__(self):
         super().__init__()
@@ -680,10 +686,19 @@ class Projector_allC(Projector_base):
             proj = self.zProjectorClass(projection, hMatrix, cc)
             planeWork.append((projection, hMatrix.Hcc(cc, True), hMatrix.Nnum, proj.fshape[-2], proj.fshape[-1], proj.rfshape[-2], proj.rfshape[-1], proj.xAxisMultipliers, proj.yAxisMultipliers))
         fourierZPlanes = plf.ProjectForZList(planeWork)
-        for cc in planes:
-            # Compute the iFFT for each z plane
-            proj = self.zProjectorClass(projection, hMatrix, cc)
-            Backprojection[cc] = special.special_fftconvolve_part3(fourierZPlanes[cc], proj.fshape, proj.fslice, proj.s1, useCCode=True)
+        if False:
+            for cc in planes:
+                # Compute the iFFT for each z plane
+                proj = self.zProjectorClass(projection, hMatrix, cc)
+                Backprojection[cc] = special.special_fftconvolve_part3(fourierZPlanes[cc], proj.fshape, proj.fslice, proj.s1, useCCode=True)
+        else:
+            inverseWork = []
+            for cc in planes:
+                proj = self.zProjectorClass(projection, hMatrix, cc)
+                inverseWork.append((fourierZPlanes[cc], proj.fshape[-2], proj.fshape[-1]))
+            realZPlanes = plf.InverseRFFTList(inverseWork)
+            for cc in planes:
+                Backprojection[cc] = CropAfterFFT(realZPlanes[cc], self.zProjectorClass(projection, hMatrix, cc))
         return Backprojection
     
     def ForwardProjectACC(self, hMatrix, realspace, planes, progress, logPrint, numjobs, keepNative=False):
@@ -695,15 +710,28 @@ class Projector_allC(Projector_base):
             proj = self.zProjectorClass(realspace[0], hMatrix, cc)
             planeWork.append((realspace[cc], hMatrix.Hcc(cc, False), hMatrix.Nnum, proj.fshape[-2], proj.fshape[-1], proj.rfshape[-2], proj.rfshape[-1], proj.xAxisMultipliers, proj.yAxisMultipliers))
         fourierProjections = plf.ProjectForZList(planeWork)
-        for cc in planes:
-            # Transform back from Fourier space into real space
-            # Note that we really do need to do a separate FFT for each plane, because fshape/convolutionShape will be different in each case
-            proj = self.zProjectorClass(realspace[0], hMatrix, cc)
-            thisProjection = special.special_fftconvolve_part3(fourierProjections[cc], proj.fshape, proj.fslice, proj.s1, useCCode=True)
-            if TOTALprojection is None:
-                TOTALprojection = thisProjection
-            else:
-                TOTALprojection += thisProjection
+        if False:
+            for cc in planes:
+                # Transform back from Fourier space into real space
+                # Note that we really do need to do a separate FFT for each plane, because fshape/convolutionShape will be different in each case
+                proj = self.zProjectorClass(realspace[0], hMatrix, cc)
+                thisProjection = special.special_fftconvolve_part3(fourierProjections[cc], proj.fshape, proj.fslice, proj.s1, useCCode=True)
+                if TOTALprojection is None:
+                    TOTALprojection = thisProjection
+                else:
+                    TOTALprojection += thisProjection
+        else:
+            inverseWork = []
+            for cc in planes:
+                proj = self.zProjectorClass(realspace[0], hMatrix, cc)
+                inverseWork.append((fourierProjections[cc], proj.fshape[-2], proj.fshape[-1]))
+            thisProjection = plf.InverseRFFTList(inverseWork)
+            for cc in planes:
+                crop = CropAfterFFT(thisProjection[cc], self.zProjectorClass(realspace[0], hMatrix, cc))
+                if TOTALprojection is None:
+                    TOTALprojection = crop
+                else:
+                    TOTALprojection += crop
         assert(TOTALprojection.dtype == np.float32)   # Keep an eye out for any reversion to double-precision
         return TOTALprojection
     
