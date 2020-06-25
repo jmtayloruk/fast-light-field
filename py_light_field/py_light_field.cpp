@@ -577,6 +577,7 @@ public:
         ALWAYS_ASSERT(paddedMatrix->Dims(0) >= fab.Dims(0)); // This assertion is because we don't support cropping the input matrix, only padding
         ALWAYS_ASSERT(paddedMatrix->Dims(1) >= fab.Dims(1));
         paddedMatrix->SetZero();     // Inefficient, but I will do this for now. TODO: update this code to only zero out the (small number of) values we won't be overwriting in the loop
+        mutexWaitEndTime[0] = GetTime();    // No real need for these, but it makes it easier to process the threads file if we record these similar to with a standard FFT
         for (int y = 0; y < fab.Dims(0); y++)
         {
             JPythonArray1D<TYPE> _fab = fab[y];
@@ -584,6 +585,7 @@ public:
             for (int x = 0; x < fab.Dims(1); x++)
             _paddedMatrix[x] = _fab[x] * inverseTotalSize;
         }
+        mutexWaitEndTime[1] = GetTime();
         
         // Compute the full 2D FFT (i.e. not just the RFFT)
         fftwf_execute_dft_c2r(plan, (fftwf_complex *)paddedMatrix->Data(), result.Data());
@@ -900,6 +902,21 @@ void ConvolvePart2(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, b
     }
 }
 
+void CleanUpWork(std::vector<WorkItem *> work[kNumWorkTypes], const char *threadFileName, const char *mode)
+{
+    if ((threadFileName != NULL) && (strlen(threadFileName) > 0))
+    {
+        FILE *threadFile = fopen(threadFileName, mode);
+        for (int w = 0; w < kNumWorkTypes; w++)
+            for (size_t i = 0; i < work[w].size(); i++)
+                fprintf(threadFile, "%d\t%d\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\n", work[w][i]->ranOnThread, w, work[w][i]->runStartTime, work[w][i]->runEndTime, work[w][i]->mutexWaitStartTime[0], work[w][i]->mutexWaitEndTime[0], work[w][i]->mutexWaitStartTime[1], work[w][i]->mutexWaitEndTime[1]);
+        fclose(threadFile);
+    }
+    for (int w = 0; w < kNumWorkTypes; w++)
+        for (size_t i = 0; i < work[w].size(); i++)
+            delete work[w][i];
+}
+
 extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
 {
     try
@@ -1041,18 +1058,7 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
         RunWork(work);
         double t2 = GetTime();
         TimeStruct after;
-        // Clean up work items
-        if ((gThreadFileName != NULL) && (strlen(gThreadFileName) > 0))
-        {
-            FILE *threadFile = fopen(gThreadFileName, "w");
-            for (int w = 0; w < kNumWorkTypes; w++)
-                for (size_t i = 0; i < work[w].size(); i++)
-                {
-                    fprintf(threadFile, "%d\t%d\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\n", work[w][i]->ranOnThread, w, work[w][i]->runStartTime, work[w][i]->runEndTime, work[w][i]->mutexWaitStartTime[0], work[w][i]->mutexWaitEndTime[0], work[w][i]->mutexWaitStartTime[1], work[w][i]->mutexWaitEndTime[1]);
-                    delete work[w][i];
-                }
-            fclose(threadFile);
-        }
+        CleanUpWork(work, gThreadFileName, "w");
         for (size_t i = 0; i < allMutexes.size(); i++)
             delete allMutexes[i];
         for (size_t i = 0; i < allPlans.size(); i++)
@@ -1143,9 +1149,7 @@ extern "C" PyObject *InverseRFFTList(PyObject *self, PyObject *args)
             }
         }
         RunWork(work);
-        for (int w = 0; w < kNumWorkTypes; w++)
-            for (size_t i = 0; i < work[w].size(); i++)
-                delete work[w][i];
+        CleanUpWork(work, gThreadFileName, "a");
         return resultList;
     }
     catch (const std::invalid_argument& e)

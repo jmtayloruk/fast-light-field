@@ -1,5 +1,5 @@
 Decompress fftw-3.3.8.tar.gz and cd to the resultant folder
-./configure --enable-float --enable-threads
+./configure --enable-float --enable-threads --enable-shared
 make
 
 [return to the py_symmetry folder]
