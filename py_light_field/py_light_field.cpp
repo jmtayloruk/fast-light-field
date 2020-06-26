@@ -95,6 +95,12 @@ int gNumThreadsToUse = NumActualProcessorsAvailable();        // But can be modi
         _Tp __y = __ad + __bc;
         return complex_fast<_Tp>(__x, __y);
     }
+    template<class _Tp> complex_fast<_Tp> operator+(const complex_fast<_Tp>& __z, const complex_fast<_Tp>& __w)
+    {
+        _Tp __x = __z.real() + __w.real();
+        _Tp __y = __z.imag() + __w.imag();
+        return complex_fast<_Tp>(__x, __y);
+    }
 
     // Note specialisation to float-only here, to make sure we don't accidentally accept valilla 'complex' inputs.
     template<class _Tp> inline complex_fast<_Tp> operator*(const complex_fast<_Tp>& __x, const float& __y)
@@ -130,13 +136,18 @@ enum
     kYAxisMultiplierMirrorX         /* expandMultiplier[bb][y] * mirrorXMultiplier[y] */
 };
 
-double GetTime(void)
+double _GetTime(void)
 {
     // Standard BSD function
     struct timeval t;
     struct timezone tz;
     gettimeofday(&t, &tz);
     return t.tv_sec + t.tv_usec * 1e-6;
+}
+double GetTime(void)
+{
+    static double t0 = _GetTime();
+    return _GetTime() - t0;
 }
 
 void PauseFor(double secs)
@@ -315,6 +326,7 @@ public:
         mutexWaitStartTime[1] = mutexWaitEndTime[1] = 0;
     }
     virtual ~WorkItem() { ALWAYS_ASSERT(dependencyCount == 0); }
+    virtual void Reset(void) { complete = false; }      // For if we are recycling for another full run through all the work
     virtual void Run(void) = 0;
     virtual void CleanUpAllocations(void) = 0;
     void RunComplete(void)
@@ -356,10 +368,153 @@ public:
         dependency = dep;
         dep->AdjustDependencyCount(+1);
     }
+#if 1
+    // Reorder so that all items associated with the same offset within a lenslet are batched together (for all z).
+    // The idea is that this reduces mutex contention when processing only a few timepoints at a time.
     static int Compare(WorkItem *a, WorkItem *b)        // Note that the pointers are because the std::vector itself is a vector of pointers
     {
         return a->order < b->order;
     }
+#else
+    // Attempted reorder to reduce the amount of allocated memory floating around, i.e. try and have FFTs used
+    // as soon as possible after they are computed. For small problem sizes this *might* improve cache usage a little bit.
+    // The problem, though, is that it leads to mutex contention. I have not tried to resolve that limitation yet.
+    static int Compare(const WorkItem *a, const WorkItem *b)        // Note that the pointers are because the std::vector itself is a vector of pointers
+    {
+        const WorkItem *aRoot = a, *bRoot = b;
+        int aLen = 0, bLen = 0;
+        while (aRoot->dependency != NULL)
+        {
+            aRoot = aRoot->dependency;
+            aLen++;
+        }
+        while (bRoot->dependency != NULL)
+        {
+            bRoot = bRoot->dependency;
+            bLen++;
+        }
+        // Primary sort order: ultimate root dependency order
+        if (aRoot->order != bRoot->order)
+            return aRoot->order < bRoot->order;
+        if (aRoot->cc != bRoot->cc)
+            return aRoot->cc < bRoot->cc;
+        // Then shallowest dependency chain first, since they will become available first.
+        if (aLen != bLen)
+            return aLen < bLen;
+        // Then z [for sorting of FFTs]
+        // Then in-place sort order, by default
+        return a->cc < b->cc;
+    }
+#endif
+};
+
+enum
+{
+    kBenchmarkRead = 0,
+    kBenchmarkDualRead,
+    kBenchmarkWrite,
+    kBenchmarkReadWrite,
+    kBenchmarkIncrement,
+    kBenchmarkCalculateRow,
+    kBenchmarkCalculateRowAdd,  // Dummy to remove computational load of multiplication
+    kBenchmarkCalculateRow2,
+    kNumBenchmarkTypes
+};
+
+/*  We need to make sure our batch is large enough to saturate the caches, but (on OS X at least) the initial setup
+    is actually really slow so I don't want to make this larger than I have to. This maps to 16MB per memory block.
+    Even for the simplest benchmark, this should be enough to saturate the L3 cache, which is 8MB per processor on my mac pro.
+ 
+ */
+const int kNumElementsInBatch = 2*1000*1000;
+
+class BenchmarkWorkItem : public WorkItem
+{
+public:
+    int numElements, benchmarkType;
+    TYPE *mem1, *mem2, *mem3, *mem4;
+
+    BenchmarkWorkItem(int _numElements, int _benchmarkType) : WorkItem(0, 0), numElements(_numElements), benchmarkType(_benchmarkType)
+    {
+        //printf("%p initializing\n", this);
+        mem1 = new TYPE[kNumElementsInBatch];
+        mem2 = new TYPE[kNumElementsInBatch];
+        mem3 = new TYPE[kNumElementsInBatch];
+        mem4 = new TYPE[kNumElementsInBatch];
+        for (int i = 0; i < kNumElementsInBatch; i++)
+        {
+            mem1[i] = i;
+            mem2[i] = i;
+            mem3[i] = i;
+            mem4[i] = i;
+        }
+        //printf("%p initialized\n", this);
+    }
+    virtual ~BenchmarkWorkItem()
+    {
+        delete[] mem1;
+        delete[] mem2;
+        delete[] mem3;
+        delete[] mem4;
+    }
+    static void CalculateRowDummy(TYPE *ac, const TYPE *fap, const TYPE *fbu, const TYPE emy, int lim)
+    {
+        // Multiplies replaced with addition to reduce computational load
+        for (int x = 0; x < lim; x++)
+            ac[x] += fap[x] + fbu[x] + emy;
+    }
+
+    virtual void Run(void)
+    {
+        TYPE sum = 0;
+        int workRemaining = numElements;
+        while (workRemaining)
+        {
+            int numInBatch = MIN(workRemaining, kNumElementsInBatch);
+            TYPE *__restrict__ _mem1 = mem1;
+            TYPE *__restrict__ _mem2 = mem2;
+            TYPE *__restrict__ _mem3 = mem3;
+            TYPE *__restrict__ _mem4 = mem4;
+            if (benchmarkType == kBenchmarkRead)
+            {
+                for (int i = 0; i < numInBatch; i++)
+                    sum += _mem1[i];
+            }
+            else if (benchmarkType == kBenchmarkDualRead)
+            {
+                for (int i = 0; i < numInBatch; i++)
+                    sum += _mem1[i] + _mem2[i];
+            }
+            else if (benchmarkType == kBenchmarkWrite)
+            {
+                TYPE val = _mem1[0]; // Ensure value is not known to compiler
+                for (int i = 0; i < numInBatch; i++)
+                    _mem1[i] = val;
+            }
+            else if (benchmarkType == kBenchmarkReadWrite)
+            {
+                for (int i = 0; i < numInBatch; i++)
+                    _mem1[i] = _mem2[i];
+            }
+            else if (benchmarkType == kBenchmarkIncrement)
+            {
+                for (int i = 0; i < numInBatch; i++)
+                    _mem1[i] += TYPE(1.0f,0.1f);
+            }
+            else if (benchmarkType == kBenchmarkCalculateRow)
+                CalculateRow(_mem1, _mem2, _mem3, _mem1[0], numInBatch);
+            else if (benchmarkType == kBenchmarkCalculateRowAdd)
+                CalculateRowDummy(_mem1, _mem2, _mem3, _mem1[0], numInBatch);
+            else if (benchmarkType == kBenchmarkCalculateRow2)
+                CalculateRowBoth(_mem1, _mem2, _mem3, _mem4, _mem1[0], _mem2[0], numInBatch, numInBatch);
+            else
+                ALWAYS_ASSERT(0);
+            workRemaining -= numInBatch;
+        }
+        mem1[0] = sum;   // Ensure side-effect from the result
+        RunComplete();
+    }
+    virtual void CleanUpAllocations(void) { }
 };
 
 class FHWorkItemBase : public WorkItem
@@ -746,6 +901,7 @@ enum
     kWorkConvolve,
     kNumWorkTypes
 };
+const char *workNames[kNumWorkTypes] = { "fft", "trans", "mirror", "conv" };
 
 struct ThreadInfo
 {
@@ -763,8 +919,11 @@ struct ThreadInfo
             LocalGetMutex lgm(workQueueMutex, workQueueMutexBlock_us);
             thisThreadID = threadIDCounter++;
         }
+
+//        printf("=== Running thread %d === \n", thisThreadID);
         while (1)
         {
+//            printf("== %d Picking a work item ==\n", thisThreadID);
             WorkItem *workItem = NULL;
             // Pick a work item to run.
             double t1 = GetTime();
@@ -781,11 +940,15 @@ struct ThreadInfo
                         if (workItem->CanRun())
                         {
                             // First item of work[w] is not blocked - we should run it
+//                            printf("Work %s[%zd] object %p can run (completed %p)\n", workNames[w], workCounter[w], workItem, workItem->dependency);
                             workCounter[w]++;
                             break;
                         }
                         else
+                        {
+//                            printf("Work %s[%zd] object %p cannot run (waiting for %p)\n", workNames[w], workCounter[w], workItem, workItem->dependency);
                             workItem = NULL;
+                        }
                     }
                 }
                 if (workItem == NULL)
@@ -902,7 +1065,7 @@ void ConvolvePart2(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, b
     }
 }
 
-void CleanUpWork(std::vector<WorkItem *> work[kNumWorkTypes], const char *threadFileName, const char *mode)
+void CleanUpWork(std::vector<WorkItem *> work[kNumWorkTypes], const char *threadFileName=NULL, const char *mode="w")
 {
     if ((threadFileName != NULL) && (strlen(threadFileName) > 0))
     {
@@ -1225,6 +1388,66 @@ extern "C" PyObject *InverseRFFT(PyObject *self, PyObject *args)
     return PyArray_Return(_result);
 }
 
+extern "C" PyObject *MemoryBenchmark(PyObject *self, PyObject *args)
+{
+    int numElements, numThreads, benchmarkType;
+    if (!PyArg_ParseTuple(args, "ii", &numThreads, &numElements))
+        return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
+    
+    // Time how long it takes to churn through a simple memory-access benchmark task
+    std::vector<WorkItem *> work[kNumWorkTypes];
+    for (int i = 0; i < numThreads; i++)
+    {
+        BenchmarkWorkItem *b = new BenchmarkWorkItem(numElements, 0);
+        work[kWorkFFT].push_back(b);
+    }
+    double times[kNumBenchmarkTypes];
+    int temp = gNumThreadsToUse;
+    gNumThreadsToUse = numThreads;
+    for (benchmarkType = 0; benchmarkType < kNumBenchmarkTypes; benchmarkType++)
+    {
+        for (int i = 0; i < numThreads; i++)
+        {
+            BenchmarkWorkItem *b = ((BenchmarkWorkItem*)work[kWorkFFT][i]);
+            b->benchmarkType = benchmarkType;
+            b->Reset();
+        }
+        double t0 = GetTime();
+        RunWork(work);
+        double t1 = GetTime();
+        times[benchmarkType] = t1-t0;
+        printf("%d(x%d) took %.6lf\n", benchmarkType, numThreads, t1-t0);
+    }
+    gNumThreadsToUse = temp;
+    CleanUpWork(work);
+    
+    ALWAYS_ASSERT(kNumBenchmarkTypes == 8); // As a reminder to update the return value if this changes
+    return Py_BuildValue("(dddddddd)", times[0], times[1], times[2], times[3], times[4], times[5], times[6], times[7]);
+}
+
+// This mess here is to ensure I can compile under both python 2 and python 3
+#if PY_MAJOR_VERSION >= 3
+const char *MyImportNumpy2(void)
+{
+    /*  In the case of an error, the definition of import_array() returns (and in python 3 it actually returns NULL.
+     I don't want it to force anything to return, I just want to catch that situation and assert.
+     As a result, I have to write this wrapper function, and the caller can assert that the return value is non-NULL. */
+    import_array()
+    return "ok";        // Return something that is not NULL
+}
+
+void MyImportNumpy(void)
+{
+    const char *importResult = MyImportNumpy2();
+    ALWAYS_ASSERT(importResult != NULL);
+}
+#else
+void MyImportNumpy(void)
+{
+    import_array();
+}
+#endif
+
 void *TestMe(void)
 {
     /*  Function to be called as part of a standalone C program,
@@ -1253,7 +1476,7 @@ void *TestMe(void)
     unsetenv("PYTHONPATH");
     setenv("PYTHONPATH", anacondaFolder, 1);
     Py_Initialize();
-    import_array()
+    MyImportNumpy();
     
     fftwf_init_threads();
     
@@ -1325,6 +1548,7 @@ static PyMethodDef plf_methods[] = {
     {"SetNumThreadsToUse", SetNumThreadsToUse, METH_VARARGS},
     {"GetPlanningMode", GetPlanningMode, METH_NOARGS},
     {"SetPlanningMode", SetPlanningMode, METH_VARARGS},
+    {"MemoryBenchmark", MemoryBenchmark, METH_VARARGS},
 	{NULL,NULL} };
 
 
