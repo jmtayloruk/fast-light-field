@@ -1,4 +1,5 @@
 #include <unistd.h>
+#include <map>
 #include <sys/resource.h>
 #include "common/jAssert.h"
 #include "common/VectorFunctions.h"
@@ -232,17 +233,15 @@ extern "C" PyObject *SetStatsFile(PyObject *self, PyObject *args)
 
 extern "C" PyObject *SetThreadFileName(PyObject *self, PyObject *args)
 {
-    // If this is set to something non-empty, we will dump information about multithreaded performance
+    // If the input parameter is set to something non-empty, we will dump information about multithreaded performance
     // to a file at the end of each projection run.
     const char *filename;
-    if (!PyArg_ParseTuple(args, "z", &filename))
+    if (!PyArg_ParseTuple(args, "z", &filename))    // 'z' specifies a string but also accepts None (which maps to NULL)
         return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
+    if (gThreadFileName != NULL)
+        delete[] gThreadFileName;
     if (filename == NULL)
-    {
-        if (gThreadFileName != NULL)
-            delete[] gThreadFileName;
         gThreadFileName = NULL;
-    }
     else
     {
         gThreadFileName = new char[strlen(filename)+1];
@@ -877,6 +876,24 @@ void RunWork(std::vector<WorkItem *> work[kNumWorkTypes])
     }
 }
 
+void CleanUpWork(std::vector<WorkItem *> work[kNumWorkTypes], const char *threadFileName, const char *mode, bool useCache)
+{
+    if ((threadFileName != NULL) && (strlen(threadFileName) > 0))
+    {
+        FILE *threadFile = fopen(threadFileName, mode);
+        for (int w = 0; w < kNumWorkTypes; w++)
+            for (size_t i = 0; i < work[w].size(); i++)
+                fprintf(threadFile, "%d\t%d\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\n", work[w][i]->ranOnThread, w, work[w][i]->runStartTime, work[w][i]->runEndTime, work[w][i]->mutexWaitStartTime[0], work[w][i]->mutexWaitEndTime[0], work[w][i]->mutexWaitStartTime[1], work[w][i]->mutexWaitEndTime[1]);
+        fclose(threadFile);
+    }
+    for (int w = 0; w < kNumWorkTypes; w++)
+        for (size_t i = 0; i < work[w].size(); i++)
+        {
+            if ((w != kWorkFFT) || (!useCache))
+                delete work[w][i];
+        }
+}
+
 void ConvolvePart2(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, bool mirrorY, bool mirrorX, FHWorkItemBase *fftWorkItem, JPythonArray2D<TYPE> xAxisMultipliers, JPythonArray3D<TYPE> yAxisMultipliers, JPythonArray3D<TYPE> accum, std::vector<JMutex*> &accumMutex, fftwf_plan plan, std::vector<WorkItem *> work[kNumWorkTypes], int cc, int &mCounter, int &cCounter)
 {
     // Note that (in contrast to the python function of the same name) this function does not actually do the work,
@@ -902,19 +919,42 @@ void ConvolvePart2(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, b
     }
 }
 
-void CleanUpWork(std::vector<WorkItem *> work[kNumWorkTypes], const char *threadFileName, const char *mode)
+typedef std::map<int,class FHWorkItem *> CacheMapType;
+CacheMapType gFHCache;
+char *gCacheIdentifier = NULL;
+
+extern "C" PyObject *EnableFHCachingWithIdentifier(PyObject *self, PyObject *args)
 {
-    if ((threadFileName != NULL) && (strlen(threadFileName) > 0))
-    {
-        FILE *threadFile = fopen(threadFileName, mode);
-        for (int w = 0; w < kNumWorkTypes; w++)
-            for (size_t i = 0; i < work[w].size(); i++)
-                fprintf(threadFile, "%d\t%d\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\n", work[w][i]->ranOnThread, w, work[w][i]->runStartTime, work[w][i]->runEndTime, work[w][i]->mutexWaitStartTime[0], work[w][i]->mutexWaitEndTime[0], work[w][i]->mutexWaitStartTime[1], work[w][i]->mutexWaitEndTime[1]);
-        fclose(threadFile);
-    }
-    for (int w = 0; w < kNumWorkTypes; w++)
-        for (size_t i = 0; i < work[w].size(); i++)
-            delete work[w][i];
+    // Enables caching of F(H) - but great care needed not to overrun the available memory!
+    // To ensure we don't cache results from a different PSF, the caller should pass in an identifier,
+    // which could for example be the path to the underlying PSF file.
+    const char *cacheIdentifier;
+    if (!PyArg_ParseTuple(args, "s", &cacheIdentifier))
+        return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
+    
+    if (gCacheIdentifier != NULL)
+        delete gCacheIdentifier;
+    gCacheIdentifier = new char[strlen(cacheIdentifier)+1];
+    strcpy(gCacheIdentifier, cacheIdentifier);
+    Py_RETURN_NONE;
+}
+
+void ClearFHCache(void)
+{
+    // Free the objects referred to within the map
+    for (CacheMapType::iterator i = gFHCache.begin(); i != gFHCache.end(); ++i)
+        delete i->second;
+    // Clear the map itself;
+    gFHCache.clear();
+}
+
+extern "C" PyObject *DisableFHCaching(PyObject *self, PyObject *args)
+{
+    if (gCacheIdentifier != NULL)
+        delete gCacheIdentifier;
+    gCacheIdentifier = NULL;
+    ClearFHCache();
+    Py_RETURN_NONE;
 }
 
 extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
@@ -923,19 +963,36 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
     {
         // For now this is just a placeholder that calls through to ProjectForZ, but ultimately I intend to do all the work in one massive batch.
         // Doing that will help reduce lock contention when we only have a few timepoints to process.
-        PyObject *workList;
+        PyObject    *workList;
+        const char  *cacheIdentifier;
+        bool        useCache = false;
 #if 0//TESTING
         // PyArg_ParseTuple doesn't seem to work when I use it on my own synthesized tuple.
         // I don't know why that is, but this code exists as a workaround for that problem.
         // -> Actually, the parsing code seems to work now. I've disabled this, but left it in case the problem returns!
         workList = PyTuple_GetItem(args, 0);
 #else
-        if (!PyArg_ParseTuple(args, "O!",
-                              &PyList_Type, &workList))
+        if (!PyArg_ParseTuple(args, "O!z",
+                              &PyList_Type, &workList,
+                              &cacheIdentifier))
         {
             return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
         }
 #endif
+        if (cacheIdentifier != NULL)
+        {
+            if (gCacheIdentifier == NULL)
+            {
+                PyErr_Format(PyErr_NewException((char*)"exceptions.ValueError", NULL, NULL), "Call EnableFHCachingWithIdentifier first, with this new identifier.");
+                return NULL;
+            }
+            if (strcmp(cacheIdentifier, gCacheIdentifier))
+            {
+                PyErr_Format(PyErr_NewException((char*)"exceptions.ValueError", NULL, NULL), "Cache identifier does not match the one previously set. Call EnableFHCachingWithIdentifier for the new identifier if you want to reset the cache.");
+                return NULL;
+            }
+            useCache = true;
+        }
         long numZPlanes = PyList_Size(workList);
 
         double t0 = GetTime();
@@ -1005,9 +1062,18 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
                     bool mirrorY = (aa != cent);
                     bool transpose = ((aa != bb) && (aa != (Nnum-bb-1)));
 
-                    FHWorkItem *f1 = new FHWorkItem(HtsFull[bb][aa], fshapeY, fshapeX, false, cc, fhCounter++);
-                    work[kWorkFFT].push_back(f1);
-
+                    FHWorkItem *f1 = NULL;
+                    int cacheIndex = aa + bb*HtsFull.Dims(1) + cc*HtsFull.Dims(0)*HtsFull.Dims(1);
+                    if (useCache)
+                        f1 = gFHCache[cacheIndex];
+                    if (f1 == NULL)
+                    {
+                        f1 = new FHWorkItem(HtsFull[bb][aa], fshapeY, fshapeX, false, cc, fhCounter++);
+                        work[kWorkFFT].push_back(f1);
+                        if (useCache)
+                            gFHCache.insert(std::pair<int,FHWorkItem*>(cacheIndex, f1));
+                    }
+                    
                     FHWorkItemBase *f2 = NULL;
                     if (transpose)
                     {
@@ -1058,7 +1124,7 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
         RunWork(work);
         double t2 = GetTime();
         TimeStruct after;
-        CleanUpWork(work, gThreadFileName, "w");
+        CleanUpWork(work, gThreadFileName, "w", useCache);
         for (size_t i = 0; i < allMutexes.size(); i++)
             delete allMutexes[i];
         for (size_t i = 0; i < allPlans.size(); i++)
@@ -1087,10 +1153,12 @@ extern "C" PyObject *ProjectForZ(PyObject *self, PyObject *args)
     PyObject *planeList = PyList_New(1);
     Py_INCREF(args);                            // So that the reference can be stolen!
     PyList_SetItem(planeList, 0, args);         // Steals reference
-    PyObject *planeTuple = PyTuple_New(1);
-    PyTuple_SetItem(planeTuple, 0, planeList);         // Steals reference
-    PyObject *resultList = ProjectForZList(self, planeTuple);
-    PyObject_Free(planeTuple);
+    
+    PyObject *argTuple = PyTuple_New(2);
+    PyTuple_SetItem(argTuple, 0, planeList);         // Steals reference
+    PyTuple_SetItem(argTuple, 1, Py_None);
+    PyObject *resultList = ProjectForZList(self, argTuple);
+    PyObject_Free(argTuple);
     if (resultList == NULL)
     {
         // An error occurred, presumably when parsing the planeList.
@@ -1149,7 +1217,7 @@ extern "C" PyObject *InverseRFFTList(PyObject *self, PyObject *args)
             }
         }
         RunWork(work);
-        CleanUpWork(work, gThreadFileName, "a");
+        CleanUpWork(work, gThreadFileName, "a", false);
         return resultList;
     }
     catch (const std::invalid_argument& e)
@@ -1325,9 +1393,9 @@ static PyMethodDef plf_methods[] = {
     {"SetNumThreadsToUse", SetNumThreadsToUse, METH_VARARGS},
     {"GetPlanningMode", GetPlanningMode, METH_NOARGS},
     {"SetPlanningMode", SetPlanningMode, METH_VARARGS},
+    {"EnableFHCachingWithIdentifier", EnableFHCachingWithIdentifier, METH_VARARGS},
+    {"DisableFHCaching", DisableFHCaching, METH_VARARGS},
 	{NULL,NULL} };
-
-
 
 /* initialisation - register the methods with the Python interpreter */
 
