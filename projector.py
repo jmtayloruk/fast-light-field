@@ -652,6 +652,7 @@ class Projector_base(object):
         super().__init__()
         self.fftPlan = None
         self.fftPlan2 = None
+        self.cacheFH = False  # Default - can be updated subsequently by the caller
     
     def asnative(self, m):
         return np.asarray(m)
@@ -685,7 +686,13 @@ class Projector_allC(Projector_base):
         for cc in planes:
             proj = self.zProjectorClass(projection, hMatrix, cc)
             planeWork.append((projection, hMatrix.Hcc(cc, True), hMatrix.Nnum, proj.fshape[-2], proj.fshape[-1], proj.rfshape[-2], proj.rfshape[-1], proj.xAxisMultipliers, proj.yAxisMultipliers))
-        fourierZPlanes = plf.ProjectForZList(planeWork)
+        if (self.cacheFH):
+            cacheIdentifierToUse = hMatrix.HPathFormat
+            plf.EnableFHCachingWithIdentifier(cacheIdentifierToUse)
+        else:
+            cacheIdentifierToUse = None
+            plf.DisableFHCaching()
+        fourierZPlanes = plf.ProjectForZList(planeWork, cacheIdentifierToUse)
         if False:
             for cc in planes:
                 # Compute the iFFT for each z plane
@@ -709,7 +716,13 @@ class Projector_allC(Projector_base):
             # Project each z plane forward to the camera image plane
             proj = self.zProjectorClass(realspace[0], hMatrix, cc)
             planeWork.append((realspace[cc], hMatrix.Hcc(cc, False), hMatrix.Nnum, proj.fshape[-2], proj.fshape[-1], proj.rfshape[-2], proj.rfshape[-1], proj.xAxisMultipliers, proj.yAxisMultipliers))
-        fourierProjections = plf.ProjectForZList(planeWork)
+        if (self.cacheFH):
+            cacheIdentifierToUse = hMatrix.HPathFormat
+            plf.EnableFHCachingWithIdentifier(cacheIdentifierToUse)
+        else:
+            cacheIdentifierToUse = None
+            plf.DisableFHCaching()
+        fourierProjections = plf.ProjectForZList(planeWork, cacheIdentifierToUse)
         if False:
             for cc in planes:
                 # Transform back from Fourier space into real space
@@ -1014,12 +1027,15 @@ def selfTest():
                 # Now run the code we are actually testing.
                 # Note that we call xxxProjectACC rather than ProjectForZ,
                 # because the pure-C implementation does not have a ProjectForZ function.
-                for n in range(2):  # Run twice to avoid counting the time spent making FFT plans
+                projector = projectorClass()
+                projector.cacheFH = True
+                plf.ClearFHCache()
+                for n in range(2):  # Run twice to avoid counting the time spent making FFT plans and possibly caching FFT
                     t1 = time.time()
                     if bk:
-                        testResultNew = projectorClass().BackwardProjectACC(testHMatrix, testProjection, [0], progress=util.noProgressBar, logPrint=False, numjobs=1)
+                        testResultNew = projector.BackwardProjectACC(testHMatrix, testProjection, [0], progress=util.noProgressBar, logPrint=False, numjobs=1)
                     else:
-                        testResultNew = projectorClass().ForwardProjectACC(testHMatrix, testProjection[np.newaxis,:,:,:], [0], progress=util.noProgressBar, logPrint=False, numjobs=1)
+                        testResultNew = projector.ForwardProjectACC(testHMatrix, testProjection[np.newaxis,:,:,:], [0], progress=util.noProgressBar, logPrint=False, numjobs=1)
                     t2 = time.time()
                 print('New took %.2fms'%((t2-t1)*1e3))
                 # Compare the results that we got

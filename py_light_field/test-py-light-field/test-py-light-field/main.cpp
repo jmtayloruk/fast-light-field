@@ -7,8 +7,6 @@
 //
 #include <stdio.h>
 
-double GetTime(void);
-
 int main(int argc, const char * argv[])
 {
     void *TestMe(void);

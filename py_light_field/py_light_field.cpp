@@ -299,6 +299,18 @@ void CalculateRowMirror(TYPE *ac, const TYPE *fap, const TYPE *fbu, const TYPE e
 
 void CalculateRowBoth(TYPE *ac, const TYPE *fap1, const TYPE *fap2, const TYPE *fbu, const TYPE emy1, const TYPE emy2, int lim, int trueLength)
 {
+    /*  Increase memory efficiency by processing two different pixel locations (fap1, fap2) in one go, for the same z,t - i.e. accumulating into the same accumulator.
+        This has the benefit of reusing the same row of fbu for a second operation, while it is resident in the cache.
+        The gains are not massive, but are definitely measurable.
+        I believe the gains are because we only have to read/write ac once from main memory. I don't expect a gain from fap,
+        because that should be cache-resident (it is reused in the y loop - see modulo operation in calling code).
+     
+        The question then is, can I parallelise any more than this?
+        I am saying that I think the bandwidth limitations are in accessing ac, and reading fbu.
+        Therefore, there are two potential ways I could speed things up more:
+        1. Process a second PSF (fbu2) into the same accumulator. That would further amortise the read and write of ac.
+        2. Process a second z plane or timepoint, into a different accumulator. That would amortise the read of fbu.
+     */
     ac[0] += fap1[0] * fbu[0] * emy1;
     ac[0] += fap2[0] * TYPE::conj(fbu[0]) * emy2;
     for (int x = 1; x < lim; x++)
@@ -311,7 +323,7 @@ void CalculateRowBoth(TYPE *ac, const TYPE *fap1, const TYPE *fap2, const TYPE *
 class WorkItem
 {
 private:  // To ensure callers go through our accessor functions
-    bool        complete;
+    bool        complete, persistentMemory;
     WorkItem    *dependency;
     int         dependencyCount;
 public:
@@ -319,13 +331,15 @@ public:
     double      runStartTime, runEndTime, mutexWaitStartTime[2], mutexWaitEndTime[2];
     int         ranOnThread;
     
-    WorkItem(int _cc, int _order) : complete(false), dependency(NULL), dependencyCount(0), cc(_cc), order(_order)
+    WorkItem(int _cc, int _order) : complete(false), persistentMemory(false), dependency(NULL), dependencyCount(0), cc(_cc), order(_order)
     {
         mutexWaitStartTime[0] = mutexWaitEndTime[0] = 0;
         mutexWaitStartTime[1] = mutexWaitEndTime[1] = 0;
     }
     virtual ~WorkItem() { ALWAYS_ASSERT(dependencyCount == 0); }
     virtual void Reset(void) { complete = false; }      // For if we are recycling for another full run through all the work
+    bool PersistentMemory(void) const { return persistentMemory; }
+    void SetPersistentMemory(void) { persistentMemory = true; }
     virtual void Run(void) = 0;
     virtual void CleanUpAllocations(void) = 0;
     void RunComplete(void)
@@ -356,7 +370,7 @@ public:
         // and only one thread will cause CleanUpAllocations to be called for a given object.
         int newVal = __sync_add_and_fetch(&dependencyCount, delta);
         ALWAYS_ASSERT(newVal >= 0);
-        if (newVal == 0)
+        if ((newVal == 0) && (!persistentMemory))
         {
             // All dependencies have run. We should be safe to free any allocated memory now
             CleanUpAllocations();
@@ -500,12 +514,52 @@ public:
                 for (int i = 0; i < numInBatch; i++)
                     _mem1[i] += TYPE(1.0f,0.1f);
             }
+            /*  TODO: these next benchmarks may not be entirely representative of my real workload.
+                fap will be read from an array that is about 50-150kB in size.
+                My Mac pro has 256kB L2 cache per core, and the L3 cache is 8MB.
+                fap is therefore expected to be resident in the L3 cache, though probably not L2.
+                Access to L3 will be faster than uncached reads (although my measurements suggest possibly only 2x faster).
+                I will probably need to construct a benchmark quite carefully, then, if I want to represent that fairly.
+                I would need to think about how much faster it is - is it fast enough that I can just treat that as a constant for my benchmark?
+             */
             else if (benchmarkType == kBenchmarkCalculateRow)
+            {
+#if 0
                 CalculateRow(_mem1, _mem2, _mem3, _mem1[0], numInBatch);
+#else
+                // Attempt to reflect the fact that fab1,2 will be smaller arrays that should be resident in the L3 cache (reused ~10 times in my real use-case).
+                const int kNumElementsInSubBatch = 10000;
+                int subWorkRemaining = numInBatch;
+                int numInSubBatch = MIN(subWorkRemaining, kNumElementsInSubBatch);
+                size_t off = 0;
+                while (subWorkRemaining)
+                {
+                    CalculateRow(_mem1+off, _mem2, _mem3+off, _mem1[0], numInSubBatch);
+                    off += numInSubBatch;
+                    subWorkRemaining -= numInSubBatch;
+                }
+#endif
+            }
             else if (benchmarkType == kBenchmarkCalculateRowAdd)
                 CalculateRowDummy(_mem1, _mem2, _mem3, _mem1[0], numInBatch);
             else if (benchmarkType == kBenchmarkCalculateRow2)
+            {
+#if 0
                 CalculateRowBoth(_mem1, _mem2, _mem3, _mem4, _mem1[0], _mem2[0], numInBatch, numInBatch);
+#else
+                // Attempt to reflect the fact that fab1,2 will be smaller arrays that should be resident in the L3 cache (reused ~10 times in my real use-case).
+                const int kNumElementsInSubBatch = 10000;
+                int subWorkRemaining = numInBatch;
+                int numInSubBatch = MIN(subWorkRemaining, kNumElementsInSubBatch);
+                size_t off = 0;
+                while (subWorkRemaining)
+                {
+                    CalculateRowBoth(_mem1+off, _mem2, _mem3, _mem4+off, _mem1[0], _mem2[0], numInSubBatch, numInSubBatch);
+                    off += numInSubBatch;
+                    subWorkRemaining -= numInSubBatch;
+                }
+#endif
+            }
             else
                 ALWAYS_ASSERT(0);
             workRemaining -= numInBatch;
@@ -1052,7 +1106,7 @@ void CleanUpWork(std::vector<WorkItem *> work[kNumWorkTypes], const char *thread
     for (int w = 0; w < kNumWorkTypes; w++)
         for (size_t i = 0; i < work[w].size(); i++)
         {
-            if ((w != kWorkFFT) || (!useCache))
+            if (!work[w][i]->PersistentMemory())
                 delete work[w][i];
         }
 }
@@ -1082,9 +1136,22 @@ void ConvolvePart2(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, b
     }
 }
 
-typedef std::map<int,class FHWorkItem *> CacheMapType;
+typedef std::map<int,FHWorkItemBase *> CacheMapType;
 CacheMapType gFHCache;
 char *gCacheIdentifier = NULL;
+
+extern "C" PyObject *ClearFHCache(PyObject *self, PyObject *args)
+{
+    // Free the objects referred to within the map
+    for (CacheMapType::iterator i = gFHCache.begin(); i != gFHCache.end(); ++i)
+    {
+        i->second->CleanUpAllocations();
+        delete i->second;
+    }
+    // Clear the map itself;
+    gFHCache.clear();
+    Py_RETURN_NONE;
+}
 
 extern "C" PyObject *EnableFHCachingWithIdentifier(PyObject *self, PyObject *args)
 {
@@ -1096,19 +1163,14 @@ extern "C" PyObject *EnableFHCachingWithIdentifier(PyObject *self, PyObject *arg
         return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
     
     if (gCacheIdentifier != NULL)
+    {
+        if (strcmp(gCacheIdentifier, cacheIdentifier))
+            ClearFHCache(self, Py_None);
         delete gCacheIdentifier;
+    }
     gCacheIdentifier = new char[strlen(cacheIdentifier)+1];
     strcpy(gCacheIdentifier, cacheIdentifier);
     Py_RETURN_NONE;
-}
-
-void ClearFHCache(void)
-{
-    // Free the objects referred to within the map
-    for (CacheMapType::iterator i = gFHCache.begin(); i != gFHCache.end(); ++i)
-        delete i->second;
-    // Clear the map itself;
-    gFHCache.clear();
 }
 
 extern "C" PyObject *DisableFHCaching(PyObject *self, PyObject *args)
@@ -1116,8 +1178,30 @@ extern "C" PyObject *DisableFHCaching(PyObject *self, PyObject *args)
     if (gCacheIdentifier != NULL)
         delete gCacheIdentifier;
     gCacheIdentifier = NULL;
-    ClearFHCache();
+    ClearFHCache(self, Py_None);
     Py_RETURN_NONE;
+}
+
+#define CACHE_OR_CREATE(C, B, A, WORKTYPE, VAR, TYPE, PARAMS)           \
+{                                                                       \
+    VAR = NULL;                                                         \
+    int cacheIndex = A + B*HtsFull.Dims(1) + C*HtsFull.Dims(0)*HtsFull.Dims(1);  \
+    if (useCache)                                                       \
+    {                                                                   \
+        CacheMapType::iterator iter = gFHCache.find(cacheIndex);        \
+        if (iter != gFHCache.end())                                     \
+            VAR = iter->second;                                         \
+    }                                                                   \
+    if (VAR == NULL)                                                    \
+    {                                                                   \
+        VAR = new TYPE PARAMS;                                          \
+        work[WORKTYPE].push_back(VAR);                                  \
+        if (useCache)                                                   \
+        {                                                               \
+            VAR->SetPersistentMemory();                                 \
+            gFHCache.insert(std::pair<int,FHWorkItemBase*>(cacheIndex, VAR));       \
+        }                                                               \
+    }                                                                   \
 }
 
 extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
@@ -1129,19 +1213,11 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
         PyObject    *workList;
         const char  *cacheIdentifier;
         bool        useCache = false;
-#if 0//TESTING
-        // PyArg_ParseTuple doesn't seem to work when I use it on my own synthesized tuple.
-        // I don't know why that is, but this code exists as a workaround for that problem.
-        // -> Actually, the parsing code seems to work now. I've disabled this, but left it in case the problem returns!
-        workList = PyTuple_GetItem(args, 0);
-#else
-        if (!PyArg_ParseTuple(args, "O!z",
-                              &PyList_Type, &workList,
-                              &cacheIdentifier))
+        if (!PyArg_ParseTuple(args, "O!z", &PyList_Type, &workList, &cacheIdentifier))
         {
             return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
         }
-#endif
+
         if (cacheIdentifier != NULL)
         {
             if (gCacheIdentifier == NULL)
@@ -1157,6 +1233,8 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
             useCache = true;
         }
         long numZPlanes = PyList_Size(workList);
+        
+//        printf("Called ProjectForZList. useCache:%d, cache size %zd\n", useCache, gFHCache.size());
 
         double t0 = GetTime();
         std::vector<WorkItem *> work[kNumWorkTypes];
@@ -1168,20 +1246,6 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
             PyObject *planeInfo = PyList_GetItem(workList, cc);
             PyArrayObject *_projection, *_HtsFull, *_xAxisMultipliers, *_yAxisMultipliers;
             int Nnum, fshapeY, fshapeX, rfshapeY, rfshapeX;
-#if 0//TESTING
-            // PyArg_ParseTuple doesn't seem to work when I use it on my own synthesized tuple.
-            // I don't know why that is, but this code exists as a workaround for that problem.
-            // -> Actually, the parsing code seems to work now. I've disabled this, but left it in case the problem returns!
-            _projection = (PyArrayObject *)PyTuple_GetItem(planeInfo, 0);
-            _HtsFull = (PyArrayObject *)PyTuple_GetItem(planeInfo, 1);
-            Nnum = (int)PyLong_AsLong(PyTuple_GetItem(planeInfo, 2));
-            fshapeY = (int)PyLong_AsLong(PyTuple_GetItem(planeInfo, 3));
-            fshapeX = (int)PyLong_AsLong(PyTuple_GetItem(planeInfo, 4));
-            rfshapeY = (int)PyLong_AsLong(PyTuple_GetItem(planeInfo, 5));
-            rfshapeX = (int)PyLong_AsLong(PyTuple_GetItem(planeInfo, 6));
-            _xAxisMultipliers = (PyArrayObject *)PyTuple_GetItem(planeInfo, 7);
-            _yAxisMultipliers = (PyArrayObject *)PyTuple_GetItem(planeInfo, 8);
-#else
             if (!PyArg_ParseTuple(planeInfo, "O!O!iiiiiO!O!",
                                   &PyArray_Type, &_projection,
                                   &PyArray_Type, &_HtsFull,
@@ -1191,8 +1255,26 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
             {
                 return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
             }
-#endif
-
+            if ((useCache) && (gFHCache.size() > 0))
+            {
+                /*  Check that the cached FFT arrays are compatible with what we are going to be working with.
+                    We use gCacheIdentifier to track whether the *contents* of the PSF have changed, but even if the
+                    PSF is unchanged then the *dimensions* of the FFT array will be different if the *camera* arrays are different.
+                    Here is the only place it is convenient to check that (for each z plane)
+                 */
+                for (auto iter = gFHCache.begin(); iter != gFHCache.end(); ++iter)
+                {
+                    if ((iter->second->fftResult != NULL) && (iter->second->cc == cc) &&
+                        ((iter->second->fftResult->Dims(0) != fshapeY) || (iter->second->fftResult->Dims(1) != fshapeX)))
+                    {
+                        PyErr_Format(PyErr_NewException((char*)"exceptions.ValueError", NULL, NULL),
+                                     "FFT cache appears to be stale and needs clearing. Fourier space dimensions (%dx%d) for plane %d do not match cached dimensions(%dx%d)",
+                                     fshapeY, fshapeX, cc, iter->second->fftResult->Dims(0), iter->second->fftResult->Dims(1));
+                        return NULL;
+                    }
+                }
+            }
+            
             JPythonArray3D<RTYPE> projection(_projection);
             JPythonArray4D<RTYPE> HtsFull(_HtsFull);
             JPythonArray2D<TYPE> xAxisMultipliers(_xAxisMultipliers);
@@ -1224,18 +1306,9 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
                     bool mirrorX = (bb != cent);
                     bool mirrorY = (aa != cent);
                     bool transpose = ((aa != bb) && (aa != (Nnum-bb-1)));
-
-                    FHWorkItem *f1 = NULL;
-                    int cacheIndex = aa + bb*HtsFull.Dims(1) + cc*HtsFull.Dims(0)*HtsFull.Dims(1);
-                    if (useCache)
-                        f1 = gFHCache[cacheIndex];
-                    if (f1 == NULL)
-                    {
-                        f1 = new FHWorkItem(HtsFull[bb][aa], fshapeY, fshapeX, false, cc, fhCounter++);
-                        work[kWorkFFT].push_back(f1);
-                        if (useCache)
-                            gFHCache.insert(std::pair<int,FHWorkItem*>(cacheIndex, f1));
-                    }
+                    
+                    FHWorkItemBase *f1;
+                    CACHE_OR_CREATE(cc, bb, aa, kWorkFFT, f1, FHWorkItem, (HtsFull[bb][aa], fshapeY, fshapeX, false, cc, fhCounter++))
                     
                     FHWorkItemBase *f2 = NULL;
                     if (transpose)
@@ -1244,15 +1317,13 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
                         {
                             // We do not currently support the transpose here, although that can speed things up in certain circumstances (see python code in projector.convolve()).
                             // The only scenario where we could gain (by avoiding recalculating the FFT) is if the image array is square.
-                            f2 = new TransposeWorkItem(f1, cc, fhtCounter++);
-                            work[kWorkTranspose].push_back(f2);
+                            CACHE_OR_CREATE(cc, aa, bb, kWorkTranspose, f2, TransposeWorkItem, (f1, cc, fhtCounter++))
                         }
                         else
                         {
                             // There is no easy way to calculate FFT(h^T) when the padded array is non-square.
                             // (If there was, then I think that in general FFTs of padded arrays could be computed very fast!)
-                            f2 = new FHWorkItem(HtsFull[bb][aa], fshapeY, fshapeX, true, cc, fhCounter++);
-                            work[kWorkFFT].push_back(f2);
+                            CACHE_OR_CREATE(cc, aa, bb, kWorkFFT, f2, FHWorkItem, (HtsFull[bb][aa], fshapeY, fshapeX, true, cc, fhCounter++))
                         }
                     }
                     
@@ -1295,8 +1366,7 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
         double t3 = GetTime();
         double utime = TimeStruct::Secs(after._self.ru_utime)-TimeStruct::Secs(before._self.ru_utime);
         double stime = TimeStruct::Secs(after._self.ru_stime)-TimeStruct::Secs(before._self.ru_stime);
-    //    printf("ProjectForZ took %.3lf %.3lf %.3lf. User work %.3lf system %.3lf. Parallelism %.2lf\n", t1-t0, t2-t1, t3-t2, utime, stime, (utime+stime)/(t2-t1));
-        
+    //    printf("ProjectForZList took %.3lf %.3lf %.3lf. User work %.3lf system %.3lf. Parallelism %.2lf\n", t1-t0, t2-t1, t3-t2, utime, stime, (utime+stime)/(t2-t1));
         return resultList;
     }
     catch (const std::invalid_argument& e)
@@ -1618,6 +1688,7 @@ static PyMethodDef plf_methods[] = {
     {"SetPlanningMode", SetPlanningMode, METH_VARARGS},
     {"EnableFHCachingWithIdentifier", EnableFHCachingWithIdentifier, METH_VARARGS},
     {"DisableFHCaching", DisableFHCaching, METH_VARARGS},
+    {"ClearFHCache", ClearFHCache, METH_NOARGS},
     {"MemoryBenchmark", MemoryBenchmark, METH_VARARGS},
 	{NULL,NULL} };
 
