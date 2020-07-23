@@ -987,11 +987,11 @@ def selfTest():
     
     # Load the H matrix
     # We need the raw _H and _Ht values, since we are using old projection code to validate the results of my new optimized code
-    matPath = 'PSFmatrix/PSFmatrix_M40NA0.95MLPitch150fml3000from-13to0zspacing0.5Nnum15lambda520n1.0.mat'
+    matPath = 'PSFmatrix/fdnormPSFmatrix_M40NA0.95MLPitch150fml3000from-6to-5zspacing0.5Nnum15lambda520n1.mat'
     if testAgainstOriginalCode:
-        (_H, _Ht, _CAIndex, hPathFormat, htPathFormat, hReducedShape, htReducedShape) = psfmatrix.LoadRawMatrixData(matPath)
-        testHCC = _H[13]
-        testHtCC = _Ht[13]
+        (_H, _Ht, _CAIndex, hPathFormat, htPathFormat, hReducedShape, htReducedShape) = psfmatrix.LoadRawMatrixData(matPath, createPSF=True)
+        testHCC = _H[0]
+        testHtCC = _Ht[0]
     
     # I have removed Projector_cHelpers from this list of classes to test, because my changes to py_light_field
     # have removed several of the c helper functions. I might be able to reinstate them now the C code is stable again,
@@ -1010,7 +1010,7 @@ def selfTest():
             for numTimepoints in [2]:
               for shape in [(numTimepoints,150,150), (numTimepoints,150,300), (numTimepoints,300,150)]:
                 print(' === shape', shape)
-                testHMatrix = psfmatrix.LoadMatrix(matPath, numZ=1, zStart=13)   # Needs to be in the loop here, because caching is confused by changing the image shape
+                testHMatrix = psfmatrix.LoadMatrix(matPath, numZ=1, zStart=0, createPSF=True)   # Needs to be in the loop here, because caching is confused by changing the image shape
                 testProjection = np.random.random(shape).astype(np.float32)
                 # Start by running old, definitive code that we trust
                 if testAgainstOriginalCode:

@@ -8,7 +8,7 @@ if not os.path.exists('fftw-3.3.8/.libs/libfftw3f.a'):
     print('=== NOTE: building FFTW. This may take some time ===')
     if not os.path.exists('fftw-3.3.8'):
         os.system('gzip -kd fftw-3.3.8.tar.gz; tar -xf fftw-3.3.8.tar')
-    os.system('cd fftw-3.3.8; ./configure --enable-float --enable-threads --enable-shared; make -j 2; cd ..')
+    os.system('cd fftw-3.3.8; ./configure --enable-float --enable-threads --enable-shared; sudo make -j 2 install; cd ..')
 if not os.path.exists('fftw-3.3.8/.libs/libfftw3f.a'):
     raise('An error occurred while building FFTW')
     exit()

@@ -122,12 +122,12 @@ def main(argv, projectorClass=proj.Projector_allC, maxiter=8, numParallel=32):
         # No arguments passed
         print('NO ARGUMENTS PASSED. You should pass parameters to this script if you want to execute it directly to run self-tests (see script for what options are available)')
         
+    print('Reminder: this test code will use a matrix that is not fully normalised, to reproduce results from original Matlab code')
     # Load the input image and PSF matrix
     inputImage = lfimage.LoadLightFieldTiff('Data/02_Rectified/exampleData/20131219WORM2_small_full_neg_X1_N15_cropped_uncompressed.tif')
     # Note that the PSF matrix we are using here is not normalised in the way I believe it should be.
     # This is purely intended to replicate the previous results obtained by Prevedel's code.
-    hMatrix = psfmatrix.LoadMatrix('PSFmatrix/PSFmatrix_M40NA0.95MLPitch150fml3000from-26to0zspacing2Nnum15lambda520n1.mat')
-    print('Reminder: this test code will use a matrix that is not fully normalised')
+    hMatrix = psfmatrix.LoadMatrix('PSFmatrix/reducedBuggyPSFmatrix_M40NA0.95MLPitch150fml3000from-26to0zspacing2Nnum15lambda520n1.mat', createPSF=True)
     print('** Tests will run with projector type: {0} **'.format(projectorClass().name))
     deconvolvedResult = None
     testOutcomes = np.zeros((2))

@@ -87,7 +87,7 @@ void setdblank_c(double *result) { *result = (1.0/0.0); }
 
 
 
-static double bessj0( double x )
+double bessj0( double x )
 /*------------------------------------------------------------*/
 /* PURPOSE: Evaluate Bessel function of first kind and order  */
 /*          0 at input x                                      */

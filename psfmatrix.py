@@ -2,6 +2,7 @@ import numpy as np
 import os, sys, h5py
 from jutils import tqdm_alias as tqdm
 import myfft
+import generate_psf as psf
 
 try:
     import cupy as cp
@@ -96,7 +97,7 @@ def GetPathFormats(matPath):
     htPathFormat = mmapPath+'/Ht{z:02d}.array'
     return (mmapPath, hPathFormat, htPathFormat)
 
-def LoadRawMatrixData(matPath, expectedNnum=None):
+def LoadRawMatrixData(matPath, expectedNnum=None, createPSF=True):
     # Load the contents of a .mat file (and generate memmap backing files that my optimized code actually uses)
     # Normally this function should not be called directly, but it is needed if we want to run old code that
     # makes direct use of the matrices _H and _Ht.
@@ -107,6 +108,10 @@ def LoadRawMatrixData(matPath, expectedNnum=None):
     except:
         pass  # Probably the directory already exists
 
+    if createPSF:
+        # Generate the PSF file if it does not exist (slow!)
+        psf.EnsureMatrixFileExists(matPath)
+    
     # Load the matrices from the .mat file.
     # This is slow since they must be decompressed and are rather large! (9.5GB each, in single-precision FP)
     hReducedShape = []
@@ -161,11 +166,16 @@ def LoadRawMatrixData(matPath, expectedNnum=None):
 
     return (_H, _Ht, _CAindex, hPathFormat, htPathFormat, hReducedShape, htReducedShape)
 
-def LoadMatrix(matPath, numZ=None, zStart=0, forceRegeneration = False, cacheH=False):
+def LoadMatrix(matPath, numZ=None, zStart=0, forceRegeneration = False, cacheH=False, createPSF=False):
     # Obtain a HMatrix object based on a .mat file
     # (although we will jump straight to previously-generated memmap backing files if they exist)
     # This is the function that user code should normally be calling
     mmapPath, hPathFormat, htPathFormat = GetPathFormats(matPath)
+
+    if createPSF:
+        # Generate the PSF file if it does not exist (slow!)
+        psf.EnsureMatrixFileExists(matPath)
+
     try:
         if forceRegeneration:
             raise('transferring control to except branch to force regeneration')
