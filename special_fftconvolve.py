@@ -4,11 +4,20 @@ import warnings
 import scipy.fftpack
 import myfft
 
+from numpy.fft import fft, fftn, rfft, rfftn, irfftn
+
 # We start with various utility functions which are taken from the original source code of fftconvolve
 
-from scipy._lib._version import NumpyVersion
-from numpy.fft import fft, fftn, rfft, rfftn, irfftn
-_rfft_mt_safe = (NumpyVersion(np.__version__) >= '1.9.0.dev-e24486e')
+# The mt_safe flag is associated with a comment that "Pre-1.9 NumPy FFT routines are not threadsafe",
+# and I have not included the pre-1.9 code to deal with that issue.
+# However, it causes me problems (which I don't understand) whereby sometimes I see:
+#    ModuleNotFoundError: No module named 'scipy._lib'
+# The only solutions on the internet seem to involve trying to uninstall and reinstall scipy!
+# Anyway, numpy 1.9 is pretty old and surely this is not something I should have to worry about any more.
+# This code isn't even code that I use in my fast implementation.
+#from scipy._lib._version import NumpyVersion
+#_rfft_mt_safe = (NumpyVersion(np.__version__) >= '1.9.0.dev-e24486e')
+_rfft_mt_safe = True
 
 def _next_regular(target):
     """
@@ -133,7 +142,6 @@ def special_fftconvolve_part1(in1, bb, aa, Nnum, in2Shape, partial=False):
     assert((len(in1.shape) == 2) or (len(in1.shape) == 3))
     assert(len(in2Shape) == 2)
     (fshape, _, _) = convolutionShape(in1.shape, in2Shape, Nnum)
-    # Pre-1.9 NumPy FFT routines are not threadsafe - this code requires numpy 1.9 or greater
     assert(_rfft_mt_safe)
     fa = special_rfftn(in1, bb, aa, Nnum, fshape, partial=partial)
     return (fa, fshape)
