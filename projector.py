@@ -17,7 +17,7 @@ try:
     import pycuda.driver as cuda
     gpuAvailable = True
 except:
-    print('Unable to import cupy - no GPU support will be available')
+    #print('Unable to import cupy - no GPU support will be available')
     gpuAvailable = False
 
 
@@ -1001,6 +1001,7 @@ def selfTest():
     if gpuAvailable:
         classesToTest = [Projector_gpuHelpers]   #  classesToTest +    # TODO: eventually will want to prepend classesToTest
     np.random.seed(0)
+    testOutcomes = np.zeros((2))
     for projectorClass in classesToTest:
         print(' Testing class:', projectorClass.__name__)
         for bk in [True, False]:
@@ -1042,10 +1043,13 @@ def selfTest():
                 print('  test result (should be <<1): %e' % comparison)
                 if (comparison > 1e-4):
                     print("   -> WARNING: disagreement detected")
+                    testOutcomes += np.array([0, 1])
                 else:
                     print("   -> OK")
-            
-    print('Tests complete')
+                    testOutcomes += np.array([1, 1])
+
+    print('Projector tests against reference implementation complete (passed %d/%d)' % (testOutcomes[0], testOutcomes[1]))
+    return testOutcomes
 
 if __name__ == "__main__":
     selfTest()

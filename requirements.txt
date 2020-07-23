@@ -1,0 +1,9 @@
+Cython==0.29.21
+h5py==2.10.0
+numpy==1.19.1
+psutil==5.7.2
+pyFFTW==0.12.0
+scipy==1.5.1
+six==1.15.0
+tifffile==2020.7.22
+tqdm==4.48.0

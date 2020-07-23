@@ -6,7 +6,9 @@ import myfft
 try:
     import cupy as cp
 except:
-    print('Unable to import cupy - no GPU support will be available')
+    # If cupy is *not* present then we should not find ourselves in the position of calling any cupy functions.
+    # The caller would have to do something *really* weird for that to happen.
+    pass
 
 class HMatrix(object):
     def __init__(self, HPathFormat, HtPathFormat, HReducedShape, numZ=None, zStart=0, cacheMMap=True, cacheH=False):

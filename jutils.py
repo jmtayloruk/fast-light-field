@@ -9,8 +9,10 @@ def CheckComparison(arrayA, arrayB, maxAcceptableDifference, description="Test r
     print("%s (should be %s): %f" % (description, shouldBe, comparison))
     if (comparison > maxAcceptableDifference):
         print(" -> WARNING: disagreement detected")
+        return np.array([0, 1])  # 0/1 tests passed
     else:
         print(" -> OK")
+        return np.array([1, 1])  # 1/1 tests passed
 
 def noProgressBar(work, desc=None, leave=True, **kwargs):
     # Dummy drop-in function to be used in place of 'tqdm' when we want to suppress a progress bar
