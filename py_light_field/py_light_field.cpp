@@ -573,10 +573,10 @@ public:
 class FHWorkItemBase : public WorkItem
 {
 public:
-    int                     fshapeY, fshapeX;
+    int                     fshapeY, fshapeX, backwards;
     JPythonArray2D<TYPE>    *fftResult;
     
-    FHWorkItemBase(int _fshapeY, int _fshapeX, int _cc, int _order) : WorkItem(_cc, _order), fshapeY(_fshapeY), fshapeX(_fshapeX), fftResult(NULL)
+    FHWorkItemBase(int _fshapeY, int _fshapeX, int _backwards, int _cc, int _order) : WorkItem(_cc, _order), fshapeY(_fshapeY), fshapeX(_fshapeX), backwards(_backwards), fftResult(NULL)
     {
     }
     
@@ -612,8 +612,8 @@ public:
     fftwf_plan              plan, plan2;
     
     
-    FHWorkItem(JPythonArray2D<RTYPE> _Hts, int fshapeY, int fshapeX, bool _transpose, int _cc, int _order)
-        : FHWorkItemBase(fshapeY, fshapeX, _cc, _order), Hts(_Hts), transpose(_transpose)
+    FHWorkItem(JPythonArray2D<RTYPE> _Hts, int _fshapeY, int _fshapeX, int _backwards, bool _transpose, int _cc, int _order)
+        : FHWorkItemBase(_fshapeY, _fshapeX, _backwards, _cc, _order), Hts(_Hts), transpose(_transpose)
     {
         /*  Set up the FFT plan.
             The complication here is that we cannot afford to allocate memory for every 
@@ -688,8 +688,8 @@ class TransposeWorkItem : public FHWorkItemBase
 public:
     FHWorkItemBase        *sourceFFTWorkItem;
     
-    TransposeWorkItem(FHWorkItemBase *_sourceFFTWorkItem, int _cc, int _order)
-    : FHWorkItemBase(_sourceFFTWorkItem->fshapeY, _sourceFFTWorkItem->fshapeX, _cc, _order), sourceFFTWorkItem(_sourceFFTWorkItem)
+    TransposeWorkItem(FHWorkItemBase *_sourceFFTWorkItem, int _backwards, int _cc, int _order)
+    : FHWorkItemBase(_sourceFFTWorkItem->fshapeY, _sourceFFTWorkItem->fshapeX, _backwards, _cc, _order), sourceFFTWorkItem(_sourceFFTWorkItem)
     {
         ALWAYS_ASSERT(fshapeY == fshapeX);  // Transpose only works when FFT(H) is a square array
         AddDependency(sourceFFTWorkItem);
@@ -720,8 +720,8 @@ public:
     FHWorkItemBase        *sourceFFTWorkItem;
     JPythonArray1D<TYPE>  mirrorYMultiplier;
     
-    MirrorWorkItem(FHWorkItemBase *_sourceFFTWorkItem, JPythonArray1D<TYPE> _mirrorYMultiplier, int _cc, int _order)
-        : FHWorkItemBase(_sourceFFTWorkItem->fshapeY, _sourceFFTWorkItem->fshapeX, _cc, _order), sourceFFTWorkItem(_sourceFFTWorkItem), mirrorYMultiplier(_mirrorYMultiplier)
+    MirrorWorkItem(FHWorkItemBase *_sourceFFTWorkItem, JPythonArray1D<TYPE> _mirrorYMultiplier, int _backwards, int _cc, int _order)
+        : FHWorkItemBase(_sourceFFTWorkItem->fshapeY, _sourceFFTWorkItem->fshapeX, _backwards, _cc, _order), sourceFFTWorkItem(_sourceFFTWorkItem), mirrorYMultiplier(_mirrorYMultiplier)
     {
         AddDependency(sourceFFTWorkItem);
     }
@@ -745,8 +745,8 @@ public:
     JPythonArray2D<RTYPE>   result;
     fftwf_plan              plan;
     
-    IFFTWorkItem(JPythonArray2D<TYPE> _fab, JPythonArray2D<RTYPE> _result, int fshapeY, int fshapeX, int _cc, int _order)
-    : FHWorkItemBase(fshapeY, fshapeX, _cc, _order), fab(_fab), result(_result)
+    IFFTWorkItem(JPythonArray2D<TYPE> _fab, JPythonArray2D<RTYPE> _result, int _fshapeY, int _fshapeX, int _cc, int _order)
+    : FHWorkItemBase(_fshapeY, _fshapeX, false, _cc, _order), fab(_fab), result(_result)
     {
         //  Set up the FFT plan.
         fftwf_plan_with_nthreads(1);
@@ -1111,7 +1111,7 @@ void CleanUpWork(std::vector<WorkItem *> work[kNumWorkTypes], const char *thread
         }
 }
 
-void ConvolvePart2(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, bool mirrorY, bool mirrorX, FHWorkItemBase *fftWorkItem, JPythonArray2D<TYPE> xAxisMultipliers, JPythonArray3D<TYPE> yAxisMultipliers, JPythonArray3D<TYPE> accum, std::vector<JMutex*> &accumMutex, fftwf_plan plan, std::vector<WorkItem *> work[kNumWorkTypes], int cc, int &mCounter, int &cCounter)
+void ConvolvePart2(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, bool mirrorY, bool mirrorX, FHWorkItemBase *fftWorkItem, JPythonArray2D<TYPE> xAxisMultipliers, JPythonArray3D<TYPE> yAxisMultipliers, JPythonArray3D<TYPE> accum, std::vector<JMutex*> &accumMutex, fftwf_plan plan, std::vector<WorkItem *> work[kNumWorkTypes], int backwards, int cc, int &mCounter, int &cCounter)
 {
     // Note that (in contrast to the python function of the same name) this function does not actually do the work,
     // it just sets up the WorkItems that will be run later.
@@ -1124,7 +1124,7 @@ void ConvolvePart2(JPythonArray3D<RTYPE> projection, int bb, int aa, int Nnum, b
     cCounter++;
     if (mirrorY)
     {
-        MirrorWorkItem *workCalcMirror = new MirrorWorkItem(fftWorkItem, xAxisMultipliers[kXAxisMultiplierMirrorY], cc, mCounter);
+        MirrorWorkItem *workCalcMirror = new MirrorWorkItem(fftWorkItem, xAxisMultipliers[kXAxisMultiplierMirrorY], backwards, cc, mCounter);
         work[kWorkMirrorY].push_back(workCalcMirror);
         for (int i = 0; i < projection.Dims(0); i++)
         {
@@ -1182,10 +1182,10 @@ extern "C" PyObject *DisableFHCaching(PyObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 
-#define CACHE_OR_CREATE(C, B, A, WORKTYPE, VAR, TYPE, PARAMS)           \
+#define CACHE_OR_CREATE(BK, C, B, A, WORKTYPE, VAR, TYPE, PARAMS)           \
 {                                                                       \
     VAR = NULL;                                                         \
-    int cacheIndex = A + B*HtsFull.Dims(1) + C*HtsFull.Dims(0)*HtsFull.Dims(1);  \
+    int cacheIndex = BK + 2*(A + B*HtsFull.Dims(1) + C*HtsFull.Dims(0)*HtsFull.Dims(1));  \
     if (useCache)                                                       \
     {                                                                   \
         CacheMapType::iterator iter = gFHCache.find(cacheIndex);        \
@@ -1245,11 +1245,11 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
         {
             PyObject *planeInfo = PyList_GetItem(workList, cc);
             PyArrayObject *_projection, *_HtsFull, *_xAxisMultipliers, *_yAxisMultipliers;
-            int Nnum, fshapeY, fshapeX, rfshapeY, rfshapeX;
-            if (!PyArg_ParseTuple(planeInfo, "O!O!iiiiiO!O!",
+            int Nnum, backwards, fshapeY, fshapeX, rfshapeY, rfshapeX;
+            if (!PyArg_ParseTuple(planeInfo, "O!O!iiiiiiO!O!",
                                   &PyArray_Type, &_projection,
                                   &PyArray_Type, &_HtsFull,
-                                  &Nnum, &fshapeY, &fshapeX, &rfshapeY, &rfshapeX,
+                                  &Nnum, &backwards, &fshapeY, &fshapeX, &rfshapeY, &rfshapeX,
                                   &PyArray_Type, &_xAxisMultipliers,
                                   &PyArray_Type, &_yAxisMultipliers))
             {
@@ -1264,7 +1264,7 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
                  */
                 for (auto iter = gFHCache.begin(); iter != gFHCache.end(); ++iter)
                 {
-                    if ((iter->second->fftResult != NULL) && (iter->second->cc == cc) &&
+                    if ((iter->second->fftResult != NULL) && (iter->second->cc == cc) && (iter->second->backwards == backwards) &&
                         ((iter->second->fftResult->Dims(0) != fshapeY) || (iter->second->fftResult->Dims(1) != fshapeX)))
                     {
                         PyErr_Format(PyErr_NewException((char*)"exceptions.ValueError", NULL, NULL),
@@ -1308,7 +1308,7 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
                     bool transpose = ((aa != bb) && (aa != (Nnum-bb-1)));
                     
                     FHWorkItemBase *f1;
-                    CACHE_OR_CREATE(cc, bb, aa, kWorkFFT, f1, FHWorkItem, (HtsFull[bb][aa], fshapeY, fshapeX, false, cc, fhCounter++))
+                    CACHE_OR_CREATE(backwards, cc, bb, aa, kWorkFFT, f1, FHWorkItem, (HtsFull[bb][aa], fshapeY, fshapeX, backwards, false, cc, fhCounter++))
                     
                     FHWorkItemBase *f2 = NULL;
                     if (transpose)
@@ -1317,13 +1317,13 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
                         {
                             // We do not currently support the transpose here, although that can speed things up in certain circumstances (see python code in projector.convolve()).
                             // The only scenario where we could gain (by avoiding recalculating the FFT) is if the image array is square.
-                            CACHE_OR_CREATE(cc, aa, bb, kWorkTranspose, f2, TransposeWorkItem, (f1, cc, fhtCounter++))
+                            CACHE_OR_CREATE(backwards, cc, aa, bb, kWorkTranspose, f2, TransposeWorkItem, (f1, backwards, cc, fhtCounter++))
                         }
                         else
                         {
                             // There is no easy way to calculate FFT(h^T) when the padded array is non-square.
                             // (If there was, then I think that in general FFTs of padded arrays could be computed very fast!)
-                            CACHE_OR_CREATE(cc, aa, bb, kWorkFFT, f2, FHWorkItem, (HtsFull[bb][aa], fshapeY, fshapeX, true, cc, fhCounter++))
+                            CACHE_OR_CREATE(backwards, cc, aa, bb, kWorkFFT, f2, FHWorkItem, (HtsFull[bb][aa], fshapeY, fshapeX, backwards, true, cc, fhCounter++))
                         }
                     }
                     
@@ -1339,11 +1339,11 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
                         This suggests it doesn't seem to have an impact on the cases where there is no lock contention in the first place. 
                         Good to know it doesn't have a big detrimental impact.
                      */
-                    ConvolvePart2(projection, bb, aa, Nnum, mirrorY, mirrorX, f1, xAxisMultipliers, yAxisMultipliers, accum, accumMutex, plan, work, cc, mCounter, cCounter);
+                    ConvolvePart2(projection, bb, aa, Nnum, mirrorY, mirrorX, f1, xAxisMultipliers, yAxisMultipliers, accum, accumMutex, plan, work, backwards, cc, mCounter, cCounter);
                     if (transpose)
                     {
                         // Note that my,mx (and bb,aa) have been swapped here, which is necessary following the transpose.
-                        ConvolvePart2(projection, aa, bb, Nnum, mirrorX, mirrorY, f2, xAxisMultipliers, yAxisMultipliers, accum, accumMutex, plan, work, cc, mCounter, cCounter);
+                        ConvolvePart2(projection, aa, bb, Nnum, mirrorX, mirrorY, f2, xAxisMultipliers, yAxisMultipliers, accum, accumMutex, plan, work, backwards, cc, mCounter, cCounter);
                     }
                 }
             }
@@ -1620,7 +1620,7 @@ void *TestMe(void)
     
     for (int n = 0; n < 2; n++)
     {
-        PyObject *pArgs = PyTuple_New(9);
+        PyObject *pArgs = PyTuple_New(10);
         ALWAYS_ASSERT(pArgs != NULL);
         
     #if 1
@@ -1628,10 +1628,11 @@ void *TestMe(void)
         //    (1, 450, 675) (8, 8, 391, 391) 840 1065 840 533 (16, 1065) (2, 15, 840)
         npy_intp hdims[4] = { 8, 8, 391, 391 };
         PyTuple_SetItem(pArgs, 2, PyLong_FromLong(15));
-        PyTuple_SetItem(pArgs, 3, PyLong_FromLong(840));
-        PyTuple_SetItem(pArgs, 4, PyLong_FromLong(1065));
-        PyTuple_SetItem(pArgs, 5, PyLong_FromLong(840));
-        PyTuple_SetItem(pArgs, 6, PyLong_FromLong(533));
+        PyTuple_SetItem(pArgs, 3, PyLong_FromLong(1));
+        PyTuple_SetItem(pArgs, 4, PyLong_FromLong(840));
+        PyTuple_SetItem(pArgs, 5, PyLong_FromLong(1065));
+        PyTuple_SetItem(pArgs, 6, PyLong_FromLong(840));
+        PyTuple_SetItem(pArgs, 7, PyLong_FromLong(533));
         npy_intp xdims[2] = { 16, 1065 };
         npy_intp ydims[3] = { 2, 15, 840 };
     #else
@@ -1639,10 +1640,11 @@ void *TestMe(void)
         //    (1, 450, 675) (8, 8, 61, 61) 510 735 510 368 (16, 735) (2, 15, 510)
         npy_intp hdims[4] = { 8, 8, 61, 61 };
         PyTuple_SetItem(pArgs, 2, PyLong_FromLong(15));
-        PyTuple_SetItem(pArgs, 3, PyLong_FromLong(510));
-        PyTuple_SetItem(pArgs, 4, PyLong_FromLong(735));
-        PyTuple_SetItem(pArgs, 5, PyLong_FromLong(510));
-        PyTuple_SetItem(pArgs, 6, PyLong_FromLong(368));
+        PyTuple_SetItem(pArgs, 3, PyLong_FromLong(1));
+        PyTuple_SetItem(pArgs, 4, PyLong_FromLong(510));
+        PyTuple_SetItem(pArgs, 5, PyLong_FromLong(735));
+        PyTuple_SetItem(pArgs, 6, PyLong_FromLong(510));
+        PyTuple_SetItem(pArgs, 7, PyLong_FromLong(368));
         npy_intp xdims[2] = { 16, 735 };
         npy_intp ydims[3] = { 2, 15, 510 };
     #endif
@@ -1655,8 +1657,8 @@ void *TestMe(void)
         PyObject *yAxisMultipliers = PyArray_ZEROS(3, ydims, NPY_CFLOAT, 0);
         PyTuple_SetItem(pArgs, 0, projection);
         PyTuple_SetItem(pArgs, 1, HtsFull);
-        PyTuple_SetItem(pArgs, 7, xAxisMultipliers);
-        PyTuple_SetItem(pArgs, 8, yAxisMultipliers);
+        PyTuple_SetItem(pArgs, 8, xAxisMultipliers);
+        PyTuple_SetItem(pArgs, 9, yAxisMultipliers);
         
         PyObject *result = ProjectForZ(NULL, pArgs);
         

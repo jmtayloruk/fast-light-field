@@ -110,25 +110,26 @@ def LoadRawMatrixData(matPath, expectedNnum=None):
     hReducedShape = []
     htReducedShape = []
     with h5py.File(matPath, 'r') as f:
+        # Note that in the following code, h5py requires a weird syntax such as f['CAindex'][()] to access a keyed value from the HDF5 file
         print('Load CAindex')
         sys.stdout.flush()
-        _CAindex = f['CAindex'].value.astype('int')
+        _CAindex = f['CAindex'][()].astype('int')
         # I have got into a mess whereby I have sometimes been saving CAIndex in transposed form.
         # This test is a hack to fix that:
         if _CAindex.shape[1] == 2:
             _CAindex = _CAindex.T
-        Nnum = f['Nnum'].value.astype('int')
+        Nnum = f['Nnum'][()].astype('int')
         if (expectedNnum is not None) and (Nnum != expectedNnum):
             warnings.warn('Nnum={0} from file does not match expected value {1}'.format(Nnum, expectedNnum))
         try:
-            reducedMatrix = f['ReducedMatrix'].value.astype('int')
+            reducedMatrix = f['ReducedMatrix'][()].astype('int')
         except:
             print('No reduced flag - will assume this is a full matrix')
             reducedMatrix = False
         
         print('Load H')
         sys.stdout.flush()
-        _H = f['H'].value.astype('float32')
+        _H = f['H'][()].astype('float32')
         aabbRange = int((Nnum+1)/2)
         if reducedMatrix:
             assert(_H.shape[2] == aabbRange)
@@ -144,7 +145,7 @@ def LoadRawMatrixData(matPath, expectedNnum=None):
         
         print('Load Ht')
         sys.stdout.flush()
-        _Ht = f['Ht'].value.astype('float32')
+        _Ht = f['Ht'][()].astype('float32')
         for cc in tqdm(range(_Ht.shape[0]), desc='memmap Ht'):
             HtCC =  _Ht[cc, :aabbRange, :aabbRange, _CAindex[0,cc]-1:_CAindex[1,cc], _CAindex[0,cc]-1:_CAindex[1,cc]]
             htReducedShape.append(HtCC.shape)

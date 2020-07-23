@@ -2,7 +2,6 @@ import numpy as np
 from scipy.signal import fftconvolve
 import scipy.fftpack
 import time, warnings, os
-from joblib import Parallel, delayed
 from jutils import tqdm_alias as tqdm
 
 import py_light_field as plf
@@ -685,7 +684,7 @@ class Projector_allC(Projector_base):
         plf.SetNumThreadsToUse(numjobs)
         for cc in planes:
             proj = self.zProjectorClass(projection, hMatrix, cc)
-            planeWork.append((projection, hMatrix.Hcc(cc, True), hMatrix.Nnum, proj.fshape[-2], proj.fshape[-1], proj.rfshape[-2], proj.rfshape[-1], proj.xAxisMultipliers, proj.yAxisMultipliers))
+            planeWork.append((projection, hMatrix.Hcc(cc, True), hMatrix.Nnum, 1, proj.fshape[-2], proj.fshape[-1], proj.rfshape[-2], proj.rfshape[-1], proj.xAxisMultipliers, proj.yAxisMultipliers))
         if (self.cacheFH):
             cacheIdentifierToUse = hMatrix.HPathFormat
             plf.EnableFHCachingWithIdentifier(cacheIdentifierToUse)
@@ -715,7 +714,7 @@ class Projector_allC(Projector_base):
         for cc in planes:
             # Project each z plane forward to the camera image plane
             proj = self.zProjectorClass(realspace[0], hMatrix, cc)
-            planeWork.append((realspace[cc], hMatrix.Hcc(cc, False), hMatrix.Nnum, proj.fshape[-2], proj.fshape[-1], proj.rfshape[-2], proj.rfshape[-1], proj.xAxisMultipliers, proj.yAxisMultipliers))
+            planeWork.append((realspace[cc], hMatrix.Hcc(cc, False), hMatrix.Nnum, 0, proj.fshape[-2], proj.fshape[-1], proj.rfshape[-2], proj.rfshape[-1], proj.xAxisMultipliers, proj.yAxisMultipliers))
         if (self.cacheFH):
             cacheIdentifierToUse = hMatrix.HPathFormat
             plf.EnableFHCachingWithIdentifier(cacheIdentifierToUse)

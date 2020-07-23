@@ -5,7 +5,7 @@ import cProfile, pstats
 from jutils import tqdm_alias as tqdm
 
 import psfmatrix, lfimage
-import projector
+import projector as proj
 import special_fftconvolve as special
 import jutils as util
 import py_light_field as plf
@@ -24,7 +24,7 @@ os.environ['MKL_DYNAMIC'] = 'FALSE'
 # Most of the core code has now been encapsulated in classes in projector.py
 #########################################################################
 
-def BackwardProjectACC(hMatrix, projection, planes=None, progress=tqdm, logPrint=True, numjobs=util.PhysicalCoreCount(), projector=projector.Projector_allC(), keepNative=False):
+def BackwardProjectACC(hMatrix, projection, planes=None, progress=tqdm, logPrint=True, numjobs=util.PhysicalCoreCount(), projector=proj.Projector_allC(), keepNative=False):
     singleJob = (len(projection.shape) == 2)
     if singleJob:   # Cope with both a single 2D plane and an array of multiple 2D planes to process independently
         projection = projection[np.newaxis,:,:]
@@ -54,7 +54,7 @@ def BackwardProjectACC(hMatrix, projection, planes=None, progress=tqdm, logPrint
     else:
         return Backprojection
 
-def ForwardProjectACC(hMatrix, realspace, planes=None, progress=tqdm, logPrint=True, numjobs=util.PhysicalCoreCount(), projector=projector.Projector_allC(), keepNative=False):
+def ForwardProjectACC(hMatrix, realspace, planes=None, progress=tqdm, logPrint=True, numjobs=util.PhysicalCoreCount(), projector=proj.Projector_allC(), keepNative=False):
     singleJob = (len(realspace.shape) == 3)
     if singleJob:   # Cope with both a single 2D plane and an array of multiple 2D planes to process independently
         realspace = realspace[:,np.newaxis,:,:]
@@ -80,7 +80,7 @@ def ForwardProjectACC(hMatrix, realspace, planes=None, progress=tqdm, logPrint=T
     else:
         return TOTALprojection
 
-def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.PhysicalCoreCount(), projector=projector.Projector_allC(), im=None):
+def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.PhysicalCoreCount(), projector=proj.Projector_allC(), im=None):
     # Note:
     #  Htf is the *initial* backprojection of the camera image
     #  Xguess is the initial guess for the object
@@ -113,7 +113,7 @@ def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.Physical
     return projector.asnumpy(Xguess)
 
 
-def main(argv, projectorClass=projector.Projector_allC, maxiter=8, numParallel=32):
+def main(argv, projectorClass=proj.Projector_allC, maxiter=8, numParallel=32):
     #########################################################################
     # Test code for deconvolution
     #########################################################################
@@ -246,4 +246,4 @@ def main(argv, projectorClass=projector.Projector_allC, maxiter=8, numParallel=3
     return deconvolvedResult
 
 if __name__ == "__main__":
-    main(sys.argv, projectorClass=projector.Projector_allC)
+    main(sys.argv, projectorClass=proj.Projector_allC)
