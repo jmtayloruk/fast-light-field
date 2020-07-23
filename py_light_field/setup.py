@@ -3,6 +3,15 @@ import numpy	# So we can work out where the numpy headers live!
 import platform
 import os, sys
 
+# Check dependencies have been build
+if not os.path.exists('fftw-3.3.8/.libs/libfftw3f.a'):
+    if not os.path.exists('fftw-3.3.8'):
+        os.system('gzip -kd fftw-3.3.8.tar.gz; tar -xf fftw-3.3.8.tar')
+    os.system('cd fftw-3.3.8; ./configure --enable-float --enable-threads --enable-shared; make -j 2; cd ..')
+if not os.path.exists('fftw-3.3.8/.libs/libfftw3f.a'):
+    raise('An error occurred while building FFTW')
+    exit()
+
 # Work out if we should be building a 32 or 64 bit library
 # Apparently this "can be a bit fragile" on OS X:
 # http://stackoverflow.com/questions/1405913/how-do-i-determine-if-my-python-shell-is-executing-in-32bit-or-64bit-mode-on-os
