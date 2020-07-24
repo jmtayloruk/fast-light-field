@@ -5,6 +5,7 @@ py_light_field/test-py-light-field/test-py-light-field.xcodeproj/project.xcworks
 py_light_field/test-py-light-field/DerivedData/
 *.pyc
 piv-raw-data
+lff-venv
 PSFmatrix
 Data/03_Reconstructed/Left
 perf_diags

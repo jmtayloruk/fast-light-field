@@ -13,13 +13,6 @@ import light_field_integrands
 import jutils as util
 import scanf_py3k as scanf
 
-# Determine how many parallel threads we should run for our calculations.
-# I want this to be based on the number of physical cores (i.e. without hyperthreading).
-# There are only tiny incremental gains from going to hyperthreading, presumably because
-# this code is highly cpu-bound.
-numJobs = util.PhysicalCoreCount()
-print('Will distribute work across {0} cores'.format(numJobs))
-
 # Utility functions for monitoring memory usage
 
 def getsize(obj, returnIfBlacklisted=None, seen_ids=set()):
@@ -72,6 +65,13 @@ def GeneratePSF(M, NA, MLPitch, Nnum, OSR, n, fml, lam, zmin, zmax, zspacing, no
         warnings.warn('We are not normalising the PSF. It should be normalised for standard deconvolution!')
     if reproduceMaxBug:
         warnings.warn('Reproducing matlab bug!')
+
+    # Determine how many parallel threads we should run for our calculations.
+    # I want this to be based on the number of physical cores (i.e. without hyperthreading).
+    # There are only tiny incremental gains from going to hyperthreading, presumably because
+    # this code is highly cpu-bound.
+    numJobs = util.PhysicalCoreCount()
+    print('Will distribute PSF generation work across {0} cores'.format(numJobs))
 
     if verbose:
         PrintMemoryUsage(thresh=100e6)
