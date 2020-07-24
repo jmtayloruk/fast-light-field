@@ -95,48 +95,6 @@ def GeneratePSF(M, NA, MLPitch, Nnum, OSR, n, fml, lam, zmin, zmax, zspacing, no
         # Currently, I just treat the variables as globals, rather than accepting them all as parameters to this function.
         return 'M%gNA%gMLPitch%gfml%gfrom%gto%gzspacing%gNnum%glambda%gn%g'%(M, NA, MLPitch*1e6, fml*1e6, zmin*1e6, zmax*1e6, zspacing*1e6, Nnum, lam*1e9, n)
 
-    def LoadRawMatrixData(matPath, expectedNnum):
-        # Load the matrices from the .mat file.
-        # This is slow since they must be decompressed and are rather large! (9.5GB each, in single-precision FP)
-        hReducedShape = []
-        htReducedShape = []
-        with h5py.File(matPath, 'r') as f:
-            print('Load CAindex')
-            sys.stdout.flush()
-            _CAindex = f['CAindex'].value.astype('int')
-            _Nnum = f['Nnum'].value.astype('int')
-            if _Nnum != expectedNnum:
-                warnings.warn('Nnum={0} from file does not match current global variable value {1}'.format(_Nnum, expectedNnum))
-            try:
-                reducedMatrix = f['ReducedMatrix'].value.astype('int')
-            except:
-                print('No reduced flag - will assume this is a full matrix')
-                reducedMatrix = False
-                
-            print('Load H')
-            sys.stdout.flush()
-            _H = f['H'].value.astype('float32')
-            
-            aabbRange = int((_Nnum+1)/2)        
-            if reducedMatrix:
-                assert(_H.shape[2] == aabbRange)            
-            else:
-                assert(_H.shape[2] == _Nnum)
-            
-            for cc in range(_H.shape[0]):
-                HCC =  _H[cc, :aabbRange, :aabbRange, _CAindex[0,cc]-1:_CAindex[1,cc], _CAindex[0,cc]-1:_CAindex[1,cc]]
-                hReducedShape.append(HCC.shape)
-
-            print('Load Ht')
-            sys.stdout.flush()
-            _Ht = f['Ht'].value.astype('float32')
-
-            for cc in range(_Ht.shape[0]):
-                HtCC =  _Ht[cc, :aabbRange, :aabbRange, _CAindex[0,cc]-1:_CAindex[1,cc], _CAindex[0,cc]-1:_CAindex[1,cc]]
-                htReducedShape.append(HtCC.shape)
-                        
-        return (_H, _Ht, hReducedShape, htReducedShape, _CAindex)
-
     # Part 0: imaging PSF
 
     def calcPSFFT(p3, fobj, NA, x1space, scale, lam, fml, M, n):     #√
@@ -636,10 +594,7 @@ def GeneratePSF(M, NA, MLPitch, Nnum, OSR, n, fml, lam, zmin, zmax, zspacing, no
     if True:
         # Force very small values (in each separate plane) to zero
         tol = 0.005
-        # JT TODO: I think this may be slow due to the copying back at the end.
-        # I am almost certain that that is unnecessary in python, and could be removed.
-        # (or actually, is it really any sort of bottleneck? I think not...)
-        for i in tqdm(range(H.shape[4]), desc='clipping to zero'):
+        for i in tqdm(range(H.shape[4]), desc='Clipping to zero'):
             H4Dslice = H[:,:,:,:,i]
             H4Dslice[H4Dslice < (tol*np.max(H4Dslice))] = 0
         del H4Dslice   # This is actually just a view into H, but I delete it to avoid it showing up in memory usage
@@ -860,7 +815,7 @@ def GeneratePSFFromFilePath(filePath, OSR=3):
 
     try:
         (M, NA, MLPitch, fml, zmin, zmax, zspacing, Nnum, lam, n) = scanf.sscanf(suffix, 'M%fNA%fMLPitch%ffml%ffrom%fto%fzspacing%fNnum%dlambda%fn%f')
-    except:
+    except:  # Yes, I do want to catch *all* exceptions - who knows what sorts of exceptions sscanf might throw, depending on the filename we provide it with...
         print('Failed to parse filename %s' % filename)
         raise
     

@@ -97,7 +97,9 @@ def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.Physical
     if Xguess is None:
         # Caller has not provided the initial guess - we will use the backprojection as the initial guess
         Xguess = Htf.copy()
-
+    else:
+        # Caller has provided initial guess
+        Xguess = projector.asnative(Xguess)
     for i in tqdm(range(maxIter), desc='RL deconv'):
         t0 = time.time()
         HXguess = ForwardProjectACC(hMatrix, Xguess, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector, keepNative=True)
@@ -196,17 +198,17 @@ def main(argv, projectorClass=proj.Projector_allC, maxiter=8, numParallel=32):
 
         print('Running (%d planes x2)'%numPlanesToUse)
         t1 = time.time()
-        temp = BackwardProjectACC(hMatrix, candidate, planes=None, numjobs=1, logPrint=False)
-        dualRoundtrip = ForwardProjectACC(hMatrix, temp, planes=None, logPrint=False)
+        temp = BackwardProjectACC(hMatrix, candidate, planes=None, numjobs=1, logPrint=False, projector=projector)
+        dualRoundtrip = ForwardProjectACC(hMatrix, temp, planes=None, logPrint=False, projector=projector)
         print('New method took', time.time()-t1)
 
         # Run for the individual images, and check we get the same result as with the dual round-trip
-        temp = BackwardProjectACC(hMatrix, candidate[0], planes=None, numjobs=1, logPrint=False)
-        firstRoundtrip = ForwardProjectACC(hMatrix, temp, planes=None, numjobs=1, logPrint=False)
+        temp = BackwardProjectACC(hMatrix, candidate[0], planes=None, numjobs=1, logPrint=False, projector=projector)
+        firstRoundtrip = ForwardProjectACC(hMatrix, temp, planes=None, numjobs=1, logPrint=False, projector=projector)
         testOutcomes += util.CheckComparison(firstRoundtrip, dualRoundtrip[0], 1e-6, 'Compare single and dual deconvolution', '<<1')
 
-        temp = BackwardProjectACC(hMatrix, candidate[1], planes=None, numjobs=1, logPrint=False)
-        secondRoundtrip = ForwardProjectACC(hMatrix, temp, planes=None, numjobs=1, logPrint=False)
+        temp = BackwardProjectACC(hMatrix, candidate[1], planes=None, numjobs=1, logPrint=False, projector=projector)
+        secondRoundtrip = ForwardProjectACC(hMatrix, temp, planes=None, numjobs=1, logPrint=False, projector=projector)
         testOutcomes += util.CheckComparison(secondRoundtrip, dualRoundtrip[1], 1e-6, 'Compare single and dual deconvolution', '<<1')
 
     if 'parallel-threading' in argv:
@@ -215,14 +217,41 @@ def main(argv, projectorClass=proj.Projector_allC, maxiter=8, numParallel=32):
         # there are small numerical variations depending on how the parallelism occurs in each run.
         # I have had to relax the condition for the 1 vs 3 or 6 thread comparison, but I think that is still not a cause for concern.
         print("Testing multithreaded execution:")
-        result1 = BackwardProjectACC(hMatrix, inputImage, planes=[0], numjobs=1, logPrint=False)
-        result3 = BackwardProjectACC(hMatrix, inputImage, planes=[0], numjobs=3, logPrint=False)
+        result1 = BackwardProjectACC(hMatrix, inputImage, planes=[0], numjobs=1, logPrint=False, projector=projector)
+        result3 = BackwardProjectACC(hMatrix, inputImage, planes=[0], numjobs=3, logPrint=False, projector=projector)
         testOutcomes += util.CheckComparison(result1, result3, 1e-3, 'Compare 1 and 3 threads', '<1')
-        result6 = BackwardProjectACC(hMatrix, inputImage, planes=[0], numjobs=6, logPrint=False)
+        result6 = BackwardProjectACC(hMatrix, inputImage, planes=[0], numjobs=6, logPrint=False, projector=projector)
         testOutcomes += util.CheckComparison(result1, result6, 1e-3, 'Compare 1 and 6 threads', '<1')
 
     print('Regression tests complete (passed %d/%d)' % (testOutcomes[0], testOutcomes[1]))
     return testOutcomes
 
+try:
+    import pycuda.driver as cuda
+    import pynvml
+    def PrintKeyGPUAttributes():
+      # For some reason this does not like running before I have done anything else.
+      # TODO: I should work out why this is.
+      # Presumably there is some sort of initialisation that is missing.
+      # If I run some of my code and then run this, it works.
+      for devicenum in range(cuda.Device.count()):
+        device=cuda.Device(devicenum)
+        attrs=device.get_attributes()
+        print('{0} threads x {1} processors'.format(attrs[cuda.device_attribute.MAX_THREADS_PER_MULTIPROCESSOR], attrs[cuda.device_attribute.MULTIPROCESSOR_COUNT]))
+        print('clock speed {0}GHz, mem speed {1}GHz x {2}B = {3:.2f}GB/s, L2 {4:.2f}MB'.format(attrs[cuda.device_attribute.CLOCK_RATE]*1e3/1e9, attrs[cuda.device_attribute.MEMORY_CLOCK_RATE]*1e3/1e9, attrs[cuda.device_attribute.GLOBAL_MEMORY_BUS_WIDTH]//8, attrs[cuda.device_attribute.MEMORY_CLOCK_RATE]*attrs[cuda.device_attribute.GLOBAL_MEMORY_BUS_WIDTH]/8e6, attrs[cuda.device_attribute.L2_CACHE_SIZE]/1e6))
+        pynvml.nvmlInit()
+        h = pynvml.nvmlDeviceGetHandleByIndex(0)
+        info = pynvml.nvmlDeviceGetMemoryInfo(h)
+        print('Total GPU RAM {0:.2f}GB'.format(info.total/1e9))
+    hasGPU = True
+except ModuleNotFoundError:
+    hasGPU = False
+
 if __name__ == "__main__":
-    main(sys.argv, projectorClass=proj.Projector_allC)
+    main(sys.argv)
+    if hasGPU:
+        proj.gDebugChecks = False
+        proj.gSynchronizeAfterKernelCalls =False 
+        main(sys.argv, projectorClass=proj.Projector_gpuHelpers, maxiter=1)
+        PrintKeyGPUAttributes()
+        main(sys.argv, projectorClass=proj.Projector_gpuHelpers)

@@ -9,8 +9,8 @@ import warnings
 
 try:
     import cupy as cp
-except:
-    print('Unable to import cupy - no GPU support will be available')
+except ModuleNotFoundError:
+    pass
 
 if False:
     # Old FFT code

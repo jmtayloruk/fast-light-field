@@ -16,7 +16,7 @@ try:
     import cupyx.scipy.fftpack
     import pycuda.driver as cuda
     gpuAvailable = True
-except:
+except ModuleNotFoundError:
     #print('Unable to import cupy - no GPU support will be available')
     gpuAvailable = False
 

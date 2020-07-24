@@ -6,7 +6,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import jutils as util
-import lfdeconv, psfmatrix, lfimage, projector
+import lfdeconv, psfmatrix, lfimage
+import projector as proj
 import py_light_field as plf
 
 def AnalyzeTestResults(numJobsUsed):
@@ -120,14 +121,16 @@ def AnalyzeTestResults2(statsFilePath):
     plt.legend(loc=2)
     plt.show()
 
-def main(argv, inputImage=None, batchSize=30, matPath=None, planesToProcess=None, numJobs=plf.GetNumThreadsToUse(), cacheFH=False, printProfileOutput=True, projectorClass=projector.Projector_allC):
+def main(argv, inputImage=None, batchSize=30, matPath=None, planesToProcess=None, numJobs=plf.GetNumThreadsToUse(), cacheFH=False, printProfileOutput=True, projectorClass=proj.Projector_allC):
     #########################################################################
     # Test code for performance measurement
     #########################################################################
     if matPath is None:
-        matPath = 'PSFmatrix/PSFmatrix_M40NA0.95MLPitch150fml3000from-13to0zspacing0.5Nnum15lambda520n1.0.mat'
+        matPath = 'PSFmatrix/fdnormPSFmatrix_M40NA0.95MLPitch150fml3000from-13to0zspacing0.5Nnum15lambda520n1.0.mat'
     hMatrix = psfmatrix.LoadMatrix(matPath)
-    projector = projector=projectorClass()
+    if ('gpu' in argv):
+        projectorClass = proj.Projector_gpuHelpers
+    projector = projectorClass()
     projector.cacheFH = cacheFH
 
     if inputImage is None:
@@ -170,7 +173,7 @@ def main(argv, inputImage=None, batchSize=30, matPath=None, planesToProcess=None
         pr = cProfile.Profile()
         pr.enable()
         ru1 = util.cpuTime('both')
-        temp = projector.BackwardProjectACC_old(_Ht, inputImage, _CAindex, planes=planesToProcess)
+        temp = proj.BackwardProjectACC_old(_Ht, inputImage, _CAindex, planes=planesToProcess)
         ru2 = util.cpuTime('both')
         print('overall delta rusage:', ru2-ru1)
         pr.disable()

@@ -6,7 +6,7 @@ import generate_psf as psf
 
 try:
     import cupy as cp
-except:
+except ModuleNotFoundError:
     # If cupy is *not* present then we should not find ourselves in the position of calling any cupy functions.
     # The caller would have to do something *really* weird for that to happen.
     pass
@@ -130,7 +130,7 @@ def LoadRawMatrixData(matPath, expectedNnum=None, createPSF=True):
             warnings.warn('Nnum={0} from file does not match expected value {1}'.format(Nnum, expectedNnum))
         try:
             reducedMatrix = f['ReducedMatrix'][()].astype('int')
-        except:
+        except KeyError:
             print('No reduced flag - will assume this is a full matrix')
             reducedMatrix = False
         
@@ -166,7 +166,7 @@ def LoadRawMatrixData(matPath, expectedNnum=None, createPSF=True):
 
     return (_H, _Ht, _CAindex, hPathFormat, htPathFormat, hReducedShape, htReducedShape)
 
-def LoadMatrix(matPath, numZ=None, zStart=0, forceRegeneration = False, cacheH=False, createPSF=False):
+def LoadMatrix(matPath, numZ=None, zStart=0, forceRegeneration=False, cacheH=False, createPSF=False):
     # Obtain a HMatrix object based on a .mat file
     # (although we will jump straight to previously-generated memmap backing files if they exist)
     # This is the function that user code should normally be calling
@@ -178,10 +178,10 @@ def LoadMatrix(matPath, numZ=None, zStart=0, forceRegeneration = False, cacheH=F
 
     try:
         if forceRegeneration:
-            raise('transferring control to except branch to force regeneration')
+            raise FileNotFoundError('transferring control to except branch to force regeneration')
         hReducedShape = np.load(mmapPath+'/HReducedShape.npy')
         htReducedShape = np.load(mmapPath+'/HtReducedShape.npy')
-    except:
+    except FileNotFoundError:
         print("Failed to load array shapes. There are probably no memmap files either.")
         print("We will now try to generate them from scratch from the .mat file, which will take a little while")
         (_, _, _, hPathFormat, htPathFormat, hReducedShape, htReducedShape) = LoadRawMatrixData(matPath)
