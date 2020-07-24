@@ -129,7 +129,7 @@ def main(argv, projectorClass=proj.Projector_allC, maxiter=8, numParallel=32):
     inputImage = lfimage.LoadLightFieldTiff('Data/02_Rectified/exampleData/20131219WORM2_small_full_neg_X1_N15_cropped_uncompressed.tif')
     # Note that the PSF matrix we are using here is not normalised in the way I believe it should be.
     # This is purely intended to replicate the previous results obtained by Prevedel's code.
-    hMatrix = psfmatrix.LoadMatrix('PSFmatrix/reducedBuggyPSFmatrix_M40NA0.95MLPitch150fml3000from-26to0zspacing2Nnum15lambda520n1.mat', createPSF=True)
+    hMatrix = psfmatrix.LoadMatrix('PSFmatrix/reducedPSFmatrix_M40NA0.95MLPitch150fml3000from-24to0zspacing3Nnum15lambda520n1.mat', createPSF=True)
     print('** Tests will run with projector type: {0} **'.format(projectorClass().name))
     deconvolvedResult = None
     testOutcomes = np.zeros((2))
@@ -145,16 +145,9 @@ def main(argv, projectorClass=proj.Projector_allC, maxiter=8, numParallel=32):
         print('== Running basic (single-threaded backprojection) ==')
 	    # Run my back-projection code (single-threaded) on a cropped version of Prevedel's data
         Htf = BackwardProjectACC(hMatrix, inputImage, planes=None, numjobs=1, progress=None, logPrint=False, projector=projector)
-        if True:
-            definitive = tifffile.imread('Data/03_Reconstructed/exampleData/definitive_worm_crop_X15_backproject.tif')
-            definitive = np.transpose(definitive, axes=(0,2,1))
-            testOutcomes += util.CheckComparison(definitive[4], Htf[4]*10, 1.0, 'Compare against matlab result')
-        else:
-            # I am not totally sure what the purpose of this next code is,
-            # My guess is that this is an output I generated from my code, after first checking consistency with Matlab.
-            # I am not sure exactly what the purpose of it is, though - why is this better than using the actual matlab tiff?
-            definitive = np.load('semi-definitive.npy')
-            testOutcomes += util.CheckComparison(definitive, Htf, 1.0, 'Compare against matlab result')
+        definitive = tifffile.imread('Data/03_Reconstructed/exampleData/definitive_worm_crop_X15_backproject.tif')
+        definitive = np.transpose(definitive, axes=(0,2,1))
+        testOutcomes += util.CheckComparison(definitive, Htf*10, 1.0, 'Compare against matlab result')
 
     if 'prime' in argv:
         # Run a single RL iteration to prime things (my caches, GPU FFT plans, etc) for subsequent runs (since we may be interested in timing/profiling)
@@ -187,8 +180,8 @@ def main(argv, projectorClass=proj.Projector_allC, maxiter=8, numParallel=32):
         # Code to test simultaneous deconvolution of an image pair
         # This does not test overall correctness, but it runs with two different (albeit proportional)
         # images and checks that the result matches the result for two totally independent calls on a single array.
-        print("Testing image pair deconvolution:")
-        candidate = np.tile(inputImage[np.newaxis,0,0], (2,1,1))
+        print('Testing image pair deconvolution:')
+        candidate = np.tile(inputImage[np.newaxis,:,:], (2,1,1))
         candidate[1] *= 1.4
         planesToUse = None   # Use all planes
         if planesToUse is None:
@@ -205,18 +198,18 @@ def main(argv, projectorClass=proj.Projector_allC, maxiter=8, numParallel=32):
         # Run for the individual images, and check we get the same result as with the dual round-trip
         temp = BackwardProjectACC(hMatrix, candidate[0], planes=None, numjobs=1, logPrint=False, projector=projector)
         firstRoundtrip = ForwardProjectACC(hMatrix, temp, planes=None, numjobs=1, logPrint=False, projector=projector)
-        testOutcomes += util.CheckComparison(firstRoundtrip, dualRoundtrip[0], 1e-6, 'Compare single and dual deconvolution', '<<1')
+        testOutcomes += util.CheckComparison(firstRoundtrip, dualRoundtrip[0], 1e-6, 'Compare single and dual deconvolution #1', '<<1')
 
         temp = BackwardProjectACC(hMatrix, candidate[1], planes=None, numjobs=1, logPrint=False, projector=projector)
         secondRoundtrip = ForwardProjectACC(hMatrix, temp, planes=None, numjobs=1, logPrint=False, projector=projector)
-        testOutcomes += util.CheckComparison(secondRoundtrip, dualRoundtrip[1], 1e-6, 'Compare single and dual deconvolution', '<<1')
+        testOutcomes += util.CheckComparison(secondRoundtrip, dualRoundtrip[1], 1e-6, 'Compare single and dual deconvolution #2', '<<1')
 
     if 'parallel-threading' in argv:
         # Run to test parallelization
         # Note that I think the reason I do not currently have code here to check for correctness is that
         # there are small numerical variations depending on how the parallelism occurs in each run.
         # I have had to relax the condition for the 1 vs 3 or 6 thread comparison, but I think that is still not a cause for concern.
-        print("Testing multithreaded execution:")
+        print('Testing multithreaded execution:')
         result1 = BackwardProjectACC(hMatrix, inputImage, planes=[0], numjobs=1, logPrint=False, projector=projector)
         result3 = BackwardProjectACC(hMatrix, inputImage, planes=[0], numjobs=3, logPrint=False, projector=projector)
         testOutcomes += util.CheckComparison(result1, result3, 1e-3, 'Compare 1 and 3 threads', '<1')

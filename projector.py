@@ -404,7 +404,7 @@ class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
         # Set the block sizes we use when calling our custom GPU kernels.
         # To *ensure* we can make that a block size that performs well, we will deliberately over-allocate space in our accumlator array,
         # which then allows us to use a nice round block size even if it overruns the array in the x dimension
-        if gBlockSelection is 'fixed':
+        if gBlockSelection == 'fixed':
             # Use global variables to rigidly set the block sizes
             # (Note that this will not work well when doing a full projection, where each z plane will have different array shapes.
             #  This mode is only really useful when running test cases where we have exact control over the inputs)
@@ -412,7 +412,7 @@ class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
             self.mirrorYBlocks = gMirrorYBlocks
             self.expandXBlocks = gExpandXBlocks
             self.calculateRowsBlocks = gCalculateRowsBlocks
-        elif gBlockSelection is 'auto':
+        elif gBlockSelection == 'auto':
             # Automatically select suitable block sizes, based on the array shapes we will be working with.
             # These block factors seem to perform reasonably well, but ideally I would write some code that would auto-calibrate
             # and work out the best block factors in each scenario. It might well be that this can be improved on.
@@ -422,7 +422,7 @@ class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
             self.mirrorYBlocks = BestBlockFactors(self.fshape, target=(1, 15, 15))
             self.expandXBlocks = BestBlockFactors((numTimepoints, self.reducedShape[-2], self.rfshape_xPadded[-1]), target=gExpandXTargetBlocks)
             self.calculateRowsBlocks = BestBlockFactors((numTimepoints, self.rfshape[-2], self.rfshape_xPadded[-1]), target=gCalculateRowsTargetBlocks, max=gCalculateRowsMaxBlocks)
-        elif gBlockSelection is 'measure':
+        elif gBlockSelection == 'measure':
             mirrorYWorkShape = (1, self.fshape[0], self.fshape[1])
             expandWorkShape = (projection.shape[0],self.reducedShape[0],self.rfshape_xPadded[1])
             calculateRowsWorkShape = (projection.shape[0],self.rfshape[0],self.rfshape_xPadded[1])

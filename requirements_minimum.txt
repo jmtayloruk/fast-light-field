@@ -1,3 +1,4 @@
+# I have downgraded some of these to support python3.5 (tested on beag-shuil)
 Cython>=0.29.21
 h5py>=2.10.0
 numpy>=1.18.5
@@ -8,3 +9,4 @@ six>=1.15.0
 tifffile>=2019.7.26.2
 tqdm>=4.48.0
 joblib>=0.14.1
+matplotlib>=3.0.3
