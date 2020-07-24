@@ -237,7 +237,7 @@ try:
         info = pynvml.nvmlDeviceGetMemoryInfo(h)
         print('Total GPU RAM {0:.2f}GB'.format(info.total/1e9))
     hasGPU = True
-except ModuleNotFoundError:
+except (ModuleNotFoundError, ImportError):
     hasGPU = False
 
 if __name__ == "__main__":

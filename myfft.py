@@ -9,7 +9,7 @@ import warnings
 
 try:
     import cupy as cp
-except ModuleNotFoundError:
+except (ModuleNotFoundError, ImportError):
     pass
 
 if False:
