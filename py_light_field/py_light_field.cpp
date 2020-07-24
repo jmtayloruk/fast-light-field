@@ -1238,9 +1238,6 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
         }
         long numZPlanes = PyList_Size(workList);
         
-//        printf("Called ProjectForZList. useCache:%d, cache size %zd\n", useCache, gFHCache.size());
-
-        double t0 = GetTime();
         std::vector<WorkItem *> work[kNumWorkTypes];
         std::vector<JMutex*> allMutexes;
         std::vector<fftwf_plan> allPlans;
@@ -1357,20 +1354,12 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
             std::stable_sort(work[w].begin(), work[w].end(), WorkItem::Compare);
         
         // Do the actual hard work (parallelised)
-        TimeStruct before;
-        double t1 = GetTime();
         RunWork(work);
-        double t2 = GetTime();
-        TimeStruct after;
         CleanUpWork(work, gThreadFileName, "w", useCache);
         for (size_t i = 0; i < allMutexes.size(); i++)
             delete allMutexes[i];
         for (size_t i = 0; i < allPlans.size(); i++)
             fftwf_destroy_plan(allPlans[i]);
-        double t3 = GetTime();
-        double utime = TimeStruct::Secs(after._self.ru_utime)-TimeStruct::Secs(before._self.ru_utime);
-        double stime = TimeStruct::Secs(after._self.ru_stime)-TimeStruct::Secs(before._self.ru_stime);
-    //    printf("ProjectForZList took %.3lf %.3lf %.3lf. User work %.3lf system %.3lf. Parallelism %.2lf\n", t1-t0, t2-t1, t3-t2, utime, stime, (utime+stime)/(t2-t1));
         return resultList;
     }
     catch (const std::invalid_argument& e)
@@ -1421,8 +1410,6 @@ extern "C" PyObject *InverseRFFTList(PyObject *self, PyObject *args)
         long numZPlanes = PyList_Size(workList);
         PyObject *resultList = PyList_New(numZPlanes);
         
-        double t0 = GetTime();
-
         std::vector<WorkItem *> work[kNumWorkTypes];
         std::vector<JMutex*> allMutexes;
         std::vector<fftwf_plan> allPlans;
