@@ -8,8 +8,8 @@ def ProcessBatch(projector, hMatrix, timepoints, destDir, maxIter):
     # Ensure that the destination directory exists
     try:
         os.mkdir(destDir)
-    except:
-        pass  # Probably the directory already exists
+    except FileExistsError:
+        pass
 
     # Load the input images
     inputImages = []

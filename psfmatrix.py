@@ -105,8 +105,8 @@ def LoadRawMatrixData(matPath, expectedNnum=None, createPSF=True):
     try:
         # Ensure the folder we will use to store our mmapped matrices actually exists
         os.mkdir(mmapPath)
-    except:
-        pass  # Probably the directory already exists
+    except FileExistsError:
+        pass
 
     if createPSF:
         # Generate the PSF file if it does not exist (slow!)

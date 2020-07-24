@@ -73,7 +73,8 @@ def GeneratePSF(M, NA, MLPitch, Nnum, OSR, n, fml, lam, zmin, zmax, zspacing, no
     if reproduceMaxBug:
         warnings.warn('Reproducing matlab bug!')
 
-    PrintMemoryUsage(thresh=100e6)
+    if verbose:
+        PrintMemoryUsage(thresh=100e6)
 
     eqtol = 1e-10;
 
@@ -433,7 +434,8 @@ def GeneratePSF(M, NA, MLPitch, Nnum, OSR, n, fml, lam, zmin, zmax, zspacing, no
     for eachpt in tqdm(range(numpts), desc='Computing PSFs'):
         PSFFunc(eachpt)
 
-    PrintMemoryUsage(thresh=100e6)
+    if verbose:
+        PrintMemoryUsage(thresh=100e6)
 
     ### Digression: accuracy of integration
     #Strangely, and rather worryingly, scipy.integrate.quad seems to misbehave with certain very specific inputs. As demonstrated below, if the tolerance is 1e-10 the returned result can be wrong by 2% (despite reporting that the error is ~1e-10). I don't understand enough about what it is doing to know why on earth this might be happening! I have increased the tolerance to 1e-12 and that seems to have made the problem go away, but it is still a little worrying not to understand why it is happening (and whether 1e-12 is definitely safe under all circumstances...).
@@ -627,8 +629,9 @@ def GeneratePSF(M, NA, MLPitch, Nnum, OSR, n, fml, lam, zmin, zmax, zspacing, no
     x2space = x1space.copy()
     x1space = x1space[CP_p]
     x2space = x2space[CP_p]
-    # Monitor the lead-in time because I think I once saw some VM thrashing here, for some reason
-    print('Lead-in took %.2fs'%(time.time()-t1))
+    if verbose:
+        # Monitor the lead-in time because I think I once saw some VM thrashing here, for some reason
+        print('Lead-in took %.2fs'%(time.time()-t1))
 
     if True:
         # Force very small values (in each separate plane) to zero
@@ -642,7 +645,8 @@ def GeneratePSF(M, NA, MLPitch, Nnum, OSR, n, fml, lam, zmin, zmax, zspacing, no
         del H4Dslice   # This is actually just a view into H, but I delete it to avoid it showing up in memory usage
     else:
         warnings.warn('Not clipping to zero')
-    print('Took %.2fs'%(time.time()-t1))
+    if verbose:
+        print('Took %.2fs'%(time.time()-t1))
 
     # JT: normalise each individual PSF, so that power is conserved during forward-projection
     if normalisePSF:
@@ -673,11 +677,13 @@ def GeneratePSF(M, NA, MLPitch, Nnum, OSR, n, fml, lam, zmin, zmax, zspacing, no
     # Free up memory from variables we have now finished with.
     # These arrays are smaller than the H and Ht matrices,
     # so this is only really any help if we are close to exhausting the available RAM.
-    PrintMemoryUsage(' before freeing memory', thresh=100e6)
+    if verbose:
+        PrintMemoryUsage(' before freeing memory', thresh=100e6)
     if True:
         del LFpsfWAVE_STACK
         del psfWAVE_STACK
-        PrintMemoryUsage(' after freeing memory', thresh=100e6)
+        if verbose:
+            PrintMemoryUsage(' after freeing memory', thresh=100e6)
 
     # Part 3: calculate Ht
 
@@ -741,7 +747,7 @@ def GeneratePSF(M, NA, MLPitch, Nnum, OSR, n, fml, lam, zmin, zmax, zspacing, no
         imcenterinit_m = imcenter_m - int(np.ceil(Nnum/2))
 
         Ht = np.zeros_like(_H)
-        for aa in tqdm(range(x1Middle)):
+        for aa in tqdm(range(x1Middle), desc='Computing Transpose')
             for bb in tqdm(range(x1Middle), leave=False):
                 temp = zeroprojection.copy().astype('float32')
                 temp[imcenterinit_m+aa, imcenterinit_m+bb] = 1  #√ same arithmetic works for me, because aa starts at 0 instead of 1
@@ -754,18 +760,13 @@ def GeneratePSF(M, NA, MLPitch, Nnum, OSR, n, fml, lam, zmin, zmax, zspacing, no
         return Ht
 
     #%%%%%%%%%%%% Calculate Ht (transpose for backprojection) %%%%%%%%%
-    print('Computing Transpose (3/3)')
-    if True:
-        # JT: my new code, massively faster
-        Ht = calcHt_new(H)
-    else:
-        warnings.warn('Not computing transpose!')
-        Ht = H.copy()
-    Ht = Ht.astype('float32')
+    # JT: my new code, massively faster
+    Ht = calcHt_new(H)
     # Reminder: I should not be separately normalising Ht,
     # I should just be using the normalisation already present in H (which is what I do here, implicitly)
 
-    PrintMemoryUsage(thresh=100e6)
+    if verbose:
+        PrintMemoryUsage(thresh=100e6)
 
     # Save the matrices we have generated
     #### File size
@@ -782,9 +783,11 @@ def GeneratePSF(M, NA, MLPitch, Nnum, OSR, n, fml, lam, zmin, zmax, zspacing, no
         # but to avoid confusion(?) I just generate the .mat file here.
         # My deconvolution code will auto-generate the files it actually needs, when it sees they don't exist yet.
         matPath = '%s_%s.mat'%(matPathStem, MatrixFileString())
-        print('Saving to', matPath)
+        try:
+            os.mkdir(os.path.dirname(matPath))
+        except FileExistsError:
+            pass
         with h5py.File(matPath, 'w') as f:
-            print('Write parameters')
             f['M'] = M
             f['NA'] = NA
             f['MLPitch'] = MLPitch

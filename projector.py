@@ -24,8 +24,8 @@ except:
 # Ensure existence of the directory we will use to log performance diagnostics
 try:
     os.mkdir('perf_diags')
-except:
-    pass  # Probably the directory already exists
+except FileExistsError:
+    pass
 
 #########################################################################
 # Global variables that affect GPU kernel block selection (see code below for usage)
