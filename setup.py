@@ -39,7 +39,7 @@ if __name__ == "__main__":
             gpuAvailable = False
 
         # Tests that verify fast implementations against my slow reference python implementation
-        testOutcomes = proj.selfTest()
+        testOutcomes = proj.selfTest(verbose=False)
 
         # Tests that compare against reconstructions from Prevedel's MATLAB
         if False:

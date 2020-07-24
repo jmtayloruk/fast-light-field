@@ -974,7 +974,7 @@ def BackwardProjectACC_old(Ht, projection, CAindex, progress=tqdm, planes=None):
 #########################################################################
 # Self-test code: test the backprojection code against a slower definitive version
 #########################################################################
-def selfTest():
+def selfTest(verbose=True):
     # The strictest self-test would be against the original (very simple) code I wrote,
     # but that is very slow and requires us to load in the H matrices in a slow manner.
     # As a result, normally I would be satisfied to test against the newer, but still
@@ -1005,11 +1005,11 @@ def selfTest():
     for projectorClass in classesToTest:
         print(' Testing class:', projectorClass.__name__)
         for bk in [True, False]:
-            print(' === bk', bk)
+            print('  === bk {0} ==='.format(bk))
             # Test both square and non-square, since they use different code
             for numTimepoints in [2]:
               for shape in [(numTimepoints,150,150), (numTimepoints,150,300), (numTimepoints,300,150)]:
-                print(' === shape', shape)
+                print('  === shape {0} ==='.format(shape))
                 testHMatrix = psfmatrix.LoadMatrix(matPath, numZ=1, zStart=0, createPSF=True)   # Needs to be in the loop here, because caching is confused by changing the image shape
                 testProjection = np.random.random(shape).astype(np.float32)
                 # Start by running old, definitive code that we trust
@@ -1022,7 +1022,8 @@ def selfTest():
                     t1 = time.time()
                     testResultOld = ProjectForZ(testHMatrix, bk, 0, testProjection, Projector_python, progress=util.noProgressBar)
                     t2 = time.time()
-                    print('Old took %.2fms'%((t2-t1)*1e3))
+                    if verbose:
+                        print('   Old took %.2fms'%((t2-t1)*1e3))
 
                 # Now run the code we are actually testing.
                 # Note that we call xxxProjectACC rather than ProjectForZ,
@@ -1037,16 +1038,10 @@ def selfTest():
                     else:
                         testResultNew = projector.ForwardProjectACC(testHMatrix, testProjection[np.newaxis,:,:,:], [0], progress=util.noProgressBar, logPrint=False, numjobs=1)
                     t2 = time.time()
-                print('New took %.2fms'%((t2-t1)*1e3))
+                if verbose:
+                    print('   New took %.2fms'%((t2-t1)*1e3))
                 # Compare the results that we got
-                comparison = np.max(np.abs(testResultOld - testResultNew))
-                print('  test result (should be <<1): %e' % comparison)
-                if (comparison > 1e-4):
-                    print("   -> WARNING: disagreement detected")
-                    testOutcomes += np.array([0, 1])
-                else:
-                    print("   -> OK")
-                    testOutcomes += np.array([1, 1])
+                testOutcomes += util.CheckComparison(testResultOld, testResultNew, 1e-4, description='   Test result', shouldBe='<<1', verbose=verbose)
 
     print('Projector tests against reference implementation complete (passed %d/%d)' % (testOutcomes[0], testOutcomes[1]))
     return testOutcomes

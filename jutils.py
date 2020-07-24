@@ -1,17 +1,20 @@
 import resource, psutil
 import numpy as np
 
-def CheckComparison(arrayA, arrayB, maxAcceptableDifference, description="Test result", shouldBe=None):
+def CheckComparison(arrayA, arrayB, maxAcceptableDifference, description="Test result", shouldBe=None, verbose=True):
     # Checks that arrayA and arrayB agree to within a reasonable absolute tolerance
     comparison = np.max(np.abs(arrayA - arrayB))
     if shouldBe is None:
         shouldBe = "< %f"%maxAcceptableDifference
-    print("%s (should be %s): %f" % (description, shouldBe, comparison))
-    if (comparison > maxAcceptableDifference):
+    fail = (comparison > maxAcceptableDifference)
+    if verbose or fail:
+        print("%s (should be %s): %g" % (description, shouldBe, comparison))
+    if fail:
         print(" -> WARNING: disagreement detected")
         return np.array([0, 1])  # 0/1 tests passed
     else:
-        print(" -> OK")
+        if verbose:
+            print(" -> OK")
         return np.array([1, 1])  # 1/1 tests passed
 
 def noProgressBar(work, desc=None, leave=True, **kwargs):
