@@ -74,13 +74,17 @@ int gNumThreadsToUse = NumActualProcessorsAvailable();        // But can be modi
         };
     };
 
-    /*  This exists as a landmine, to ensure that code that calls vanilla conj() fails at compile-time.
-        *Because* that code fails, I cannot just define this function, as far as I can see.
-        Instead we must call TYPE::conj() - see definition above, within complex_fast.  */
+#if 0
+    // This is helpful to me, but does not compile on all platforms (some compilers complain about redefining an existing function).
+    // As a result, this is disabled by default, but I may want to re-enable it temporarily if I have been working on this source file.
     template<class _Tp> static inline complex_fast<_Tp> conj(const complex<_Tp>& __c)
     {
+        /*  This exists as a landmine, to ensure that code that calls vanilla conj() fails at compile-time.
+         *Because* that code fails, I cannot just define this function, as far as I can see.
+         Instead we must call TYPE::conj() - see definition above, within complex_fast.  */
         return complex_fast<_Tp>(__c.real(), -__c.imag());
     }
+#endif
 
     template<class _Tp> complex_fast<_Tp> operator*(const complex_fast<_Tp>& __z, const complex_fast<_Tp>& __w)
     {
