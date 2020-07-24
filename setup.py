@@ -27,7 +27,7 @@ if __name__ == "__main__":
 
     if ('self-test' in args):
         # Run self-tests
-        print('=== RUNNING SELF-TESTS ===')
+        print('\033[1;32m=== RUNNING SELF-TESTS ===\033[0m')
         print('This will take several minutes to complete')
         import lfdeconv
         import projector as proj
@@ -53,4 +53,10 @@ if __name__ == "__main__":
             # TODO: but there seems to be something I need to tweak to get it working. The tests are passed if the correct PSF matrix already exists
             print('Note: I have disabled reference tests until I have worked out how to auto-generate PSF matrices that match matlab identically')
     
+        if testOutcomes[0] == testOutcomes[1]:
+            print('\033[1;32m')
+        else:
+            print('\033[1;31m')
         print('== Self-tests complete (passed %d/%d) ==' % (testOutcomes[0], testOutcomes[1]))
+        print('\033[0m')
+
