@@ -38,7 +38,7 @@ if __name__ == "__main__":
         try:
             import cupy as cp
             gpuAvailable = True
-        except (ModuleNotFoundError, ImportError):
+        except ImportError:
             print('No GPU support detected')
             gpuAvailable = False
 

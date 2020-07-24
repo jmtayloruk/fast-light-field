@@ -6,7 +6,7 @@ import generate_psf as psf
 
 try:
     import cupy as cp
-except (ModuleNotFoundError, ImportError):
+except ImportError:
     # If cupy is *not* present then we should not find ourselves in the position of calling any cupy functions.
     # The caller would have to do something *really* weird for that to happen.
     pass
