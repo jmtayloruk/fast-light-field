@@ -18,9 +18,13 @@ if __name__ == "__main__":
     
     if ('build' in args):
         # Build custom python modules
+        if '--user' in args:
+            userFlag = '--user'
+        else:
+            userFlag = ''
         for subfolder in ['light-field-integrands', 'py_light_field']:
             print('Build %s' % subfolder)
-            ret = os.system('cd %s; python setup.py install' % subfolder)
+            ret = os.system('cd %s; python3 setup.py install %s' % (subfolder, userFlag))
             if (ret != 0):
                 print('Failed to build \"%s\" - terminating setup process' % subfolder)
                 exit(ret)
