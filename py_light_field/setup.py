@@ -7,10 +7,10 @@ import os, sys
 if not os.path.exists('fftw-3.3.8/.libs/libfftw3f.a'):
     print('=== NOTE: building FFTW. This may take some time ===')
     if not os.path.exists('fftw-3.3.8'):
-        os.system('gzip -kd fftw-3.3.8.tar.gz; tar -xf fftw-3.3.8.tar')
-    os.system('cd fftw-3.3.8; ./configure --enable-float --enable-threads --enable-shared; sudo make -j 2 install; cd ..')
+        os.system('gzip -d < fftw-3.3.8.tar.gz | tar -x')
+    os.system('cd fftw-3.3.8; ./configure CFLAGS=-fPIC --enable-float --enable-threads; make -j$(nproc); cd ..')
 if not os.path.exists('fftw-3.3.8/.libs/libfftw3f.a'):
-    raise('An error occurred while building FFTW')
+    raise RuntimeError('An error occurred while building FFTW')
     exit()
 
 # Work out if we should be building a 32 or 64 bit library
