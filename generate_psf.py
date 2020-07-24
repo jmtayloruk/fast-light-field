@@ -747,7 +747,7 @@ def GeneratePSF(M, NA, MLPitch, Nnum, OSR, n, fml, lam, zmin, zmax, zspacing, no
         imcenterinit_m = imcenter_m - int(np.ceil(Nnum/2))
 
         Ht = np.zeros_like(_H)
-        for aa in tqdm(range(x1Middle), desc='Computing Transpose')
+        for aa in tqdm(range(x1Middle), desc='Computing Transpose'):
             for bb in tqdm(range(x1Middle), leave=False):
                 temp = zeroprojection.copy().astype('float32')
                 temp[imcenterinit_m+aa, imcenterinit_m+bb] = 1  #√ same arithmetic works for me, because aa starts at 0 instead of 1
@@ -814,13 +814,14 @@ def GeneratePSF(M, NA, MLPitch, Nnum, OSR, n, fml, lam, zmin, zmax, zspacing, no
             # Matlab works with Fortran-contiguous arrays, and writes them to disk as such.
             # Consequently, if I want my arrays (same indexing order but different contiguity)
             # to look exactly the same when saved to disk, I need to save their transpose.
-            print('Write H'); sys.stdout.flush()
-            print('H shape', H.shape)
+            if verbose:
+                print('Write H'); sys.stdout.flush()
             f['H'] = H.T
-            print('Write Ht'); sys.stdout.flush()
+            if verbose:
+                print('Write Ht'); sys.stdout.flush()
             f['Ht'] = Ht.T
-            print('Ht shape', Ht.shape)
-            print('Done'); sys.stdout.flush()
+            if verbose:
+                print('Done'); sys.stdout.flush()
 
     if normalisePSF:
         filePrefix = 'fdnorm'
