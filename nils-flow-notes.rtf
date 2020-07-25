@@ -1,0 +1,16 @@
+{\rtf1\ansi\ansicpg1252\cocoartf1404\cocoasubrtf470
+{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww17560\viewh12500\viewkind0
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 It looks like it\'92s the 20 z planes in the middle that are most susceptible to artefacts.\
+\
+I should probably start by doing a 3D flow analysis of the whole volume - although I think it is going to get fiddly because there is quite dramatic motion and motion that varies quite rapidly with position.\
+\
+In fact, the Right camera seems to be less cluttered, and would be a good place to start. Frames 48+49 [and frame 50 as well], the bottom-right quadrant of the image looks fairly easy to deal with (and actually only has action near the native focal plane anyway. I could probably reconstruct only the 30 central planes and I would hardly be losing anything. The box I should use runs from (361,342) to (722,703) [and that\'92s actually a square of 19x19 lenslets, after all my talk of not exploiting the transpose properties!], and I would use planes 25 to 55.\
+\
+The motion does seem quite different at different x positions - I suspect I will need a control point every 50 pixels, possibly even more dense (which would mean approx 16x16 control points in the volume). \
+\
+\ul One\ulnone  RL iteration of my cropped region (29 planes, 11 timepoints) took 29s. With only 2 timepoints it took 7.2s (58s for 8 iters). This is now that I cache F(H) and its transpose. Matlab takes 267s for one timepoint, i.e. 9.2x slower.\
+The optimization is still going to be\'85 slow! But hopefully just about workable. It runs perhaps 40% faster on beag-shuil, which I should remember. (I haven\'92t yet benchmarked it on brutha)}

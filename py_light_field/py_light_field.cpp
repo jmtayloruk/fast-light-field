@@ -504,7 +504,7 @@ public:
             }
             else if (benchmarkType == kBenchmarkWrite)
             {
-                TYPE val = _mem1[0]; // Ensure value is not known to compiler
+                TYPE val = _mem1[0]; // Ensure the value we will write is not known to compiler
                 for (int i = 0; i < numInBatch; i++)
                     _mem1[i] = val;
             }

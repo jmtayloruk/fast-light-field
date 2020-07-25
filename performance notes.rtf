@@ -1,11 +1,15 @@
 {\rtf1\ansi\ansicpg1252\cocoartf1404\cocoasubrtf470
 {\fonttbl\f0\fswiss\fcharset0 Helvetica;\f1\fnil\fcharset0 Menlo-Regular;}
 {\colortbl;\red255\green255\blue255;}
-\paperw11900\paperh16840\margl1440\margr1440\vieww18780\viewh22220\viewkind0
+\paperw11900\paperh16840\margl1440\margr1440\vieww19980\viewh21400\viewkind0
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
 \f0\fs24 \cf0 \ul \ulc0 Jun 2020 status\ulnone \
 The entire projection operation is implemented in pure C code, with a lot of work put in to making the parallelism efficient.\
+I have completely dropped multithreading for fftw, and am doing the threading myself. Multithreaded fftw seems to be buggy (or I am somehow using it wrong) - takes way 
+\i longer
+\i0  with multiple threads, in a rather random way.\
+I have included support for caching F(H) in my C code. It\'92s impractical for large problems, but just about fits in memory with the small problem I am looking at for PIV.\
 \
 \ul Code run times\ulnone \
 Command-line parameters are for lf_performance_analysis.py - 27 z planes). All times are on Mac Pro.\
@@ -19,9 +23,11 @@ profile-new: Single video frame:	50.7s\
 profile-new-batch: Batch of 10 video frames:	145s\
 profile-new-batch: Batch of 30 video frames:	339s (95% in C ProjectForZ)\
 	96s with 4 threads (3.5x speedup).\
-	59s with 8 threads (5.7x speedup). \
+	55s with 8 threads (5.7x speedup). \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
 \cf0 \
+For the near-focal-plane deconvolution problem I am currently working with, it takes 3.2s on my mac pro and 2.4s on beag-shuil [both those times now include the inverse FFT, and are with caching of F(H) and its transpose]. In both cases, ~78% of the time is spent in convolve. I suspect these are heavily memory-bound, since the speedup with 8 threads is only 6x (mac pro) and 4x (beag-shuil).\
+\
 Note some timing anomalies with the old code:\
 - It just uses fftconvolve, and evidently the underpinning implementation 
 \f1\fs22 \CocoaLigature0 numpy.fft.fftpack_lite
@@ -36,21 +42,27 @@ Note some timing anomalies with the old code:\
 \i0 \cf0 \ul Summary\
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
 \cf0 \ulnone - My best-case scenario is now over 20x faster than the original naive code (single threaded). With 8 threads, it is ~125x faster!!\
-- A single thread of my code is ~2.4x faster than the MATLAB code, if I am allowed to process batch of 30 frames. With threads is it almost 14x faster. It will be hard to speed the code up any more, but see comments below for possible things to try.\
+- A single thread of my code is ~2.4x faster than the (parallel) MATLAB code, if I am allowed to process batch of 30 frames. With threads is it almost 14x faster. It will be hard to speed the code up any more, but see comments below for possible things to try.\
 - My code is primarily focused on processing batches, but I shouldn\'92t forget that I am personally interested in deconvolving small numbers of planes from one or two images, for my PIV work. \
 - Note that there is detailed examination of performance in deconvolution-performance-analysis.ipynb.\
 - Hit a weird issue with implementation of complex operator* with LLVM which led to a factor of 2 slowdown in my entire projection code(!). Workaround added to py_light_field source code.\
 \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
 \cf0 \ul Dead ends\ulnone \
-- I considered caching F(H) arrays, but that uses a tremendous amount of memory. When I am batch-processing many video frames, F(H) is amortised away anyway, and caching does not fit particularly well with my new C code anyway.\
-- If I set fft planning mode to patient, it may be marginally faster. Certainly it seems to about 10% faster for the irfft, although there seems to be no significant change for ProjectForZ, which is by far the bottleneck. And patient planning takes about 5 minutes to set up! I wonder if the lack of overall improvement is because precise measurements are meaningless without all the other threads running in parallel and using up memory bandwidth?\
+- If I set fft planning mode to patient, it may be marginally faster. Certainly it seems to about 10% faster for the irfft, although there seems to be no significant change for ProjectForZ, which is by far the bottleneck. And patient planning takes about 5 minutes to set up! I wonder if the lack of overall improvement is because precise measurements are meaningless without all the other threads running in parallel and using up memory bandwidth? 
+\b I should revisit this
+\b0  now I have realised the multithreaded FFTW is problematic.\
 \
 \ul Things I should still investigate\
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
-\cf0 \ulnone - Can I improve the speedup obtained from 8-way threading? I am getting 800% CPU load, but am only getting 5.7x speedup overall. I believe the issue is memory bandwidth (on my 2cpu x 4core machine). Basically, everything just takes a little bit longer. I did see a ~10% speedup by combining operations into CalculateRowBoth() to reduce memory bandwidth demands, but I reckon any further batching would be a lot of effort for marginal gain. For the combining operations, I eliminated 25% of what I think are the uncached reads, so the net 10% speedup is perhaps a bit disappointing, but not completely out of the ballpark I would have expected.\
-- For a full problem, I really am doing huge numbers of individual convolve operations. It is probably not worth my effort to fuse multiple operations(!), but if I did do that I reckon I would only save one array read. Basically I think I am hitting up against the memory bandwidth limitations.\
-- Why am I getting away without calling fftwf_init_threads when running as part of my jps module?? Shouldn\'92t I be calling that somewhere?\
+\cf0 \ulnone Can I improve the speedup obtained from 8-way threading? I am getting 800% CPU load, but am only getting 5.7x speedup overall. I and increasingly convinced the issue is memory bandwidth (e.g. on my 2cpu x 4core machine). Basically, everything just takes a little bit longer. I did see a ~10% speedup by combining operations into CalculateRowBoth() to reduce memory bandwidth demands, but I reckon any further batching would be a lot of effort for marginal gain. For the combining operations, I eliminated 25% of what I think are the uncached reads, so the net 10% speedup is perhaps a bit disappointing, but not completely out of the ballpark I would have expected. Even for small problem sets, I would need to batch things up row-by-row or I would be overflowing caches - I don\'92t think it\'92s enough to process items one after the other on the same thread.\
+\
+- I tried changing the sequencing of my operations to prevent batching up of convolves. The new order took a tiny bit longer to run overall, but the parallelism was poor due to mutex contention. If I could reduce the mutex contention then I get the run time under 6s (just over 10% speedup). However, it\'92s possible I\'92m just gaining performance due to reduced bandwidth contention when some threads are blocked on mutexes! If I want to try this new ordering, I will need to sort out the mutex issue somehow. However, I think the main reason I was trying the reorder was just because I didn\'92t understand why things were happening in bursts. Since I don\'92t think the bursts are a problem for cache residency, it may be that they aren\'92t causing a problem. My only thought had been that it might well help (for cases with few timepoints) to spread out the FFTs more evenly (and therefore possibly ease memory bandwidth when running with max threads) rather than doing them in bigger batches.\
+\
+- I notice with single-threaded macbook air there is a huge variation in the run time of both convolves and FFTs. Could that be because, for this small problem size, the CPU caches *are* being used effectively (sometimes)? If so, then I should perhaps revisit that and think about whether I can use them more effectively.\
+- For a full problem, I really am doing huge numbers of individual convolve operations. It will be very unwieldy to fuse multiple operations, but I reckon I might get a significant speedup if I process 2 or 4 timepoints simultaneously (which makes it easier to apply \ul vectorised\ulnone  multiplications), 
+\i and
+\i0  treat four fourier arrays simultaneously (less overall memory pressure on accum and on reading FH). I\'92m always optimistic with these things, but it seems to be like a >2x speedup should be within grasp, in principle\'85\
 \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
 \cf0 \ul Low priority\ulnone \

@@ -111,7 +111,8 @@ def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.Physical
         #print('iter %d/%d took %.1f secs' % (i+1, maxIter, ttime))
     ru2 = util.cpuTime('both')
     t2 = time.time()
-    print('Deconvolution elapsed wallclock time %f, rusage %f' % (t2-t1, np.sum(ru2-ru1)))
+    if logPrint:
+        print('Deconvolution elapsed wallclock time %f, rusage %f' % (t2-t1, np.sum(ru2-ru1)))
     return projector.asnumpy(Xguess)
 
 

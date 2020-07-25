@@ -6,7 +6,9 @@ if __name__ == "__main__":
     args = sys.argv
     if (len(args) == 1): # We test against 1 because argv[0] is the script path
         print('No arguments passed - will run full setup')
-        args = ['init', 'build', 'self-test']
+        # For now I do not do the init stage by default, since the submodules are not publicly accessible.
+        # I just need to provide people with the pre-downloaded git module.
+        args = ['build', 'self-test']
     
     if ('init' in args):
         # Set up git submodules

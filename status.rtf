@@ -4,16 +4,7 @@
 \paperw11900\paperh16840\margl1440\margr1440\vieww21260\viewh16500\viewkind0
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
-\f0\b\fs24 \cf0 General state for releasability\
-\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
-
-\b0 \cf0 I currently rely on gsl, which is ridiculous! I should try and work out how to strip things down to the bare minimum. That might involve cherry-picking from a few gsl source files and including them in my source distribution (or even finding a different source code for generating bessel functions).\
-I also have hard-coded paths in setup.py to point to gsl, and whatever happens I need to sort that out.\
-\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
-
-\b \cf0 \
-\
-Single-pixel imaging
+\f0\b\fs24 \cf0 Single-pixel imaging
 \b0 \
 This seems as good as anywhere to add a note about single-pixel imaging (which is another application where I think my approach is plausible). I need to remember this as a reference:\
 https://www.osapublishing.org/oe/abstract.cfm?uri=oe-28-6-7889\
@@ -32,10 +23,8 @@ Flow recovery - what I\'92ve done\
 \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
-\b \cf0 Flow recovery - next steps\
-\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
-
-\b0 \cf0 \
+\b \cf0 Flow recovery - next steps
+\b0 \
 - See how the naive algorithm fares with a larger peak velocity (12 instead of 7). Does it still consistently underestimate? By more\'85? Actually no, it does ok. I should maybe investigate somewhat systematically how it fares with different shift values. And also go back to uniform shifts, because I thought I\'92d observed that it really didn\'92t perform properly in that case - but maybe I\'92ve since fixed a bug in that code.\
 \
 - I should maybe revisit BFGS now I have excluded edge effects from warp()\'85\
@@ -50,8 +39,9 @@ Flow recovery - what I\'92ve done\
 \
 - Look a bit at the internals of Powell. Does it really need as many trial values to reach an optimum, given that I think my cost function is pretty smooth and quadratic?
 \b \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
-\b0 \
+\b0 \cf0 \
 - Think about convergence criterion, and ensuring behaviour is similar for different input intensities. How much does it help to choose a more relaxed xtol for Powell? Actually, choosing 1e-1 instead of 1e-2 seems to take 
 \i longer
 \i0  to converge. Also, it seems to be evaluating shifts to a smaller granularity than e.g. 1e-2. Is that definitely correct, or have I got the settings wrong somehow? See comment above about tiny changes.\
@@ -60,12 +50,16 @@ Flow recovery - what I\'92ve done\
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
 \b \cf0 \
-Things to investigate
-\b0 \
+Things to work on\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+
+\b0 \cf0 - I had to relax the accuracy condition for lfdeconv parallel-threading with 3 or 6 threads, otherwise I see a disagreement of 1.2e-4 for 6 threads (always) and for 3 threads (sometimes?). I think that is probably OK, but I should look at that more closely.\
+- Should probably make the default output from the self-test routines less verbose\
 - deconvRL and _PIV actually give slightly different results (deconvRL seems better). Is there an actual bug in deconvRL_PIV, or is Prevedel\'92s implementation of RL actually slightly different (and more efficient)?\
 \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
-\b \
+\b \cf0 \
 Performance
 \b0 \
 - The optimizer calculates the full gradients even if some variables are bounded to a constant. I should be able to do better if I write my own gradient function. Writing my own gradient function would also have the benefit that I should be able to parallelize the computations much better. Similarly, with a bit of faffing around rewriting the code myself, I should be able to run a Powell optimizer that tweaks all individual flow components in parallel.\

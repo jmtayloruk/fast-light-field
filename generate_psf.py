@@ -803,9 +803,9 @@ def GeneratePSFFromFilePath(filePath, OSR=3):
         normalisePSF = False
         reproduceMaxBug = True
     elif filename.startswith('PSFmatrix_'):
-        raise ValueError('We cannot generate filename %s because this filename represents a matrix generated from Matlab. We can only generate fdnormPSFmatrix or reducedPSFmatrix' % filename)
+        raise ValueError('\033[0;31mWe cannot generate filename %s because this filename represents a matrix generated from Matlab. We can only generate fdnormPSFmatrix or reducedPSFmatrix\033[0m' % filename)
     else:
-        raise ValueError('Unrecognised matrix file prefix on filename %s' % filename)
+        raise ValueError('\033[0;31mUnrecognised matrix file prefix on filename %s\033[0m' % filename)
     pos = filename.find('PSFmatrix_')
     suffix = filename[pos+10:]
     suffix, ext = os.path.splitext(suffix)
@@ -816,7 +816,7 @@ def GeneratePSFFromFilePath(filePath, OSR=3):
     try:
         (M, NA, MLPitch, fml, zmin, zmax, zspacing, Nnum, lam, n) = scanf.sscanf(suffix, 'M%fNA%fMLPitch%ffml%ffrom%fto%fzspacing%fNnum%dlambda%fn%f')
     except:  # Yes, I do want to catch *all* exceptions - who knows what sorts of exceptions sscanf might throw, depending on the filename we provide it with...
-        print('Failed to parse filename %s' % filename)
+        print('\033[0;31mFailed to parse filename %s. Check documentation for correct filename format\033[0m' % filename)
         raise
     
     MLPitch *= 1e-6
