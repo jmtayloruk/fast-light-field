@@ -166,7 +166,7 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
         elif arg == 'default-matrix':
             hMatrix = psfmatrix.LoadMatrix(matPath)
         elif arg == 'piv-matrix':
-            hMatrix = psfmatrix.LoadMatrix('PSFmatrix/fdnormPSFMatrix_M22.2NA0.5MLPitch125fml3125from-56to56zspacing4Nnum19lambda520n1.33.mat')
+            hMatrix = psfmatrix.LoadMatrix('PSFmatrix/fdnormPSFmatrix_M22.2NA0.5MLPitch125fml3125from-56to56zspacing4Nnum19lambda520n1.33.mat')
         elif arg == 'default-image':
             inputImage = defaultImage
             inputImageBatch = np.tile(inputImage[np.newaxis,:,:], (batchSize,1,1))
