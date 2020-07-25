@@ -1,6 +1,7 @@
 # This is not actually a standard distutils setup.py script.
 # Here we build and install the submodules, and optionally run the self-test routines
-import sys, os
+import sys, os, datetime
+import benchmark
 
 if __name__ == "__main__":
     args = sys.argv
@@ -8,7 +9,7 @@ if __name__ == "__main__":
         print('No arguments passed - will run full setup')
         # For now I do not do the init stage by default, since the submodules are not publicly accessible.
         # I just need to provide people with the pre-downloaded git module.
-        args = ['build', 'self-test']
+        args = ['build', 'self-test', 'benchmark']
     
     if ('init' in args):
         # Set up git submodules
@@ -61,3 +62,8 @@ if __name__ == "__main__":
         print('== Self-tests complete (passed %d/%d) ==' % (testOutcomes[0], testOutcomes[1]))
         print('\033[0m')
 
+    if ('benchmark' in args):
+        # Run benchmarks
+        result = benchmark.main()
+        with open('benchmarks.txt', 'a') as f:
+            f.write("%s: %s\n" % (datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"), result))

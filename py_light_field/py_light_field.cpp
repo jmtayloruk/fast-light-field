@@ -1208,6 +1208,36 @@ extern "C" PyObject *DisableFHCaching(PyObject *self, PyObject *args)
     }                                                                   \
 }
 
+#if 0
+/*  I had hoped to use FFTW wisdom to speed things up on the first run.
+    However, there seems to be a problem where it refuses to load a previous wisdom file.
+    That seems to only be a problem when running under python (weird...).
+    I have just had to give up on this one - without delving into the fftw source code
+    I have no idea what to do.  */
+class LocalUseFFTWisdom
+{
+    const char *filename;
+  public:
+    LocalUseFFTWisdom(const char *_filename = NULL)
+    {
+        if (_filename == NULL)
+            _filename = "/Users/jonny/light-field-flow.txt";
+        filename = _filename;
+        int res = fftwf_import_wisdom_from_filename(filename);
+        if (res == 0)
+            printf("No wisdom found - file will be created once we have done the FFT planning\n");
+        else
+            printf("Successfully imported wisdom\n");
+    }
+    ~LocalUseFFTWisdom()
+    {
+        int res = fftwf_export_wisdom_to_filename(filename);
+        CHECK(res != 0);
+        printf("Saved to %s\n", filename);
+    }
+};
+#endif
+
 extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
 {
     try
@@ -1402,8 +1432,6 @@ extern "C" PyObject *InverseRFFTList(PyObject *self, PyObject *args)
 {
     try
     {
-        // For now this is just a placeholder that calls through to ProjectForZ, but ultimately I intend to do all the work in one massive batch.
-        // Doing that will help reduce lock contention when we only have a few timepoints to process.
         PyObject *workList;
         if (!PyArg_ParseTuple(args, "O!", &PyList_Type, &workList))
             return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr

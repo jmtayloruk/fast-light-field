@@ -82,12 +82,12 @@ if __name__ == "__main__":
     main(sys.argv)
 
 # Quick test:
-# python deconvolve_time_series.py --psf "/Volumes/Development/light-field-flow/PSFmatrix/fdnormPSFMatrix_M22.2NA0.5MLPitch125fml3125from-4to0zspacing4Nnum19lambda520n1.33.mat" --dest tempOutput --timepoints "/Users/jonny/Movies/Nils files/Raw-camera-images/Right/Cam_Right_40_X1.tif"
+# python deconvolve_time_series.py --psf "PSFmatrix/fdnormPSFmatrix_M22.2NA0.5MLPitch125fml3125from-4to0zspacing4Nnum19lambda520n1.33.mat" --dest tempOutput --timepoints "/Users/jonny/Movies/Nils files/Raw-camera-images/Right/Cam_Right_40_X1.tif"
 
 # Should replicate Nils deconvolved tiffs
-# python deconvolve_time_series.py --psf "/Volumes/Development/light-field-flow/PSFmatrix/buggyPSFMatrix_M22.2NA0.5MLPitch125fml3125from-156to156zspacing4Nnum19lambda520n1.33.mat" --dest tempOutput --timepoints "/Users/jonny/Movies/Nils files/Raw-camera-images/Right/Cam_Right_40_X1.tif"
+# python deconvolve_time_series.py --psf "PSFmatrix/buggyPSFmatrix_M22.2NA0.5MLPitch125fml3125from-156to156zspacing4Nnum19lambda520n1.33.mat" --dest tempOutput --timepoints "/Users/jonny/Movies/Nils files/Raw-camera-images/Right/Cam_Right_40_X1.tif"
 
 
-# TODO: test with a large number of images, and a small batch size (to confirm that my logic there works)
-#python deconvolve_time_series.py -i=1 --psf "/Volumes/Development/light-field-flow/PSFmatrix/fdnormPSFMatrix_M22.2NA0.5MLPitch125fml3125from-4to0zspacing4Nnum19lambda520n1.33.mat" --batch-size 2 --dest tempOutputBatch2 --timepoints "/Users/jonny/Movies/Nils files/Raw-camera-images/Right/"*.tif
-#python deconvolve_time_series.py -i=1 --psf "/Volumes/Development/light-field-flow/PSFmatrix/fdnormPSFMatrix_M22.2NA0.5MLPitch125fml3125from-4to0zspacing4Nnum19lambda520n1.33.mat" --dest tempOutputBatch11 --timepoints "/Users/jonny/Movies/Nils files/Raw-camera-images/Right/"*.tif
+# To test with a large number of images, and a small batch size (to confirm that my logic there works)
+#python deconvolve_time_series.py -i=1 --psf "PSFmatrix/fdnormPSFmatrix_M22.2NA0.5MLPitch125fml3125from-4to0zspacing4Nnum19lambda520n1.33.mat" --batch-size 2 --dest tempOutputBatch2 --timepoints "/Users/jonny/Movies/Nils files/Raw-camera-images/Right/"*.tif
+#python deconvolve_time_series.py -i=1 --psf "PSFmatrix/fdnormPSFmatrix_M22.2NA0.5MLPitch125fml3125from-4to0zspacing4Nnum19lambda520n1.33.mat" --dest tempOutputBatch11 --timepoints "/Users/jonny/Movies/Nils files/Raw-camera-images/Right/"*.tif
