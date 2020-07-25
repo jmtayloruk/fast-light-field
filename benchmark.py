@@ -1,7 +1,6 @@
 # A little script to generate some timing benchmarks for scenarios I am interested in
 
 import numpy as np
-import matplotlib.pyplot as plt
 import multiprocessing
 import tifffile
 import sys, time, os, csv, warnings, glob
