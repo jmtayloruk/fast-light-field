@@ -999,7 +999,7 @@ def selfTest(verbose=True):
     # to the GPU helpers for testing purposes (but I could probably equally well test against a python counterpart if I wanted...)
     classesToTest = [Projector_allC, Projector_python]
     if gpuAvailable:
-        classesToTest = [Projector_gpuHelpers]   #  classesToTest +    # TODO: eventually will want to prepend classesToTest
+        classesToTest = classesToTest + [Projector_gpuHelpers]
     np.random.seed(0)
     testOutcomes = np.zeros((2))
     for projectorClass in classesToTest:
