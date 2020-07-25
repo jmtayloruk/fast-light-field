@@ -56,5 +56,5 @@ else:
 
 def PhysicalCoreCount():
     # On my mac pro, this cpu_count() call correctly returns 8 (psutil version 5.2.2).
-    # I need to check if it works correctly on all machines - I thought on my laptop it gave the wrong number.
+    # Strangely, it returns 8 on brutha, when I am pretty sure that has more physical cores...
     return psutil.cpu_count(logical=False)

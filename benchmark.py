@@ -30,6 +30,7 @@ def main(testThreadScaling=False):
         platforms.append('gpu')
 
     for plat in platforms:
+        print('Platform: {0}'.format(plat))
         if plat == 'cpu':
             prime = 'prime-cache'
         else:
@@ -54,7 +55,7 @@ def main(testThreadScaling=False):
                 results.append(perf.main([plat, 'piv-image', 'piv-matrix', prime, 'new-batch', 'new-batch'],
                                          batchSize=2, numJobs=numJobs)[1:])
                 plf.SetThreadFileName("thread-benchmarks/threads_square_cached2_%d.txt" % numJobs) # The 2 recognises that we now cache FFT and transpose
-                results.append(perf.main(['cpu', 'piv-image', 'piv-matrix', 'cache-FH', prime, 'new-batch', 'new-batch'],
+                results.append(perf.main([plat, 'piv-image', 'piv-matrix', 'cache-FH', prime, 'new-batch', 'new-batch'],
                                          batchSize=2, numJobs=numJobs)[1:])
             plf.SetThreadFileName("")
 

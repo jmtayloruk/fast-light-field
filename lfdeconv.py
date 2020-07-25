@@ -242,10 +242,9 @@ except ImportError:
     hasGPU = False
 
 if __name__ == "__main__":
+    # TODO: I should make this like lf_performance_analysis.py, where it accepts a sequence of commands.
+    # That way I can fold in the gpu testing here too.
     main(sys.argv)
     if hasGPU:
-        proj.gDebugChecks = False
-        proj.gSynchronizeAfterKernelCalls =False 
-        main(sys.argv, projectorClass=proj.Projector_gpuHelpers, maxiter=1)
-        PrintKeyGPUAttributes()
         main(sys.argv, projectorClass=proj.Projector_gpuHelpers)
+        PrintKeyGPUAttributes()

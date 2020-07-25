@@ -137,7 +137,7 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
     print('Will use {0} parallel threads'.format(numJobs))
 
     # Default to cpu mode unless/until explicitly specified otherwise
-    args = ['no-cache-FH', 'cpu', 'no-profile', 'default-matrix', 'default-image'] + argv[1:].copy()
+    args = ['no-cache-FH', 'cpu', 'no-profile', 'default-matrix', 'default-image'] + argv
     projector = None
     results = []
 
@@ -211,23 +211,23 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
             # because the self-calibrating block sizes will vary depending on the number of images
             print('Priming cache')
             def RunThis():
-                result = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, projector=projector, logPrint=False)
+                result = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, progress=util.noProgressBar, projector=projector, logPrint=False)
                 return result
         elif arg == 'new':
             # Run my new fast code
             print('Benchmarking new fast code (single image)')
             def RunThis():
-                return lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, numjobs=numJobs, projector=projector, logPrint=False)
+                return lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, progress=util.noProgressBar, numjobs=numJobs, projector=projector, logPrint=False)
         elif arg == 'new-piv':
             # Run my code in the sort of scenario I would expect to run it in for my PIV experiments.
             print('Benchmarking new fast code (PIV scenario)')
             def RunThis():
-                return lfdeconv.BackwardProjectACC(hMatrix, inputImageBatch[0:2], planes=planesToProcess, numjobs=numJobs, projector=projector, logPrint=False)
+                return lfdeconv.BackwardProjectACC(hMatrix, inputImageBatch[0:2], planes=planesToProcess, progress=util.noProgressBar, numjobs=numJobs, projector=projector, logPrint=False)
         elif arg == 'new-batch':
             # Run my code in the sort of scenario I would expect to run it in when batch-processing video
             print('Benchmarking new fast code (batch scenario)')
             def RunThis():
-                return lfdeconv.BackwardProjectACC(hMatrix, inputImageBatch, planes=planesToProcess, numjobs=numJobs, projector=projector, logPrint=False)
+                return lfdeconv.BackwardProjectACC(hMatrix, inputImageBatch, planes=planesToProcess, progress=util.noProgressBar, numjobs=numJobs, projector=projector, logPrint=False)
         else:
             print('UNRECOGNISED:', arg)
             
@@ -248,4 +248,4 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
     return results
 
 if __name__ == "__main__":
-    main(sys.argv)
+    main(sys.argv[1:])

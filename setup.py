@@ -38,12 +38,6 @@ if __name__ == "__main__":
         print('This will take several minutes to complete')
         import lfdeconv
         import projector as proj
-        try:
-            import cupy as cp
-            gpuAvailable = True
-        except ImportError:
-            print('No GPU support detected')
-            gpuAvailable = False
 
         # Tests that verify fast implementations against my slow reference python implementation
         testOutcomes = proj.selfTest(verbose=False)
@@ -52,7 +46,7 @@ if __name__ == "__main__":
         for cacheFH in [[], ['cacheFH']]:
             args = ['basic', 'full', 'parallel', 'parallel-threading'] + cacheFH
             testOutcomes += lfdeconv.main(args)
-            if gpuAvailable:
+            if proj.gpuAvailable:
                 testOutcomes += lfdeconv.main(args, projectorClass=proj.Projector_gpuHelpers)
 
         if testOutcomes[0] == testOutcomes[1]:

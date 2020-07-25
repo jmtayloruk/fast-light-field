@@ -44,14 +44,14 @@ gCalculateRowsMaxBlocks = (3, 13, 13)
 
 gPadFactor = 8
 # Flag controlling a few debug checks.
-# Turn this off for a small performance boost, at the expense of a few self-consistency checks
-gDebugChecks = True
+# This has a slight performance penalty, for making a few self-consistency checks
+gDebugChecks = False
 # Flag controlling whether we call cp.cuda.runtime.deviceSynchronize()
 # I am not sure if it is safe to turn this off (I am not completely sure how smart cupy is at making sure we wait before starting a dependent custom kernel)
-# It does speed things up noticably, though!
+# I think it is ok, though, and it does speed things up noticably!
 # Presumably this is because it is able to continue running my python glue code while the GPU is busy, and so I am able to hide that CPU execution time
 # Note that turning this off will make python (CPU) code profiler reports much harder to interpret
-gSynchronizeAfterKernelCalls = True
+gSynchronizeAfterKernelCalls = False
 
 # Note: H.shape in python is (<num z planes>, Nnum, Nnum, <psf size>, <psf size>),
 #                       e.g. (56, 19, 19, 343, 343)
