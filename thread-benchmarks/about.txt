@@ -1,0 +1,1 @@
+This folder will contain detailed scheduling information for diagnostic purposes, once benchmark code has been run

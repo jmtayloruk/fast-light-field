@@ -121,26 +121,28 @@ def AnalyzeTestResults2(statsFilePath):
     plt.legend(loc=2)
     plt.show()
 
-def main(argv, inputImage=None, batchSize=30, matPath=None, planesToProcess=None, numJobs=plf.GetNumThreadsToUse(), cacheFH=False, printProfileOutput=True, projectorClass=proj.Projector_allC):
+def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=None, numJobs=plf.GetNumThreadsToUse(), projectorClass=proj.Projector_allC):
     #########################################################################
     # Test code for performance measurement
     #########################################################################
     if matPath is None:
         matPath = 'PSFmatrix/fdnormPSFmatrix_M40NA0.95MLPitch150fml3000from-13to0zspacing0.5Nnum15lambda520n1.mat'
-    hMatrix = psfmatrix.LoadMatrix(matPath)
 
-    if inputImage is None:
-        inputImage = lfimage.LoadLightFieldTiff('Data/02_Rectified/exampleData/20131219WORM2_small_full_neg_X1_N15_cropped_uncompressed.tif')
-        if ('smaller-image' in argv):
-            inputImage = inputImage[0:20*15,0:15*15]
-    inputImageBatch = np.tile(inputImage[np.newaxis,:,:], (batchSize,1,1))
+    if defaultImage is None:
+        defaultImage = lfimage.LoadLightFieldTiff('Data/02_Rectified/exampleData/20131219WORM2_small_full_neg_X1_N15_cropped_uncompressed.tif')
 
-    if not 'profile-prime-cache' in argv:
-        warnings.warn('Cache not primed - timings for new code will include FFT planning time')
+    if not 'prime-cache' in argv:
+        print('NOTE: cache is not being primed - timings for early runs will include FFT planning time')
 
-    print('== Running with {0} parallel threads =='.format(numJobs))
+    print('Will use {0} parallel threads'.format(numJobs))
 
-    for arg in argv[1:]:
+    # Default to cpu mode unless/until explicitly specified otherwise
+    args = ['no-cache-FH', 'cpu', 'no-profile', 'default-matrix', 'default-image'] + argv[1:].copy()
+    projector = None
+    results = []
+
+    for arg in args:
+        RunThis = None
         if arg == 'gpu':
             projectorClass = proj.Projector_gpuHelpers
             projector = projectorClass()
@@ -149,6 +151,31 @@ def main(argv, inputImage=None, batchSize=30, matPath=None, planesToProcess=None
             projectorClass = proj.Projector_allC
             projector = projectorClass()
             projector.cacheFH = cacheFH
+        elif arg == 'profile':
+            profile = True
+        elif arg == 'no-profile':
+            profile = False
+        elif arg == 'cache-FH':
+            cacheFH = True
+            if projector is not None:
+                projector.cacheFH = cacheFH
+        elif arg == 'no-cache-FH':
+            cacheFH = False
+            if projector is not None:
+                projector.cacheFH = cacheFH
+        elif arg == 'default-matrix':
+            hMatrix = psfmatrix.LoadMatrix(matPath)
+        elif arg == 'piv-matrix':
+            hMatrix = psfmatrix.LoadMatrix('PSFmatrix/fdnormPSFMatrix_M22.2NA0.5MLPitch125fml3125from-56to56zspacing4Nnum19lambda520n1.33.mat')
+        elif arg == 'default-image':
+            inputImage = defaultImage
+            inputImageBatch = np.tile(inputImage[np.newaxis,:,:], (batchSize,1,1))
+        elif arg == 'piv-image':
+            inputImage = np.zeros((19*19,19*19), dtype='float32')
+            inputImageBatch = np.tile(inputImage[np.newaxis,:,:], (batchSize,1,1))
+        elif arg == 'smaller-image':
+            inputImage = inputImage[0:20*15,0:15*15]
+            inputImageBatch = np.tile(inputImage[np.newaxis,:,:], (batchSize,1,1))
         elif arg == 'parallel-scaling':
             # Investigate performance for different numbers of parallel threads
             # Note that this is just for a single inputImage - I haven't used this code for a while.
@@ -170,55 +197,55 @@ def main(argv, inputImage=None, batchSize=30, matPath=None, planesToProcess=None
             AnalyzeTestResults2('stats-no-H.txt')
             plt.title('New code')
             AnalyzeTestResults2('stats-new-code.txt')
-        elif arg == 'profile-old':
-            # Profile old code (single-threaded)
+
+        elif arg == 'old':
+            # Run old code (single-threaded)
+            print('Benchmarking old slow code (single image)')
             (_H, _Ht, _CAindex, _, _, _, _) = psfmatrix.LoadRawMatrixData(matPath)
-            pr = cProfile.Profile()
-            pr.enable()
-            ru1 = util.cpuTime('both')
-            temp = proj.BackwardProjectACC_old(_Ht, inputImage, _CAindex, planes=planesToProcess)
-            ru2 = util.cpuTime('both')
-            print('overall delta rusage:', ru2-ru1)
-            pr.disable()
-            if printProfileOutput:
-                pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
-        elif arg == 'profile-prime-cache':
+            def RunThis():
+                return proj.BackwardProjectACC_old(_Ht, inputImage, _CAindex, planes=planesToProcess)
+        elif arg == 'prime-cache':
             # Do a single-image run to take care of one-off work such as FFT planning,
             # so that is not included in the timings of subsequent tests
-            pr = cProfile.Profile()
-            pr.enable()
-            temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, logPrint=False, projector=projector)
-            print('Cache has been primed')
-            pr.disable()
-            #pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
-        elif arg == 'profile-new':
-            # Profile my code (single-threaded)
-            pr = cProfile.Profile()
-            pr.enable()
+            # TODO: I think this will not fully prime everything when running on the GPU,
+            # because the self-calibrating block sizes will vary depending on the number of images
+            print('Priming cache')
+            def RunThis():
+                result = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, projector=projector, logPrint=False)
+                return result
+        elif arg == 'new':
+            # Run my new fast code
+            print('Benchmarking new fast code (single image)')
+            def RunThis():
+                return lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, numjobs=numJobs, projector=projector, logPrint=False)
+        elif arg == 'new-piv':
+            # Run my code in the sort of scenario I would expect to run it in for my PIV experiments.
+            print('Benchmarking new fast code (PIV scenario)')
+            def RunThis():
+                return lfdeconv.BackwardProjectACC(hMatrix, inputImageBatch[0:2], planes=planesToProcess, numjobs=numJobs, projector=projector, logPrint=False)
+        elif arg == 'new-batch':
+            # Run my code in the sort of scenario I would expect to run it in when batch-processing video
+            print('Benchmarking new fast code (batch scenario)')
+            def RunThis():
+                return lfdeconv.BackwardProjectACC(hMatrix, inputImageBatch, planes=planesToProcess, numjobs=numJobs, projector=projector, logPrint=False)
+        else:
+            print('UNRECOGNISED:', arg)
+            
+        if RunThis is not None:
+            if profile:
+                pr = cProfile.Profile()
+                pr.enable()
             ru1 = util.cpuTime('both')
-            temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, numjobs=numJobs, projector=projector)
+            t1 = time.time()
+            temp = RunThis()
+            t2 = time.time()
             ru2 = util.cpuTime('both')
-            print('overall delta rusage:', ru2-ru1)
-            pr.disable()
-            if printProfileOutput:
+            if profile:
+                pr.disable()
                 pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
-        elif arg == 'profile-new-piv':
-            # Profile my code (single-threaded) in the sort of scenario I would expect to run it in for my PIV experiments.
-            tempInputImage = np.zeros((2,hMatrix.Nnum(0)*20,hMatrix.Nnum(0)*20)).astype('float32')
-            pr = cProfile.Profile()
-            pr.enable()
-            temp = lfdeconv.BackwardProjectACC(hMatrix, inputImageBatch[0:2], planes=planesToProcess, numjobs=numJobs, projector=projector)
-            pr.disable()
-            if printProfileOutput:
-                pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
-        elif arg == 'profile-new-batch':
-            # Profile my code (single-threaded) in the sort of scenario I would expect to run it in when batch-processing video
-            pr = cProfile.Profile()
-            pr.enable()
-            temp = lfdeconv.BackwardProjectACC(hMatrix, inputImageBatch, planes=planesToProcess, numjobs=numJobs, projector=projector)
-            pr.disable()
-            if printProfileOutput:
-                pstats.Stats(pr).strip_dirs().sort_stats('cumulative').print_stats(40)
+            print(' time: %.2f. overall delta rusage:' % (t2-t1), (ru2-ru1))
+            results.append(t2-t1)
+    return results
 
 if __name__ == "__main__":
     main(sys.argv)
