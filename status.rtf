@@ -53,7 +53,10 @@ Flow recovery - what I\'92ve done\
 Things to work on\
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
-\b0 \cf0 - I would like to update the test code in lfdeconv.py so it behaves like lf_performance_analysis.py - see TODO note.
+\b0 \cf0 - There is an issue with the dual deconvolution self-test failing on the GPU (optic-tectum). 
+\b I need to debug that. 
+\b0 It\'92s suspicious that it\'92s exactly 0.5 disagreement\'85\
+- I would like to update the test code in lfdeconv.py so it behaves like lf_performance_analysis.py - see TODO note.
 \b \
 
 \b0 - I had to relax the accuracy condition for lfdeconv parallel-threading with 3 or 6 threads, otherwise I see a disagreement of 1.2e-4 for 6 threads (always) and for 3 threads (sometimes?). I think that is probably OK, but I should look at that more closely.\
