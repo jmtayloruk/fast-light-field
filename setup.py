@@ -1,7 +1,6 @@
 # This is not actually a standard distutils setup.py script.
 # Here we build and install the submodules, and optionally run the self-test routines
 import sys, os, datetime
-import benchmark
 
 if __name__ == "__main__":
     args = sys.argv
@@ -58,6 +57,8 @@ if __name__ == "__main__":
 
     if ('benchmark' in args):
         # Run benchmarks
+        # Note that we shouldn't do the import globally, before we have built all our dependencies
+        import benchmark
         result = benchmark.main()
         with open('benchmarks.txt', 'a') as f:
             f.write("%s: %s\n" % (datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"), result))

@@ -1,49 +1,63 @@
-{\rtf1\ansi\ansicpg1252\cocoartf1404\cocoasubrtf470
-{\fonttbl\f0\fswiss\fcharset0 Helvetica;\f1\fnil\fcharset0 Menlo-Regular;}
+{\rtf1\ansi\ansicpg1252\cocoartf1671\cocoasubrtf600
+{\fonttbl\f0\fswiss\fcharset0 Helvetica-Bold;\f1\fswiss\fcharset0 Helvetica;\f2\fswiss\fcharset0 Helvetica-Oblique;
+\f3\fnil\fcharset0 Menlo-Regular;}
 {\colortbl;\red255\green255\blue255;}
-\paperw11900\paperh16840\margl1440\margr1440\vieww20520\viewh19140\viewkind0
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww20520\viewh16580\viewkind0
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
 \f0\b\fs28 \cf0 \ul \ulc0 Introduction\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
-\b0\fs24 \ulnone This document briefly describes how to install and use the light-field-flow module to deconvolve light field microscopy images. This module gives output equivalent to the Matlab code of Prevedel 
-\i et al
-\i0 , but runs ~10x as fast.\
+\f1\b0\fs24 \cf0 \ulnone This document briefly describes how to install and use the light-field-flow module to deconvolve light field microscopy images. This module gives output equivalent to the Matlab code of Prevedel 
+\f2\i et al
+\f1\i0 , but runs ~10x as fast.\
 \
 Inputs: one or more TIFF files containing light field microscopy camera images. For now, these 
-\b must
-\b0  be 
-\i rectified
-\i0  (i.e. they must have been preprocessed to ensure they have exactly Nmax pixels across each lenslet footprint). This rectification can be performed using Prevedel\'92s Matlab script.\
+\f0\b must
+\f1\b0  be 
+\f2\i rectified
+\f1\i0  (i.e. they must have been preprocessed to ensure they have exactly Nmax pixels across each lenslet footprint). This rectification can be performed using Prevedel\'92s Matlab script.\
 \
 Outputs: one or more 3D TIFF files containing volume reconstructions of your light field microscopy camera images.\
 \
 These instructions assume a basic familiarity with the command line, and with python - and that you already have a basic python 3 (v3.5 or higher) installation on your computer. \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
-\b\fs28 \ul \
+\f0\b\fs28 \cf0 \ul \
 Setting up, starting from a pre-provided light-field-flow directory
-\b0\fs24 \ulnone \
-You have a choice of whether you want to use a python virtual environment or not. If you don\'92t know what that is, just follow the \'93installing in user space\'94 instructions. \expnd0\expndtw0\kerning0
-If all is well, you will get a 
-\i lot
-\i0  of output on the command line, but ultimately it should end with a green line reading \'93== Self-tests complete (passed 24/24) ==\'93. \
-\pard\pardeftab720\partightenfactor0
-\cf0 If anything goes wrong, please just drop me an email.\kerning1\expnd0\expndtw0 \
+\f1\b0\fs24 \ulnone \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
-\cf0 \
-\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
-\cf0 \ul Installing in user space\
-\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
-\cf0 \ulnone # Start in the light-field-flow directory\
+\cf0 # Start in the light-field-flow directory\
 cd light-field-flow\
+\
+# If you have cloned directly from the git repository, run the following commands to configure the git submodules\
+git submodule init\
+git submodule update\
 \pard\pardeftab720\partightenfactor0
 \cf0 \expnd0\expndtw0\kerning0
 \
-# Install dependencies\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 \kerning1\expnd0\expndtw0 # Now you have a choice of whether you want to use a python virtual environment or not.\
+# If you don\'92t know what that is, just skip these next two commands\
+# If you 
+\f0\b do
+\f1\b0  set up a virtual environment, you will need to omit the \'93--user\'94 flag from all subsequent commands.\
+\pard\pardeftab720\partightenfactor0
+\cf0 \expnd0\expndtw0\kerning0
+python3 -m venv lff-venv\kerning1\expnd0\expndtw0 \
+\expnd0\expndtw0\kerning0
+. ./lff-venv/bin/activate\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 \kerning1\expnd0\expndtw0 \ul \ulc0 \
+\pard\pardeftab720\partightenfactor0
+\cf0 \expnd0\expndtw0\kerning0
+\ulnone # Install dependencies\
 python3 -m pip install --user -r requirements_minimum.txt\
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardeftab720\pardirnatural\partightenfactor0
 \cf0 \kerning1\expnd0\expndtw0 \
-#Optional, if you want GPU support:\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 #Optional, if you want GPU support:\
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardeftab720\pardirnatural\partightenfactor0
 \cf0 \expnd0\expndtw0\kerning0
 python3 -m \kerning1\expnd0\expndtw0 pip install --user cupy pycuda pynvml\
@@ -52,49 +66,32 @@ python3 -m \kerning1\expnd0\expndtw0 pip install --user cupy pycuda pynvml\
 python3 setup.py --user build self-test\
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 \cf0 \
-\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
-\cf0 \ul Using a virtual environment\ulnone \
-# Start in the light-field-flow directory\
-cd light-field-flow\
+# \expnd0\expndtw0\kerning0
+If all is well, you will get a 
+\f2\i lot
+\f1\i0  of output on the command line, but ultimately it should end with a green line reading \'93== Self-tests complete (passed 24/24) ==\'93. \
 \pard\pardeftab720\partightenfactor0
-\cf0 \expnd0\expndtw0\kerning0
-\
-# Set up a virtual environment\
-python3 -m venv lff-venv\kerning1\expnd0\expndtw0 \
-\expnd0\expndtw0\kerning0
-. ./lff-venv/bin/activate\
-\
-# Install dependencies\kerning1\expnd0\expndtw0 \
-\expnd0\expndtw0\kerning0
-python3 -m pip install -r requirements_minimum.txt\kerning1\expnd0\expndtw0 \
-\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
-\cf0 \
-#Optional, if you want GPU support:\
-\expnd0\expndtw0\kerning0
-python3 -m \kerning1\expnd0\expndtw0 pip install cupy pycuda pynvml\
-\
-# Get everything set up for the light-field-flow code (this will take 5-10 minutes)\
-python3 setup.py build self-test\
+\cf0 # If anything goes wrong, please just drop me an email.\kerning1\expnd0\expndtw0 \
 \pard\pardeftab720\partightenfactor0
 \cf0 \expnd0\expndtw0\kerning0
 \
 \kerning1\expnd0\expndtw0 \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
-\b\fs28 \cf0 \ul Deconvolving light field images
-\b0\fs24 \ulnone \
+\f0\b\fs28 \cf0 \ul Deconvolving light field images
+\f1\b0\fs24 \ulnone \
 Before you use this deconvolution code, you need to use the Prevedel Matlab code to 
-\i rectify
-\i0  your light field images according to your experimental parameters - I have not yet got round to porting that (small) code to python. Once you have got your rectified images, you should just be able to run this deconvolution code. At the moment the code expects every image to be in a separate (2D) tiff file (which is the output format generated by Prevedel\'92s rectification script). \
+\f2\i rectify
+\f1\i0  your light field images according to your experimental parameters - I have not yet got round to porting that (small) code to python. Once you have got your rectified images, you should just be able to run this deconvolution code. At the moment the code expects every image to be in a separate (2D) tiff file (which is the output format generated by Prevedel\'92s rectification script). \
 \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 \cf0 \ul Calling script from the command line\ulnone \
 You invoke my deconvolution script with a command like:\
 \pard\tx529\pardeftab529\pardirnatural\partightenfactor0
 
-\f1\fs22 \cf0 \CocoaLigature0 python3 deconvolve_time_series.py --psf "PSFmatrix/fdnormPSFMatrix_M22.2NA0.5MLPitch125fml3125from-156to156zspacing4Nnum19lambda520n1.33.mat" --dest DeconvolvedOutput --timepoints RectifiedInputData/*.tif\
+\f3\fs22 \cf0 \CocoaLigature0 python3 deconvolve_time_series.py --psf "PSFmatrix/fdnormPSFMatrix_M22.2NA0.5MLPitch125fml3125from-156to156zspacing4Nnum19lambda520n1.33.mat" --dest DeconvolvedOutput --timepoints RectifiedInputData/*.tif\
 
-\f0\fs24 \CocoaLigature1 \
+\f1\fs24 \CocoaLigature1 \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 \cf0 \'93DeconvolvedOutput\'94 is the name of a folder into which your deconvolved images will be saved\
 \
@@ -110,19 +107,21 @@ In this example there is a folder \'93PSFmatrix\'94 which will contain the light
 	lambda - wavelength (nm)\
 	n - refractive index of medium\
 
-\i Note that the matrix filename must follow the exact format shown: it should start with \'93fdnormPSFMatrix_\'94. It is also important not to have any trailing zeroes in the parameters, e.g. you should write \'93\'85lambda520n1.mat\'94 not \'93\'85lambda520n1.0.mat\'92.\
+\f2\i Note that the matrix filename must follow the exact format shown: it should start with \'93fdnormPSFMatrix_\'94. It is also important not to have any trailing zeroes in the parameters, e.g. you should write \'93\'85lambda520n1.mat\'94 not \'93\'85lambda520n1.0.mat\'92.\
 \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
-\i0 \cf0 \ul Calling code as a python module\
+\f1\i0 \cf0 \ul Calling code as a python module\
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 \cf0 \ulnone Although the entire light-field-flow project is not yet packaged as a formal python module of its own, you can still import individual .py files (e.g. hMatrix and lfdeconv) and call the functions from your own python code. The APIs are not yet formally documented, but hopefully the code in deconvolve_time_series.py etc provides a suitable demonstration of usage.
-\i \
+\f2\i \
 \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
-\i0\b\fs28 \ul Best performance\
+\f0\i0\b\fs28 \cf0 \ul Best performance\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
-\b0\fs24 \ulnone - Note that the first iteration will take a bit longer, as the code self-calibrates for best performance, but subsequent iterations will be faster.\
+\f1\b0\fs24 \cf0 \ulnone - Note that the first iteration will take a bit longer, as the code self-calibrates for best performance, but subsequent iterations will be faster.\
 - The code will run fastest if given significant numbers (e.g. 32) individual timepoint images to deconvolve in parallel. \
 - For most systems, GPU-based deconvolution will be fastest. The GPU-based code is not quite as extensively tested - it should be correct, but has not been tested on many different platforms, so let me know if you encounter any errors). Run on GPU by specifying \'93-m gpu\'94 on the command line. \
 - The command line option \'93-cacheFH\'94 is a specialised option that is strictly for small reconstruction problems only. It will give faster performance (especially for small batch sizes) but has a dramatically higher memory requirement (may well exhaust available RAM).\

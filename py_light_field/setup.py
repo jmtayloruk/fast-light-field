@@ -3,7 +3,7 @@ import numpy	# So we can work out where the numpy headers live!
 import platform
 import os, sys
 
-# Check dependencies have been build
+# Check dependencies have been built
 if not os.path.exists('fftw-3.3.8/.libs/libfftw3f.a'):
     print('=== NOTE: building FFTW. This may take some time ===')
     if not os.path.exists('fftw-3.3.8'):
