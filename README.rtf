@@ -1,8 +1,8 @@
 {\rtf1\ansi\ansicpg1252\cocoartf1671\cocoasubrtf600
 {\fonttbl\f0\fswiss\fcharset0 Helvetica-Bold;\f1\fswiss\fcharset0 Helvetica;\f2\fswiss\fcharset0 Helvetica-Oblique;
 \f3\fnil\fcharset0 Menlo-Regular;}
-{\colortbl;\red255\green255\blue255;}
-{\*\expandedcolortbl;;}
+{\colortbl;\red255\green255\blue255;\red0\green0\blue0;}
+{\*\expandedcolortbl;;\csgray\c0;}
 \paperw11900\paperh16840\margl1440\margr1440\vieww20520\viewh16580\viewkind0
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
@@ -27,8 +27,7 @@ These instructions assume a basic familiarity with the command line, and with py
 \f0\b\fs28 \cf0 \ul \
 Setting up, starting from a pre-provided light-field-flow directory
 \f1\b0\fs24 \ulnone \
-\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
-\cf0 # Start in the light-field-flow directory\
+# Start in the light-field-flow directory\
 cd light-field-flow\
 \
 # If you have cloned directly from the git repository, run the following commands to configure the git submodules\
@@ -40,24 +39,36 @@ git submodule update\
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 \cf0 \kerning1\expnd0\expndtw0 # Now you have a choice of whether you want to use a python virtual environment or not.\
 # If you don\'92t know what that is, just skip these next two commands\
-# If you 
+# IMPORTANT: if you 
 \f0\b do
-\f1\b0  set up a virtual environment, you will need to omit the \'93--user\'94 flag from all subsequent commands.\
+\f1\b0  set up a virtual environment, it is vital that you omit the \'93--user\'94 flag from all subsequent commands,\
+# or you will get hard-to-diagnose errors\
 \pard\pardeftab720\partightenfactor0
 \cf0 \expnd0\expndtw0\kerning0
 python3 -m venv lff-venv\kerning1\expnd0\expndtw0 \
 \expnd0\expndtw0\kerning0
 . ./lff-venv/bin/activate\
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
-\cf0 \kerning1\expnd0\expndtw0 \ul \ulc0 \
+\cf0 \kerning1\expnd0\expndtw0 \ul \
 \pard\pardeftab720\partightenfactor0
 \cf0 \expnd0\expndtw0\kerning0
 \ulnone # Install dependencies\
 python3 -m pip install --user -r requirements_minimum.txt\
+# Check that this has run successfully, printing \'93
+\f3\fs22 \cf2 \kerning1\expnd0\expndtw0 \CocoaLigature0 Successfully installed
+\f1\fs24 \cf0 \expnd0\expndtw0\kerning0
+\CocoaLigature1 \'94 followed by a list of module names. \
+# There may be earlier error messages that can probably be ignored, but if it does not make it to \'93
+\f3\fs22 \cf2 \kerning1\expnd0\expndtw0 \CocoaLigature0 Successfully installed
+\f1\fs24 \cf0 \expnd0\expndtw0\kerning0
+\CocoaLigature1 \'94 \
+# then something has gone wrong that needs fixing. See \'93troubleshooting\'94, below\
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardeftab720\pardirnatural\partightenfactor0
 \cf0 \kerning1\expnd0\expndtw0 \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
-\cf0 #Optional, if you want GPU support:\
+\cf0 # Optional, if you want GPU support\
+# Note that the actual cuda library also needs to be installed first (see cuda documentation).\
+# This step seems to be awkward, and I have a few possible suggestions under \'93troubleshooting\'94, below\
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardeftab720\pardirnatural\partightenfactor0
 \cf0 \expnd0\expndtw0\kerning0
 python3 -m \kerning1\expnd0\expndtw0 pip install --user cupy pycuda pynvml\
@@ -72,10 +83,53 @@ If all is well, you will get a
 \f1\i0  of output on the command line, but ultimately it should end with a green line reading \'93== Self-tests complete (passed 24/24) ==\'93. \
 \pard\pardeftab720\partightenfactor0
 \cf0 # If anything goes wrong, please just drop me an email.\kerning1\expnd0\expndtw0 \
-\pard\pardeftab720\partightenfactor0
-\cf0 \expnd0\expndtw0\kerning0
+\expnd0\expndtw0\kerning0
 \
-\kerning1\expnd0\expndtw0 \
+# Optional: run this command to get some benchmark measurements of performance on your system.\
+# I would be very interested to see the output if you want to send it to me by email\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardeftab720\pardirnatural\partightenfactor0
+\cf0 \kerning1\expnd0\expndtw0 python3 setup.py --user benchmark\
+\pard\pardeftab720\partightenfactor0
+\cf0 \ul \
+Troubleshooting - general python modules\
+\pard\pardeftab720\partightenfactor0
+\cf0 \ulnone Unfortunately, installing the required python modules can be temperamental, even for a relatively simple project like this. If you encounter error messages while installing the dependencies, you may need to tweak things a bit. Drop me an email if you run into problems you can\'92t sort. Some issues I have encountered:\
+\
+numpy: \'93
+\f3\fs22 \cf2 \CocoaLigature0 Python version >= 3.7 required
+\f1\fs24 \cf0 \CocoaLigature1 \'94. Solution is to manually run something like:\
+    
+\f3\fs22 \cf2 \CocoaLigature0 python3 -m pip install --user numpy==1.18.5
+\f1\fs24 \cf0 \CocoaLigature1 \
+to install an older version of numpy that is compatible with your version of python.\
+\
+imagecodecs: \'93
+\f3\fs22 \cf2 \CocoaLigature0 imagecodecs/opj_color.c:45:22: fatal error: openjpeg.h: No such file or directory\'94
+\f1\fs24 \cf0 \CocoaLigature1 . Solution is to manually run something like:\
+    
+\f3\fs22 \cf2 \CocoaLigature0 python3 -m pip install --user tifffile==2019.7.2
+\f1\fs24 \cf0 \CocoaLigature1 \
+to install an older version of tifffile.\
+\
+After running these manual fixes, rerun the \'93install dependencies\'94 command from the original install instructions (above) and hopefully it will succeed.\
+\
+Error: \'93
+\f3\fs22 \cf2 \CocoaLigature0 No module named xxx\'94
+\f1\fs24 \cf0 \CocoaLigature1 . Are you running in a virtual environment? If so, you probably forgot to remote the --user flag from one of the commands you ran!\
+\
+\pard\pardeftab720\partightenfactor0
+\cf0 \ul Troubleshooting - cupy module\ulnone \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 Unfortunately cupy seems rather fiddly to install. We have found that the following helps get past errors:\
+\pard\pardeftab720\partightenfactor0
+\cf0     
+\f3\fs22 \cf2 \CocoaLigature0 python3 -m pip install --user wheel
+\f1\fs24 \cf0 \CocoaLigature1 \
+    
+\f3\fs22 \cf2 \CocoaLigature0 python3 -m pip install --user cupy==8.2.0\
+\pard\pardeftab720\partightenfactor0
+
+\f1\fs24 \cf0 \CocoaLigature1 \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
 \f0\b\fs28 \cf0 \ul Deconvolving light field images
@@ -109,11 +163,9 @@ In this example there is a folder \'93PSFmatrix\'94 which will contain the light
 
 \f2\i Note that the matrix filename must follow the exact format shown: it should start with \'93fdnormPSFMatrix_\'94. It is also important not to have any trailing zeroes in the parameters, e.g. you should write \'93\'85lambda520n1.mat\'94 not \'93\'85lambda520n1.0.mat\'92.\
 \
-\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
-\f1\i0 \cf0 \ul Calling code as a python module\
-\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
-\cf0 \ulnone Although the entire light-field-flow project is not yet packaged as a formal python module of its own, you can still import individual .py files (e.g. hMatrix and lfdeconv) and call the functions from your own python code. The APIs are not yet formally documented, but hopefully the code in deconvolve_time_series.py etc provides a suitable demonstration of usage.
+\f1\i0 \ul Calling code as a python module\
+\ulnone Although the entire light-field-flow project is not yet packaged as a formal python module of its own, you can still import individual .py files (e.g. hMatrix and lfdeconv) and call the functions from your own python code. The APIs are not yet formally documented, but hopefully the code in deconvolve_time_series.py etc provides a suitable demonstration of usage.
 \f2\i \
 \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
