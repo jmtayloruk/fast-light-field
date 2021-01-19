@@ -6,7 +6,7 @@
 
 import numpy as np
 import scipy.special, scipy.integrate, scipy.signal, scipy.misc
-import h5py, sys, types, time, os, h5py, warnings, cProfile, pstats, multiprocessing, psutil, gc
+import sys, types, time, os, h5py, warnings, cProfile, pstats, multiprocessing, psutil, gc
 from joblib import Parallel, delayed
 from tqdm import tqdm as tqdm
 import light_field_integrands
@@ -605,7 +605,7 @@ def GeneratePSF(M, NA, MLPitch, Nnum, OSR, n, fml, lam, zmin, zmax, zspacing, no
 
     # JT: normalise each individual PSF, so that power is conserved during forward-projection
     if normalisePSF:
-        for cc in tqdm(range(H.shape[4]), desc='normalising'):
+        for cc in tqdm(range(H.shape[4]), desc='Normalising'):
             for bb in range(H.shape[3]):
                 for aa in range(H.shape[2]):
                     thisH = H[:,:,aa,bb,cc]
@@ -739,7 +739,9 @@ def GeneratePSF(M, NA, MLPitch, Nnum, OSR, n, fml, lam, zmin, zmax, zspacing, no
         # My deconvolution code will auto-generate the files it actually needs, when it sees they don't exist yet.
         matPath = '%s_%s.mat'%(matPathStem, MatrixFileString())
         try:
-            os.mkdir(os.path.dirname(matPath))
+            matDir = os.path.dirname(matPath)
+            if len(matDir) > 0:
+                os.mkdir(matDir)
         except FileExistsError:
             pass
         with h5py.File(matPath, 'w') as f:
@@ -789,7 +791,7 @@ def GeneratePSF(M, NA, MLPitch, Nnum, OSR, n, fml, lam, zmin, zmax, zspacing, no
         # such that Matlab cannot parse them correctly)
         filePrefix = 'reduced'
 
-    SaveMatrices(H, Ht, CAindex, '%s/%sPSFmatrix'%(matrixSaveDir,filePrefix))
+    SaveMatrices(H, Ht, CAindex, os.path.join(matrixSaveDir, '%sPSFmatrix'%(filePrefix)))
 
 
 def GeneratePSFFromFilePath(filePath, OSR=3):
@@ -838,13 +840,13 @@ if __name__ == "__main__":
 
     normalisePSF = True
 
-    for psfName in argv:
+    for psfName in sys.argv[1:]:
         if (psfName == 'prevedelM40Partial'):
             GeneratePSF(40, 0.95, 150e-6, 15, 3, 1.0, 3000e-6, 520e-9, -26e-6, 0, 2e-6, normalisePSF)
         elif (psfName == 'prevedelM22'):
             GeneratePSF(22.2, 0.5, 125e-6, 19, 3, 1.33, 3125e-6, 520e-9, -156e-6, 156e-6, 4e-6, normalisePSF)
-        elif (psfName.endsWith('.mat')):
+        elif (psfName.endswith('.mat')):
             # Interpret the matrix filename and generate the PSF accordingly
-            GeneratePSFFromFilename(psfName)
+            GeneratePSFFromFilePath(psfName)
         else:
             print('Unrecognised PSF name "%s"' % psfName)
