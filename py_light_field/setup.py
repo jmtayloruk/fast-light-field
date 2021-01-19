@@ -39,7 +39,7 @@ BUILD_MODULES = []
 py_light_field = Extension('py_light_field',
 	include_dirs = ['/usr/local/include', numpy.get_include()],
 	sources = ['py_light_field.cpp', 'common/jPythonArray.cpp', 'common/PIVImageWindow.cpp', 'common/jPythonCommon.cpp', 'common/jMutex.cpp', 'common/jAssert.cpp', 'common/DebugPrintf_Unix.cpp'],
-	extra_link_args = ARCH + ['-Lfftw-3.3.8/.libs', '-Lfftw-3.3.8/threads/.libs', '-lfftw3f', '-lfftw3f_threads'],
+	extra_link_args = ARCH + ['-Lfftw-3.3.8/.libs', '-Lfftw-3.3.8/threads/.libs', 'fftw-3.3.8/.libs/libfftw3f.a', 'fftw-3.3.8/threads/.libs/libfftw3f_threads.a'],
 	extra_compile_args = ['-O3', '-flax-vector-conversions', '-march=native', '-std=c++11'] + ARCH
 )
 BUILD_MODULES.append(py_light_field)
