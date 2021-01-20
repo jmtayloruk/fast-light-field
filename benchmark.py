@@ -4,6 +4,7 @@ import numpy as np
 import multiprocessing
 import tifffile
 import sys, time, os, csv, warnings, glob
+import psutil
 import cProfile, pstats
 from jutils import tqdm_alias as tqdm
 
@@ -60,6 +61,7 @@ def main(testThreadScaling=False):
             plf.SetThreadFileName("")
 
     print("\033[1;32mBenchmarking results:\033[0m {0}".format(results))
+    print("\033[1;32mMachine specs:\033[0m physical_cpus:{0} logical_cpus:{1} {2}".format(psutil.cpu_count(logical=False), psutil.cpu_count(logical=True), psutil.cpu_freq()))
     return results
 
 if __name__ == "__main__":
