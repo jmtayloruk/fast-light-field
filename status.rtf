@@ -48,21 +48,24 @@ Flow recovery - what I\'92ve done\
 - Consider expanding the PIV code to more than one z plane\
 
 \f0\b \
-Things to work on\
+Things to debug\
 
 \f1\b0 - There is an issue with the dual deconvolution self-test failing on the GPU (optic-tectum). 
 \f0\b I need to debug that. 
 \f1\b0 It\'92s suspicious that it\'92s exactly 0.5 disagreement\'85\
 - There also seems to be a disagreement of exactly 0.25 on the CPU on beag-shuil\'85\
-- Performance on optic-tectum does not seem to match my recorded benchmark any more. Seems to match on other machines. I am not sure why this is, but should perhaps investigate.\
-- I would like to update benchmark code so it prints out CPU info alongside timing data.\
+- Performance on optic-tectum does not seem to match my recorded benchmark any more. Seems to match on other machines. I am not sure why this is, and will probably not investigate further\
+- I had to relax the accuracy condition for lfdeconv parallel-threading with 3 or 6 threads, otherwise I see a disagreement of 1.2e-4 for 6 threads (always) and for 3 threads (sometimes?). I think that is probably OK, but I should look at that more closely.\
+- deconvRL and _PIV actually give slightly different results (deconvRL seems better). Is there an actual bug in deconvRL_PIV, or is Prevedel\'92s implementation of RL actually slightly different (and more efficient)?\
+- If I keep seeing problems where skimage sometimes crashes while running (fix by reinstalling skimage) then I may have to try and debug this further\'85\
+
+\f0\b Enhancements
+\f1\b0 \
+- I would like to update benchmark code so it prints out GPU info as well as CPU info. Should be straightforward to add.\
 - I would like to update the test code in lfdeconv.py so it behaves like lf_performance_analysis.py - see TODO note.
 \f0\b \
 
-\f1\b0 - I had to relax the accuracy condition for lfdeconv parallel-threading with 3 or 6 threads, otherwise I see a disagreement of 1.2e-4 for 6 threads (always) and for 3 threads (sometimes?). I think that is probably OK, but I should look at that more closely.\
-- Should probably make the default output from the self-test routines less verbose\
-- deconvRL and _PIV actually give slightly different results (deconvRL seems better). Is there an actual bug in deconvRL_PIV, or is Prevedel\'92s implementation of RL actually slightly different (and more efficient)?\
-- I have occasionally seen problems where skimage crashes. I do not understand the root cause of that, but I think I fixed it by reinstalling skimage.\
+\f1\b0 - Should probably make the default output from the self-test routines less verbose\
 
 \f0\b \
 Performance

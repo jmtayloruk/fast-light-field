@@ -117,6 +117,10 @@ Error: \'93
 \f3\fs22 \cf2 \CocoaLigature0 No module named xxx\'94
 \f1\fs24 \cf0 \CocoaLigature1 . Are you running in a virtual environment? If so, you probably forgot to remote the --user flag from one of the commands you ran!\
 \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 I have occasionally seen problems where skimage crashes when called from our code. I do not understand the root cause of that, but I think I fixed it by reinstalling skimage.\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
 \pard\pardeftab720\partightenfactor0
 \cf0 \ul Troubleshooting - cupy module\ulnone \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
@@ -127,7 +131,6 @@ Error: \'93
 \f1\fs24 \cf0 \CocoaLigature1 \
     
 \f3\fs22 \cf2 \CocoaLigature0 python3 -m pip install --user cupy==8.2.0\
-\pard\pardeftab720\partightenfactor0
 
 \f1\fs24 \cf0 \CocoaLigature1 \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
@@ -163,9 +166,11 @@ In this example there is a folder \'93PSFmatrix\'94 which will contain the light
 
 \f2\i Note that the matrix filename must follow the exact format shown: it should start with \'93fdnormPSFMatrix_\'94. It is also important not to have any trailing zeroes in the parameters, e.g. you should write \'93\'85lambda520n1.mat\'94 not \'93\'85lambda520n1.0.mat\'92.\
 \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
-\f1\i0 \ul Calling code as a python module\
-\ulnone Although the entire light-field-flow project is not yet packaged as a formal python module of its own, you can still import individual .py files (e.g. hMatrix and lfdeconv) and call the functions from your own python code. The APIs are not yet formally documented, but hopefully the code in deconvolve_time_series.py etc provides a suitable demonstration of usage.
+\f1\i0 \cf0 \ul Calling code as a python module\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 \ulnone Although the entire light-field-flow project is not yet packaged as a formal python module of its own, you can still import individual .py files (e.g. hMatrix and lfdeconv) and call the functions from your own python code. The APIs are not yet formally documented, but hopefully the code in deconvolve_time_series.py etc provides a suitable demonstration of usage.
 \f2\i \
 \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
