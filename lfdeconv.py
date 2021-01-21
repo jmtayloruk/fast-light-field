@@ -231,12 +231,12 @@ try:
       for devicenum in range(cuda.Device.count()):
         device=cuda.Device(devicenum)
         attrs=device.get_attributes()
-        print('{0} threads x {1} processors'.format(attrs[cuda.device_attribute.MAX_THREADS_PER_MULTIPROCESSOR], attrs[cuda.device_attribute.MULTIPROCESSOR_COUNT]))
-        print('clock speed {0}GHz, mem speed {1}GHz x {2}B = {3:.2f}GB/s, L2 {4:.2f}MB'.format(attrs[cuda.device_attribute.CLOCK_RATE]*1e3/1e9, attrs[cuda.device_attribute.MEMORY_CLOCK_RATE]*1e3/1e9, attrs[cuda.device_attribute.GLOBAL_MEMORY_BUS_WIDTH]//8, attrs[cuda.device_attribute.MEMORY_CLOCK_RATE]*attrs[cuda.device_attribute.GLOBAL_MEMORY_BUS_WIDTH]/8e6, attrs[cuda.device_attribute.L2_CACHE_SIZE]/1e6))
+        print(' {0} threads x {1} processors'.format(attrs[cuda.device_attribute.MAX_THREADS_PER_MULTIPROCESSOR], attrs[cuda.device_attribute.MULTIPROCESSOR_COUNT]))
+        print(' Clock speed {0}GHz, mem speed {1}GHz x {2}B = {3:.2f}GB/s, L2 {4:.2f}MB'.format(attrs[cuda.device_attribute.CLOCK_RATE]*1e3/1e9, attrs[cuda.device_attribute.MEMORY_CLOCK_RATE]*1e3/1e9, attrs[cuda.device_attribute.GLOBAL_MEMORY_BUS_WIDTH]//8, attrs[cuda.device_attribute.MEMORY_CLOCK_RATE]*attrs[cuda.device_attribute.GLOBAL_MEMORY_BUS_WIDTH]/8e6, attrs[cuda.device_attribute.L2_CACHE_SIZE]/1e6))
         pynvml.nvmlInit()
         h = pynvml.nvmlDeviceGetHandleByIndex(0)
         info = pynvml.nvmlDeviceGetMemoryInfo(h)
-        print('Total GPU RAM {0:.2f}GB'.format(info.total/1e9))
+        print(' Total GPU RAM {0:.2f}GB'.format(info.total/1e9))
     hasGPU = True
 except ImportError:
     hasGPU = False
