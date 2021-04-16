@@ -977,7 +977,7 @@ struct ThreadInfo
             thisThreadID = threadIDCounter++;
         }
 
-//        printf("=== Running thread %d === \n", thisThreadID);
+//        PySys_WriteStdout("%.3lf === Running thread %d === \n", GetTime(), thisThreadID);
         while (1)
         {
 //            printf("== %d Picking a work item ==\n", thisThreadID);
@@ -997,7 +997,7 @@ struct ThreadInfo
                         if (workItem->CanRun())
                         {
                             // First item of work[w] is not blocked - we should run it
-//                            printf("Work %s[%zd] object %p can run (completed %p)\n", workNames[w], workCounter[w], workItem, workItem->dependency);
+//                            PySys_WriteStdout("%.3lf Work %s[%zd] object %p can run\n", GetTime(), workNames[w], workCounter[w], workItem);
                             workCounter[w]++;
                             break;
                         }
