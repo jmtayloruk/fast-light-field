@@ -107,7 +107,7 @@ int gNumThreadsToUse = NumActualProcessorsAvailable();        // But can be modi
         return complex_fast<_Tp>(__x, __y);
     }
 
-    // Note specialisation to float-only here, to make sure we don't accidentally accept valilla 'complex' inputs.
+    // Note specialisation to float-only here, to make sure we don't accidentally accept vanilla 'complex' inputs.
     template<class _Tp> inline complex_fast<_Tp> operator*(const complex_fast<_Tp>& __x, const float& __y)
     {
         complex_fast<_Tp> __t(__x);
