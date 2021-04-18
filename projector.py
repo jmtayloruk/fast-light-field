@@ -66,7 +66,7 @@ gSynchronizeAfterKernelCalls = False
 class ProjectorForZ_base(object):
     # Note: the variable names in this class mostly imply we are doing the back-projection
     # (e.g. 'Hts', 'projection', etc. However, the same code also does forward-projection!)
-    def __init__(self, projection, hMatrix, cc, fftPlan=None, fftPlan2=None):
+    def __init__(self, projection, hMatrix, cc, fftPlan=None, fftPlan2=None, padToSmallPrimes=True):
         assert(len(projection.shape) == 3)
         self.cpuTime = np.zeros(2)
         self.fftPlan = fftPlan       # Only currently used by GPU version, but our code
@@ -82,7 +82,7 @@ class ProjectorForZ_base(object):
         # fslice: slicing tuple specifying the actual result size that should be returned
         self.s1 = np.array(projection.shape[-2:])
         self.s2 = np.array(hMatrix.PSFShape(cc))
-        (self.fshape, self.fslice, _) = special.convolutionShape(self.s1, self.s2, self.Nnum)
+        (self.fshape, self.fslice, _) = special.convolutionShape(self.s1, self.s2, self.Nnum, padToSmallPrimes)
         
         # rfslice: slicing tuple to crop down full fft array to the shape that would be output from rfftn
         self.rfshape = (self.fshape[0], int(self.fshape[1]/2)+1)
@@ -297,7 +297,10 @@ def BestBlockFactors(jobShape, target, max=None):
 
 class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
     def __init__(self, projection, hMatrix, cc, fftPlan=None, fftPlan2=None):
-        super().__init__(projection, hMatrix, cc, fftPlan=fftPlan, fftPlan2=fftPlan2)
+        # Note that padding fShape to small prime factors *degrades* performance on the GPU.
+        # Presumably either the FFT algorithm handles larger factors well, or the penalty of larger arrays
+        # is too much to make the padding worthwhile
+        super().__init__(projection, hMatrix, cc, fftPlan=fftPlan, fftPlan2=fftPlan2, padToSmallPrimes=False)
         assert(len(projection.shape) == 3)
         self.xAxisMultipliers = cp.asarray(self.xAxisMultipliers)
         self.yAxisMultipliers = cp.asarray(self.yAxisMultipliers)

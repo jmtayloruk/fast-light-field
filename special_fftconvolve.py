@@ -139,7 +139,7 @@ def BetterPrimeTable(Nnum):
         _betterPrimeTable[Nnum] = better
     return _betterPrimeTable[Nnum]
 
-def convolutionShape(in1Shape, in2Shape, Nnum):
+def convolutionShape(in1Shape, in2Shape, Nnum, padToSmallPrimes=True):
     # Logic copied from fftconvolve source code
     s1 = np.array(in1Shape)
     s2 = np.array(in2Shape)
@@ -151,12 +151,14 @@ def convolutionShape(in1Shape, in2Shape, Nnum):
         # Speed up FFT by padding to optimal size for FFTPACK
         # This doesn't work because I need things to be a multiple of Nnum
         fshape = [_next_regular(int(d)) for d in shape]
-    elif False:
-        # This was the code I used which expands up to a multiple of Nnum.
+    elif padToSmallPrimes == False:
+        # Whatever happens, we need to expand up to a multiple of Nnum.
         # That is necessary because the tiling tricks I use in special_fftconvolve etc only work (I think) under that condition.
+        # This minimal amount of padding is fastest on the GPU
         fshape = [int(np.ceil(d/float(Nnum)))*Nnum for d in shape]
     else:
         # Pad up so that prime factors are nice small numbers.
+        # This improves performance on the CPU
         # We are forced to have a multiple of Nnum, for my tiling tricks,
         # and unfortunately that limits what we can do for Nnum=19.
         # However, we can ensure that all the other prime factors are nice and small.
@@ -171,10 +173,10 @@ def convolutionShape(in1Shape, in2Shape, Nnum):
     fslice = tuple([slice(0, int(sz)) for sz in shape])
     return (fshape, fslice, s1)
     
-def special_fftconvolve_part1(in1, bb, aa, Nnum, in2Shape, partial=False):
+def special_fftconvolve_part1(in1, bb, aa, Nnum, in2Shape, partial=False, padToSmallPrimes=True):
     assert((len(in1.shape) == 2) or (len(in1.shape) == 3))
     assert(len(in2Shape) == 2)
-    (fshape, _, _) = convolutionShape(in1.shape, in2Shape, Nnum)
+    (fshape, _, _) = convolutionShape(in1.shape, in2Shape, Nnum, padToSmallPrimes)
     assert(_rfft_mt_safe)
     fa = special_rfftn(in1, bb, aa, Nnum, fshape, partial=partial)
     return (fa, fshape)
@@ -200,7 +202,7 @@ def special_fftconvolve_part3(fab, fshape, fslice, s1, useCCode=False):
             results.append(special_fftconvolve_part3(fab[n], fshape, fslice, s1, useCCode))
         return np.array(results)
 
-def special_fftconvolve(in1, fb, bb, aa, Nnum, in2Shape, accum):
+def special_fftconvolve(in1, fb, bb, aa, Nnum, in2Shape, accum, padToSmallPrimes=True):
     '''
     in1 consists of subapertures of size Nnum x Nnum pixels.
     We are being asked to convolve only pixel (bb,aa) within each subaperture, i.e.
@@ -208,7 +210,7 @@ def special_fftconvolve(in1, fb, bb, aa, Nnum, in2Shape, accum):
         tempSlice[bb::Nnum, aa::Nnum] = in1[bb::Nnum, aa::Nnum]
     This allows us to take a significant shortcut in computing the FFT for in1.
     '''
-    (fa, _) = special_fftconvolve_part1(in1, bb, aa, Nnum, in2Shape)
+    (fa, _) = special_fftconvolve_part1(in1, bb, aa, Nnum, in2Shape, padToSmallPrimes)
     assert(fa.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
     assert(fb.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
 
