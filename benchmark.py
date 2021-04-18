@@ -51,12 +51,13 @@ def main(testThreadScaling=False):
         if True:
             # Square image, PIV scenario, with and without caching FH
             for numJobs in jobsToTest:
-                # Run the test, saving thread performance information
+                # Run the tests, saving thread performance information.
+                # We run each test several times to monitor for variability
                 plf.SetThreadFileName("thread-benchmarks/threads_square_%d.txt" % numJobs)
                 results.append(perf.main([plat, 'piv-image', 'piv-matrix', prime, 'new-batch', 'new-batch'],
                                          batchSize=2, numJobs=numJobs)[1:])
                 plf.SetThreadFileName("thread-benchmarks/threads_square_cached2_%d.txt" % numJobs) # The 2 recognises that we now cache FFT and transpose
-                results.append(perf.main([plat, 'piv-image', 'piv-matrix', 'cache-FH', prime, 'new-batch', 'new-batch'],
+                results.append(perf.main([plat, 'piv-image', 'piv-matrix', 'cache-FH', prime, 'new-batch', 'new-batch', 'new-batch'],
                                          batchSize=2, numJobs=numJobs)[1:])
             plf.SetThreadFileName("")
 

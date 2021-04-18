@@ -374,7 +374,7 @@ def GeneratePSF(M, NA, MLPitch, Nnum, OSR, n, fml, lam, zmin, zmax, zspacing, no
         IMGSIZE_REF_IL = np.ceil(IMGSIZE_REF*( np.abs(p3)/p3max))
         halfWidth_IL =  np.maximum(Nnum*(IMGSIZE_REF_IL + 0 )*OSR, 2*Nnum*OSR)
         centerArea_IL_p = np.arange(np.maximum((centerPT_m - halfWidth_IL),1)-1,
-                                  np.minimum((centerPT_m + halfWidth_IL),len(x1space)), dtype=np.int)   #√
+                                    np.minimum((centerPT_m + halfWidth_IL),len(x1space)), dtype=int)   #√
         if (verbose):
             print('Plane {0}: size of center area = {1}x{2}'.format(eachpt, len(centerArea_IL_p), len(centerArea_IL_p)))
         
@@ -522,7 +522,7 @@ def GeneratePSF(M, NA, MLPitch, Nnum, OSR, n, fml, lam, zmin, zmax, zspacing, no
     x2objspace = x1objspace.copy()
     XREF = int(np.ceil(len(x1objspace)/2))
     YREF = int(np.ceil(len(x1objspace)/2))
-    CP_p = np.arange((centerPT_m-1)/OSR - halfWidth/OSR, (centerPT_m-1)/OSR + halfWidth/OSR +0.1, 1, dtype=np.int) #√For Python indexing
+    CP_p = np.arange((centerPT_m-1)/OSR - halfWidth/OSR, (centerPT_m-1)/OSR + halfWidth/OSR +0.1, 1, dtype=int) #√For Python indexing
     # JT: changed so that the a,b indexing of H only runs to the centre.
     # PSFs for larger values of a,b can be deduced by symmetry.
     # This reduces the size of H by a factor of almost 4, which is very important

@@ -121,6 +121,13 @@ def AnalyzeTestResults2(statsFilePath):
     plt.legend(loc=2)
     plt.show()
 
+def SetNumJobs(nj):
+    plf.SetNumThreadsToUse(nj)
+    nj = plf.GetNumThreadsToUse()  # Reread so we know the true number when "0" was specified
+    print('Will use {0} parallel threads'.format(nj))
+    plf.SetThreadFileName("threads{0}.txt".format(nj))
+    return nj
+
 def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=None, numJobs=plf.GetNumThreadsToUse(), projectorClass=proj.Projector_allC):
     #########################################################################
     # Test code for performance measurement
@@ -134,8 +141,8 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
     if not 'prime-cache' in argv:
         print('NOTE: cache is not being primed - timings for early runs will include FFT planning time')
 
-    print('Will use {0} parallel threads'.format(numJobs))
-
+    numJobs = SetNumJobs(numJobs)
+    
     # Default to cpu mode unless/until explicitly specified otherwise
     args = ['no-cache-FH', 'cpu', 'no-profile', 'default-matrix', 'default-image'] + argv
     projector = None
@@ -155,6 +162,10 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
             profile = True
         elif arg == 'no-profile':
             profile = False
+        elif arg == 'j0':
+            numJobs = SetNumJobs(0)
+        elif arg == 'j1':
+            numJobs = SetNumJobs(1)
         elif arg == 'cache-FH':
             cacheFH = True
             if projector is not None:
@@ -176,6 +187,10 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
         elif arg == 'smaller-image':
             inputImage = inputImage[0:20*15,0:15*15]
             inputImageBatch = np.tile(inputImage[np.newaxis,:,:], (batchSize,1,1))
+        elif arg == 'olaf-image':
+            hMatrix = psfmatrix.LoadMatrix('/Users/jonny/Development/prevedel-matlab-light-field/PSFmatrix/PSFmatrix_M22.222NA0.5MLPitch125fml3125from-60to60zspacing5Nnum19lambda520n1.33.mat')
+            # Note that the image dimensions are deliberately the wrong way round, since that seems to be what we are given from Matlab for this dataset
+            inputImage = np.zeros((1, 1463, 1273), dtype='float32')
         elif arg == 'parallel-scaling':
             # Investigate performance for different numbers of parallel threads
             # Note that this is just for a single inputImage - I haven't used this code for a while.

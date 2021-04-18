@@ -119,6 +119,26 @@ def prime_factors(n):
         factors.append(n)
     return factors
 
+def betterPrimes(n, Nnum, maxAcceptable = 7):
+    # Find a better number slightly larger than n, that is a multiple of Nnum but does not contain other awkward prime factors
+    # Note that _next_regular does this up to prime factors of 5.
+    # Instead of this (probably inefficient) code, I could re-code that to cope with up to 7.
+    result = int(n/Nnum)
+    while np.max(prime_factors(result)) > maxAcceptable:
+        result += 1
+    return result*Nnum
+
+_betterPrimeTable = dict()
+
+def BetterPrimeTable(Nnum):
+    if not Nnum in _betterPrimeTable:
+        # TODO: I am just assuming an upper limit on this lookup table, i.e. assuming we don't have vast matrices to convolve!
+        better = np.arange(1000)*Nnum
+        for i in range(2, len(better)):
+            better[i] = betterPrimes(better[i], Nnum)
+        _betterPrimeTable[Nnum] = better
+    return _betterPrimeTable[Nnum]
+
 def convolutionShape(in1Shape, in2Shape, Nnum):
     # Logic copied from fftconvolve source code
     s1 = np.array(in1Shape)
@@ -130,11 +150,24 @@ def convolutionShape(in1Shape, in2Shape, Nnum):
         # For reference: this is the original code in fftconvolve, which says:
         # Speed up FFT by padding to optimal size for FFTPACK
         # This doesn't work because I need things to be a multiple of Nnum
-        self.fshape = [_next_regular(int(d)) for d in shape]
-    else:
+        fshape = [_next_regular(int(d)) for d in shape]
+    elif False:
         # This was the code I used which expands up to a multiple of Nnum.
         # That is necessary because the tiling tricks I use in special_fftconvolve etc only work (I think) under that condition.
         fshape = [int(np.ceil(d/float(Nnum)))*Nnum for d in shape]
+    else:
+        # Pad up so that prime factors are nice small numbers.
+        # We are forced to have a multiple of Nnum, for my tiling tricks,
+        # and unfortunately that limits what we can do for Nnum=19.
+        # However, we can ensure that all the other prime factors are nice and small.
+        # That significantly speeds up the calculation of F(H).
+        # In theory it could slow down the convolutions (due to making the arrays larger),
+        # but in practice the gain due to the partial FFT we do in there means that the convolutions
+        # are actually faster too.
+        # There therefore seem to be no downsides to using this code here
+        better = BetterPrimeTable(Nnum)
+        fshape = [better[int(np.ceil(d/float(Nnum)))] for d in shape]
+
     fslice = tuple([slice(0, int(sz)) for sz in shape])
     return (fshape, fslice, s1)
     

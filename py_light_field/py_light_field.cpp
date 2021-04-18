@@ -423,6 +423,9 @@ public:
         return a->cc < b->cc;
     }
 #endif
+    virtual void *DestArray() = 0;
+    virtual void *SrcArray1() = 0;
+    virtual void *SrcArray2() = 0;
 };
 
 enum
@@ -572,6 +575,9 @@ public:
         RunComplete();
     }
     virtual void CleanUpAllocations(void) { }
+    virtual void *DestArray() { return mem1; }
+    virtual void *SrcArray1() { return mem2; }
+    virtual void *SrcArray2() { return mem3; }
 };
 
 class FHWorkItemBase : public WorkItem
@@ -579,6 +585,7 @@ class FHWorkItemBase : public WorkItem
 public:
     int                     fshapeY, fshapeX, backwards;
     JPythonArray2D<TYPE>    *fftResult;
+    void                    *destArrayForLogging;       // Needed because we will clean up our result array once we have finished with it
     
     FHWorkItemBase(int _fshapeY, int _fshapeX, int _backwards, int _cc, int _order) : WorkItem(_cc, _order), fshapeY(_fshapeY), fshapeX(_fshapeX), backwards(_backwards), fftResult(NULL)
     {
@@ -591,6 +598,7 @@ public:
         npy_intp strides[2] = { int((fshapeX + 15)/16)*16, 1 };     // Ensure 16-byte alignment of each row, which seems to make things *slightly* faster
         fftResult = new JPythonArray2D<TYPE>(NULL, dims, strides);
         ALWAYS_ASSERT(!(((size_t)fftResult->Data()) & 0xF));        // Check base alignment. In fact, just plain malloc seems to give sufficient alignment.
+        destArrayForLogging = fftResult->Data();
     }
     
     virtual ~FHWorkItemBase()
@@ -606,6 +614,7 @@ public:
         delete fftResult;
         fftResult = NULL;
     }
+    virtual void *DestArray() { return destArrayForLogging; }
 };
 
 class FHWorkItem : public FHWorkItemBase
@@ -626,9 +635,13 @@ public:
             I am imagining this will never be a bottleneck, but I will want to keep an eye on how long the setup time takes.  */
         fftwf_plan_with_nthreads(1);
         AllocateResultArray();      // Just temporarily, for FFT planning! We will delete it at the end of this function
+#if 0
+        // Original - 35s
         int nx[1] = { fftResult->Dims(1) };
         // Compute the horizontal 1D FFTs, for only the nonzero rows
         // Note that we manually split up the 2D FFT into horizontal and vertical 1D FFTs, to enable us to skip the rows that we know are all zeroes.
+        // Note also that this order (horizontal rows first, then vertical) seems to perform slightly faster under some circumstances
+        // I don't know if that's because it uses SSE instructions to parallelise the independent column operations, or what.
         plan = fftwf_plan_many_dft(1, nx, Hts.Dims(0),
                                    (fftwf_complex *)fftResult->Data(), NULL,
                                    fftResult->Strides(1), fftResult->Strides(0),
@@ -643,6 +656,28 @@ public:
                                     (fftwf_complex *)fftResult->Data(), NULL,
                                     fftResult->Strides(0), fftResult->Strides(1),
                                     FFTW_FORWARD, gFFTPlanMethod);
+#else
+        // Swapped order - 32s
+        // Actually, under my benchmarking circumstances, it's slightly faster to do the FFTs in this order
+        int nx[1] = { fftResult->Dims(1) };
+        int ny[1] = { fftResult->Dims(0) };
+        // Compute the vertical 1D FFTs, for only the nonzero rows
+        // Note that we manually split up the 2D FFT into vertical and horizontal 1D FFTs, to enable us to skip the rows that we know are all zeroes.
+        plan = fftwf_plan_many_dft(1, ny, Hts.Dims(1),
+                                    (fftwf_complex *)fftResult->Data(), NULL,
+                                    fftResult->Strides(0), fftResult->Strides(1),
+                                    (fftwf_complex *)fftResult->Data(), NULL,
+                                    fftResult->Strides(0), fftResult->Strides(1),
+                                    FFTW_FORWARD, gFFTPlanMethod);
+        // Compute the horizontal 1D FFTs
+        plan2 = fftwf_plan_many_dft(1, nx, fftResult->Dims(0),
+                                   (fftwf_complex *)fftResult->Data(), NULL,
+                                   fftResult->Strides(1), fftResult->Strides(0),
+                                   (fftwf_complex *)fftResult->Data(), NULL,
+                                   fftResult->Strides(1), fftResult->Strides(0),
+                                   FFTW_FORWARD, gFFTPlanMethod);
+#endif
+        //PySys_WriteStdout("Plan %d %d %d %d %d\n", _cc, fftResult->Dims(0), fftResult->Dims(1), fftResult->Strides(0), fftResult->Strides(1));
         delete fftResult; fftResult = NULL;
     }
     
@@ -685,6 +720,8 @@ public:
         RunComplete();
     }
     
+    virtual void *SrcArray1() { return Hts.Data(); }
+    virtual void *SrcArray2() { return NULL; }
 };
 
 class TransposeWorkItem : public FHWorkItemBase
@@ -716,6 +753,8 @@ public:
         }
         RunComplete();
     }
+    virtual void *SrcArray1() { return sourceFFTWorkItem->DestArray(); }
+    virtual void *SrcArray2() { return NULL; }
 };
 
 class MirrorWorkItem : public FHWorkItemBase
@@ -735,6 +774,8 @@ public:
         MirrorYArray(*sourceFFTWorkItem->fftResult, mirrorYMultiplier, *fftResult);
         RunComplete();
     }
+    virtual void *SrcArray1() { return sourceFFTWorkItem->DestArray(); }
+    virtual void *SrcArray2() { return NULL; }
 };
 
 class IFFTWorkItem : public FHWorkItemBase
@@ -802,6 +843,9 @@ public:
         // Compute the full 2D FFT (i.e. not just the RFFT)
         fftwf_execute_dft_c2r(plan, (fftwf_complex *)paddedMatrix->Data(), result.Data());
     }
+    virtual void *DestArray() { return result.Data(); };
+    virtual void *SrcArray1() { return fab.Data(); };
+    virtual void *SrcArray2() { return paddedMatrix->Data(); };
 };
 
 class ConvolveWorkItem : public WorkItem
@@ -946,6 +990,9 @@ public:
         
         RunComplete();
     }
+    virtual void *DestArray() { return accum.Data(); };
+    virtual void *SrcArray1() { return fhWorkItem_unXmirrored->DestArray(); };
+    virtual void *SrcArray2() { return projection.Data(); };
 };
 
 enum
@@ -1104,7 +1151,7 @@ void CleanUpWork(std::vector<WorkItem *> work[kNumWorkTypes], const char *thread
         FILE *threadFile = fopen(threadFileName, mode);
         for (int w = 0; w < kNumWorkTypes; w++)
             for (size_t i = 0; i < work[w].size(); i++)
-                fprintf(threadFile, "%d\t%d\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\n", work[w][i]->ranOnThread, w, work[w][i]->runStartTime, work[w][i]->runEndTime, work[w][i]->mutexWaitStartTime[0], work[w][i]->mutexWaitEndTime[0], work[w][i]->mutexWaitStartTime[1], work[w][i]->mutexWaitEndTime[1]);
+                fprintf(threadFile, "%d\t%d\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\t%ld\t%ld\t%ld\n", work[w][i]->ranOnThread, w, work[w][i]->runStartTime, work[w][i]->runEndTime, work[w][i]->mutexWaitStartTime[0], work[w][i]->mutexWaitEndTime[0], work[w][i]->mutexWaitStartTime[1], work[w][i]->mutexWaitEndTime[1], (long)work[w][i]->DestArray(), (long)work[w][i]->SrcArray1(), (long)work[w][i]->SrcArray2());
         fclose(threadFile);
     }
     for (int w = 0; w < kNumWorkTypes; w++)
@@ -1380,8 +1427,15 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
             }
             allPlans.push_back(plan);
         }
+#if 1
+        /*  Some sort of sorting is necessary to avoid mutex contention.
+            However, sorting in this manner slows down a single-timepoint reconstruction by about 10%.
+            I presume this is due to poor cache usage, or the need to allocate more blocks of memory simultaneously.
+            TODO: I should investigate a better approach (which might include giving individual threads larger chunks
+                  of work to do, so an individual thread does less jumping around)  */
         for (int w = 0; w < kNumWorkTypes; w++)
             std::stable_sort(work[w].begin(), work[w].end(), WorkItem::Compare);
+#endif
         
         // Do the actual hard work (parallelised)
         RunWork(work);

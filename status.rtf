@@ -59,12 +59,14 @@ Things to debug\
 - deconvRL and _PIV actually give slightly different results (deconvRL seems better). Is there an actual bug in deconvRL_PIV, or is Prevedel\'92s implementation of RL actually slightly different (and more efficient)?\
 - If I keep seeing problems where skimage sometimes crashes while running (fix by reinstalling skimage) then I may have to try and debug this further\'85\
 
-\f0\b Enhancements
-\f1\b0 \
+\f0\b Enhancements\
+
+\f1\b0 - Simple UI improvement: warn or somehow cope if caller provides superfluous trailing digits on the .mat filename, e.g. n1.0. That will lead to inscrutable errors during matrix generation.\
 - I would like to update the test code in lfdeconv.py so it behaves like lf_performance_analysis.py - see TODO note.
 \f0\b \
 
 \f1\b0 - Should probably make the default output from the self-test routines less verbose\
+- Decide what to do in the presence of multiple GPUs. Probably ask the user which one to use - using multiple GPUs would be a big undertaking for me.\
 
 \f0\b \
 Performance

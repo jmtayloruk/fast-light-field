@@ -961,13 +961,16 @@ def BackwardProjectForZ_old(HtCC, projection, progress=tqdm):
         return tempSliceBack
 
 def BackwardProjectACC_old(Ht, projection, CAindex, progress=tqdm, planes=None):
-    backprojection = np.zeros((Ht.shape[0], projection.shape[0], projection.shape[1]), dtype='float32')
+    backprojection = np.zeros((Ht.shape[0], projection.shape[-2], projection.shape[-1]), dtype='float32')
     # Iterate over each z plane
     if planes is None:
         planes = range(Ht.shape[0])
     for cc in progress(planes, desc='Back-project - z'):
         HtCC =  Ht[cc, :, :, CAindex[0,cc]-1:CAindex[1,cc], CAindex[0,cc]-1:CAindex[1,cc]]
-        backprojection[cc] = BackwardProjectForZ_old(HtCC, projection, progress=progress)
+        bp = BackwardProjectForZ_old(HtCC, projection, progress=progress)
+        if len(bp.shape) == 3:  # Multi-timepoint result
+            assert(bp.shape[0] == 1)
+        backprojection[cc] = bp[...,:,:]
 
     return backprojection
 
