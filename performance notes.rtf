@@ -33,7 +33,6 @@ new-batch (x30):	178s with 1 thread\
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
 \cf0 \
 For the near-focal-plane deconvolution problem I am currently working with, it takes 3.2s on my mac pro and 2.4s on beag-shuil [these times are outdated, but are with caching of F(H) and its transpose]. In both cases, ~78% of the time is spent in convolve. I suspect these are heavily memory-bound, since the speedup with 8 threads is only 6x (mac pro) and 4x (beag-shuil).\
-\
 
 \f2\i \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
@@ -44,7 +43,7 @@ For the near-focal-plane deconvolution problem I am currently working with, it t
 \f3\fs22 \CocoaLigature0 [[55.92917013168335], [7.395716190338135, 7.230978965759277], [3.470026969909668, 3.47963285446167]]\
 
 \f0\fs24 \CocoaLigature1 Macbook Pro 2019 [4] 
-\f3\fs22 \cf2 \CocoaLigature0 	\cf2 [[56.85784101486206], [11.341279029846191, 11.382513046264648], [3.6087489128112793, 3.3346760272979736, 3.2811148166656494]]\
+\f3\fs22 \cf2 \CocoaLigature0 	[[56.85784101486206], [11.341279029846191, 11.382513046264648], [3.6087489128112793, 3.3346760272979736, 3.2811148166656494]]\
 					
 \f4\b \cf3 Machine specs:
 \f3\b0 \cf2  physical_cpus:4 logical_cpus:8 scpufreq(current=2400, min=2400, max=2400)
@@ -66,7 +65,7 @@ optic-tectum [4]
 
 \f0\fs24 \cf0 \CocoaLigature1 new-brutha [24]
 \f2\i  		
-\f3\i0\fs22 \cf2 \CocoaLigature0 [\cf2 [17.89953589439392], [3.4818685054779053, 3.828882932662964], [1.6241559982299805, 1.5127336978912354, 1.2638728618621826]]\
+\f3\i0\fs22 \cf2 \CocoaLigature0 [[17.89953589439392], [3.4818685054779053, 3.828882932662964], [1.6241559982299805, 1.5127336978912354, 1.2638728618621826]]\
 \pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
 
 \f4\b \cf3 					Machine specs:
@@ -77,9 +76,7 @@ optic-tectum [4]
 \f0\i0 I may also be able to improve the speed of the small PIV case if I revisit that - when it\'92s only taking 2s there are probably significant python overheads.\
 For now I\'92ve confirmed that x30 parallelism is sufficient on the GPU, but I should keep an eye on that if I make further improvements to the GPU code\
 \
-Interestingly, padding the convolution seems to have given no improvement (or degradation) whatsoever on the Mac Pro, for the x30 case. It does for x1. 
-\f2\i I wonder if the extra memory access is impacting the convolutions more than the gain in FFT speed?
-\f0\i0 \
+Interestingly, padding the convolution seems to have given no improvement (or degradation) whatsoever on the Mac Pro, for the x30 case. It does for x1. It looks like the FFTs are indeed faster (48s instead of 67s) but convolution is slower (360s instead of 348s) and there is 10s more rusage for the same run time.\
 \
 
 \f2\i \
@@ -87,35 +84,25 @@ Interestingly, padding the convolution seems to have given no improvement (or de
 
 \f0\i0 \cf0 \ul Summary\
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
-\cf0 \ulnone - A single thread of my code is ~2.4x faster than the (parallel) MATLAB code, if I am allowed to process batch of 30 frames. With 4 threads it is 7.5x faster; with 8 threads it is 14x faster. It will be hard to speed the code up any more, but see comments below for possible things to try.\
+\cf0 \ulnone - A single thread of my code is ~2.4x faster than the (parallel) MATLAB code, if I am allowed to process batch of 30 frames. With 4 threads it is 7.5x faster; with 8 threads it is 14x faster. It will be hard to speed the code up any more, but see comments below for possible things to try. I\'92m not quite sure why it scales better on my mac pro than on my macbook pro, but one possibility is that my parallelisation might be better than Matlab\'92s?\
 - My code is primarily focused on processing batches, but I shouldn\'92t forget that I am personally interested in deconvolving small numbers of planes from one or two images, for my PIV work. \
 \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
 \cf0 \ul Things I should still investigate\
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
-\cf0 \ulnone Although this may not be important, 
+\cf0 \ulnone - Although this may not be important, 
 \f1\b there\'92s something weird going on
-\f0\b0  with lf_performance_analysis.py old. It\'92s running implausibly quickly compared to my new code (and matlab). I think it must be doing less work somehow, although it\'92s not immediately obvious to me how/why that\'92s happening.
+\f0\b0  with lf_performance_analysis.py \ul old\ulnone . It\'92s running implausibly quickly compared to my new code (and matlab). I think it must be doing less work somehow, although it\'92s not immediately obvious to me how/why that\'92s happening.
 \f1\b \
 \
-Does the GPU code scale up
-\f0\b0  to a full-size problem, or do I find that memory restrictions prevent me from doing a x30 reconstruction? Each volume is 100MB, so doing x30 might be optimistic. However, if needed I could do things one plane at a time (doing the iFFT and copying back to RAM) without that incurring a huge overhead I think.\
-\
-\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
 
-\f1\b \cf0 Can I further improve GPU performance
-\f0\b0  somehow?
-\f1\b \
-\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
+\f0\b0 - 
+\f1\b [Reminder to check separate notes about GPU performance]\
 
-\f0\b0 \cf0 \
+\f0\b0 \
 Can I improve the speedup obtained from 8-way threading? I am getting 800% CPU load, but am only getting 5-6x speedup overall. I and increasingly convinced the issue is memory bandwidth (e.g. on my 2cpu x 4core machine). Basically, everything just takes a little bit longer. I did see a ~10% speedup by combining operations into CalculateRowBoth() to reduce memory bandwidth demands, but I reckon any further batching would be a lot of effort for marginal gain. For the combining operations, I eliminated 25% of what I think are the uncached reads, so the net 10% speedup is perhaps a bit disappointing, but not completely out of the ballpark I would have expected. Even for small problem sets, I would need to batch things up row-by-row or I would be overflowing caches - I don\'92t think it\'92s enough to process items one after the other on the same thread.\
 \
-- I tried changing the sequencing of my operations to prevent batching up of convolves. The new order took a tiny bit longer to run overall, but the parallelism was poor due to mutex contention. If I could reduce the mutex contention then I get the run time under 6s (just over 10% speedup). However, it\'92s possible I\'92m just gaining performance due to reduced bandwidth contention when some threads are blocked on mutexes! If I want to try this new ordering, I will need to sort out the mutex issue somehow. However, I think the main reason I was trying the reorder was just because I didn\'92t understand why things were happening in bursts. Since I don\'92t think the bursts are a problem for cache residency, it may be that they aren\'92t causing a problem. My only thought had been that it might well help (for cases with few timepoints) to spread out the FFTs more evenly (and therefore possibly ease memory bandwidth when running with max threads) rather than doing them in bigger batches.\
-\
-- I could amortise out the multipliers in the convolution, and apply them to the FFT array just once regardless of batch size. I would need to watch how I handle MirrorRow (would that require different multipliers?) and the multiplications only seem to take 5% of the total run time on my Macbook Pro\
-\
-- I notice with single-threaded macbook air there is a huge variation in the run time of both convolves and FFTs. Could that be because, for this small problem size, the CPU caches *are* being used effectively (sometimes)? If so, then I should perhaps revisit that and think about whether I can use them more effectively.\
+- I tried changing the sequencing of my operations to prevent batching up of convolves. The new order took a tiny bit longer to run overall, but the parallelism was poor for small batch sizes due to mutex contention. In the absence of mutex contention, it runs slightly faster, but it doesn\'92t seem to be a huge change. Looking at histograms of block run times, removing the sorting doesn\'92t make a huge difference. In either case, things just generally take \'93a bit longer\'94 when multithreaded. It would be nice to be able to improve the thread scaling, but my suspicion is that we are simply limited by memory bandwidth, in which case multithreading is never going to have an ideal scaling.\
 \
 - For a full problem, I really am doing huge numbers of individual convolve operations. It will be very unwieldy to fuse multiple operations, but I reckon I might get a significant speedup if I process 2 or 4 timepoints simultaneously (which makes it easier to apply \ul vectorised\ulnone  multiplications), 
 \f2\i and
@@ -137,4 +124,9 @@ Miscellaneous notes\ulnone \
 \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
 \cf0 \ul Low priority\ulnone \
+- In principle I could teach fftw to work with higher prime values, including 19. The details are here http://www.fftw.org/fftw3_doc/Generating-your-own-code.html#Generating-your-own-code but it will involve a bit of playing around to see if it is possible.\
+\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
+\cf0 - I could amortise out the multipliers in the convolution, and apply them to the FFT array just once regardless of batch size. I would need to watch how I handle MirrorRow (would that require different multipliers?) and the multiplications only seem to take 5% of the total run time on my Macbook Pro, so it is probably not high priority.\
+\
 - [Apr 2021: I\'92m not sure what this old note means - I would need to look back through the code to try and make sense of it] I can probably speed up my ifft a bit by doing it in one go (it wastes a lot of time at the moment, and shouldn\'92t need to clear the whole array - we only need a little bit of zero-padding))}

@@ -1,0 +1,28 @@
+{\rtf1\ansi\ansicpg1252\cocoartf1671\cocoasubrtf600
+{\fonttbl\f0\fswiss\fcharset0 Helvetica;\f1\fswiss\fcharset0 Helvetica-Bold;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww20000\viewh17580\viewkind0
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 \ul \ulc0 Outstanding issues\ulnone \
+- My HMatrix class rather relies on having a matrix stored on disk. Probably what makes most sense is to save something to disk from the Olaf code, and for my code to load it. As long as I can do that once at start of day, that should be fairly straightforward.\
+- Note that the Olaf code does not seem to make use of CAindex. I\'92m not sure why it doesn\'92t, but that does make for unnecessary work. If I want to get the full speed out of Olaf calling my code, I will need to reinstate that I think. \
+\
+\ul Performance in Prevedel\'92s code (Macbook Pro)\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 \ulnone For my test worm image, Prevedel\'92s code takes 14.5 + 31.2 for iterations 0 and 1. Mine takes 11.6 and 22.7 after priming. So for this small-sized task it\'92s about 1.3x faster (on a single timepoint).\
+\
+Rerunning with a larger problem (Nils\'92s fish heart dataset, with the params he used for Olaf, but running with Prevedel\'92s code initially):\
+Prevedel Matlab code:	\
+My code from Matlab: 	135 backprojection (priming)\
+				 	111
+\f1\b  
+\f0\b0 + 221 after priming\
+When I test the backprojection from my own python script, it takes 110s, which is pretty much consistent.\
+Note that at the moment when running x30 with my own original chosen benchmark I get a 14.5x speedup compared to Matlab (Mac Pro, vs 2019a) and 7.5x speedup (Macbook Pro, vs 2020a).\
+\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 \ul \ulc0 Low-priority issues\ulnone \
+- On beag-shuil, it won\'92t accept /usr/bin/python3.5 for some reason (\'93path argument does not specify a valid executable\'94). I can however run with /usr/bin/python2.7 and matlab 2018a (although I presume there will be later issues as my code probably expects Python 3.x).\
+}

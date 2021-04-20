@@ -433,15 +433,15 @@ class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
             if cacheKey in gBlockSizeCache:
                 (self.mirrorYBlocks, self.expandXBlocks, self.calculateRowsBlocks) = gBlockSizeCache[cacheKey]
             else:
-                print('Finding best block factors for Expand, on shape {0}'.format(expandWorkShape))
+                #print('Finding best block factors for Expand, on shape {0}'.format(expandWorkShape))
                 testExpand = lambda dummyLoad,blocks: self.special_fftconvolve2_expand(dummyLoad, 0, blocks=blocks)
                 self.expandXBlocks = self.CalibrateBlockFactors(testExpand, expandWorkShape)
-                print('Finding best block factors for CalculateRows, on shape {0}'.format(calculateRowsWorkShape))
+                #print('Finding best block factors for CalculateRows, on shape {0}'.format(calculateRowsWorkShape))
                 fHtsFull = cp.zeros(self.fshape)
                 accum = cp.zeros((projection.shape[0],self.rfshape_xPadded[0],self.rfshape_xPadded[1]))
                 testRows = lambda dummyLoad,blocks: self.special_fftconvolve2_nomirror(dummyLoad, fHtsFull, 0, 0, self.Nnum, accum, blocks=blocks)
                 self.calculateRowsBlocks = self.CalibrateBlockFactors(testRows, calculateRowsWorkShape)
-                print('Finding best block factors for MirrorY, on shape {0}'.format(mirrorYWorkShape))
+                #print('Finding best block factors for MirrorY, on shape {0}'.format(mirrorYWorkShape))
                 testMirror = lambda dummyLoad,blocks: self.MirrorYArray(dummyLoad, blocks=blocks)
                 self.mirrorYBlocks = self.CalibrateBlockFactors(testMirror, mirrorYWorkShape)
                 self.mirrorYBlocks = (self.mirrorYBlocks[1], self.mirrorYBlocks[2])   # Actually it needs to be just a 2D block tuple
@@ -572,7 +572,7 @@ class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
                         bestTime = totalTime/numRepeats
                         bestShape = thisBlockShape
         tEnd = time.time()
-        print('Best shape {0}, took {1:.2f}ms. Tried {2} in {3:.2f}s'.format(bestShape, bestTime*1e3, numTries, tEnd-tStart))
+        #print('Best shape {0}, took {1:.2f}ms. Tried {2} in {3:.2f}s'.format(bestShape, bestTime*1e3, numTries, tEnd-tStart))
         return bestShape
     
     def special_fftconvolve2_mirror(self, partialFourierOfProjection, fHtsFull, bb, aa, Nnum, accum, blocks=None):
@@ -610,10 +610,14 @@ class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
 
     def PrecalculateFFTArray(self, cc, source):
         # Rejig 'projection' into a shape we can work with more easily
-        tempRejig = cp.empty(self.batchFFTShape, dtype='complex64')
-        for bb in range(self.Nnum):
-            for aa in range(self.Nnum):
-                tempRejig[:,bb,aa,:,:] = source[...,bb::self.Nnum,aa::self.Nnum]
+        # source.strides[2] should be contiguous - the x spacing in the original iamge
+        # source.strides[1] is the y spacing in the original image
+        # source.strides[0] is the spacing between timepoints in the original image
+        # newStrides[4] should be an interval of self.Nnum elements
+        # newStrides[3] should be an interval of self.Nnum rows
+        newStrides = (source.strides[0], source.strides[1], source.strides[2], source.strides[1]*self.Nnum, source.strides[2]*self.Nnum)
+        # Read out the strides, and make a copy to force creation of a new array with contiguous storage
+        tempRejig = cp.lib.stride_tricks.as_strided(source, self.batchFFTShape, newStrides).astype('complex64', order='C')
         # Calculate all the FFTs in one big batch
         self.precalculatedFFTArray = cupyx.scipy.fftpack.fftn(tempRejig, self.reducedShape, axes=(3,4), plan=self.fftPlan)
         if gSynchronizeAfterKernelCalls:

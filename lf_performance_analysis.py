@@ -123,10 +123,17 @@ def AnalyzeTestResults2(statsFilePath):
 
 def SetNumJobs(nj):
     plf.SetNumThreadsToUse(nj)
-    nj = plf.GetNumThreadsToUse()  # Reread so we know the true number when "0" was specified
+    nj = plf.GetNumThreadsToUse()  # Read the value back, so we know the true number even if "0" was specified
     print('Will use {0} parallel threads'.format(nj))
-    plf.SetThreadFileName("threads{0}.txt".format(nj))
+    plf.SetThreadFileName('threads{0}.txt'.format(nj))
     return nj
+
+def IsNumericArg(arg, stem):
+    return arg.startswith(stem) and arg[len(stem):].isnumeric()
+
+def SetImage(img, batchSize):
+    print('Will use image shape {0}, batch x{1}'.format(img.shape, batchSize))
+    return img, np.tile(img[np.newaxis,:,:], (batchSize,1,1))
 
 def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=None, numJobs=plf.GetNumThreadsToUse(), projectorClass=proj.Projector_allC):
     #########################################################################
@@ -162,10 +169,18 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
             profile = True
         elif arg == 'no-profile':
             profile = False
-        elif arg == 'j0':
-            numJobs = SetNumJobs(0)
-        elif arg == 'j1':
-            numJobs = SetNumJobs(1)
+        elif IsNumericArg(arg, 'j'):
+            numJobs = SetNumJobs(int(arg[1:]))
+        elif IsNumericArg(arg, 'x'):
+            batchSize = int(arg[1:])
+            inputImage,inputImageBatch = SetImage(inputImage, batchSize)
+
+        elif arg == 'default-matrix':
+            hMatrix = psfmatrix.LoadMatrix(matPath)
+        elif arg == 'piv-matrix':
+            hMatrix = psfmatrix.LoadMatrix('PSFmatrix/fdnormPSFmatrix_M22.2NA0.5MLPitch125fml3125from-56to56zspacing4Nnum19lambda520n1.33.mat')
+        elif arg == 'olaf-matrix':
+            hMatrix = psfmatrix.LoadMatrix('PSFmatrix/fdnormPSFmatrix_M22.222NA0.5MLPitch125fml3125from-60to60zspacing5Nnum19lambda520n1.33.mat')
         elif arg == 'cache-FH':
             cacheFH = True
             if projector is not None:
@@ -174,23 +189,18 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
             cacheFH = False
             if projector is not None:
                 projector.cacheFH = cacheFH
-        elif arg == 'default-matrix':
-            hMatrix = psfmatrix.LoadMatrix(matPath)
-        elif arg == 'piv-matrix':
-            hMatrix = psfmatrix.LoadMatrix('PSFmatrix/fdnormPSFmatrix_M22.2NA0.5MLPitch125fml3125from-56to56zspacing4Nnum19lambda520n1.33.mat')
+
         elif arg == 'default-image':
-            inputImage = defaultImage
-            inputImageBatch = np.tile(inputImage[np.newaxis,:,:], (batchSize,1,1))
+            inputImage,inputImageBatch = SetImage(defaultImage, batchSize)
         elif arg == 'piv-image':
-            inputImage = np.zeros((19*19,19*19), dtype='float32')
-            inputImageBatch = np.tile(inputImage[np.newaxis,:,:], (batchSize,1,1))
+            inputImage,inputImageBatch = SetImage(np.zeros((19*19,19*19), dtype='float32'), batchSize)
         elif arg == 'smaller-image':
-            inputImage = inputImage[0:20*15,0:15*15]
-            inputImageBatch = np.tile(inputImage[np.newaxis,:,:], (batchSize,1,1))
+            inputImage,inputImageBatch = SetImage(inputImage[0:20*15,0:15*15], batchSize)
         elif arg == 'olaf-image':
-            hMatrix = psfmatrix.LoadMatrix('/Users/jonny/Development/prevedel-matlab-light-field/PSFmatrix/PSFmatrix_M22.222NA0.5MLPitch125fml3125from-60to60zspacing5Nnum19lambda520n1.33.mat')
+            # This is just a dummy image with the same dimensions as Nils's test image for the Olaf code
             # Note that the image dimensions are deliberately the wrong way round, since that seems to be what we are given from Matlab for this dataset
-            inputImage = np.zeros((1, 1463, 1273), dtype='float32')
+            inputImage,inputImageBatch = SetImage(np.zeros((1463, 1273), dtype='float32'), batchSize)
+
         elif arg == 'parallel-scaling':
             # Investigate performance for different numbers of parallel threads
             # Note that this is just for a single inputImage - I haven't used this code for a while.
@@ -244,7 +254,7 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
             def RunThis():
                 return lfdeconv.BackwardProjectACC(hMatrix, inputImageBatch, planes=planesToProcess, progress=util.noProgressBar, numjobs=numJobs, projector=projector, logPrint=False)
         else:
-            print('UNRECOGNISED:', arg)
+            print('UNRECOGNISED ARGUMENT:', arg)
             
         if RunThis is not None:
             if profile:
