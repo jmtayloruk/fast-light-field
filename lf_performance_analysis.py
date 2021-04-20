@@ -226,7 +226,19 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
         elif arg == 'old':
             # Run old code (single-threaded)
             print('Benchmarking old slow code (single image)')
-            (_H, _Ht, _CAindex, _, _, _, _) = psfmatrix.LoadRawMatrixData(matPath)
+            matBase,matFile = os.path.split(matPath)
+            oldMatPath = matPath
+            try:
+                i = matFile.index('PSFmatrix')
+                if i > 1:
+                    print('This looks like a matrix file with a prefix. The old code needs a full .mat file, not just one quadrant')
+                    print('We will try loading counterpart file {0}'.format(matFile[i:]))
+                    oldMatPath = os.path.join(matBase, matFile[i:])
+                else:
+                    assert(i == 0)
+            except:
+                print('Filename doesnt follow the expected format. We will try and load it anyway...')
+            (_H, _Ht, _CAindex, _, _, _, _) = psfmatrix.LoadRawMatrixData(oldMatPath)
             def RunThis():
                 return proj.BackwardProjectACC_old(_Ht, inputImage, _CAindex, planes=planesToProcess)
         elif arg == 'prime-cache':

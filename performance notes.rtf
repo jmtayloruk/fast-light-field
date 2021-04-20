@@ -50,7 +50,7 @@ For the near-focal-plane deconvolution problem I am currently working with, it t
 \f0\fs24 \cf0 \CocoaLigature1 \
 optic-tectum [4]			
 \f3\fs22 \cf2 \CocoaLigature0 [[54.097476959228516], [9.557530164718628, 9.490315914154053], [3.5699703693389893, 3.5606672763824463, 3.5801541805267334], \
-					 [5.648859024047852], [1.7718734741210938, 1.7605414390563965], [1.755242109298706, 1.7526016235351562, 1.763211965560913]]\
+					 \cf2 [5.8761820793151855], [1.5330743789672852, 1.4889581203460693], [1.5329170227050781, 1.5079047679901123, 1.507934331893921]]\cf2 \
 					
 \f4\b \cf3 Machine specs:
 \f3\b0 \cf2  physical_cpus:4 logical_cpus:8 scpufreq(current=1961.49075, min=1600.0, max=4100.0)\
@@ -90,13 +90,7 @@ Interestingly, padding the convolution seems to have given no improvement (or de
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
 \cf0 \ul Things I should still investigate\
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
-\cf0 \ulnone - Although this may not be important, 
-\f1\b there\'92s something weird going on
-\f0\b0  with lf_performance_analysis.py \ul old\ulnone . It\'92s running implausibly quickly compared to my new code (and matlab). I think it must be doing less work somehow, although it\'92s not immediately obvious to me how/why that\'92s happening.
-\f1\b \
-\
-
-\f0\b0 - 
+\cf0 \ulnone - 
 \f1\b [Reminder to check separate notes about GPU performance]\
 
 \f0\b0 \
@@ -126,7 +120,6 @@ Miscellaneous notes\ulnone \
 \cf0 \ul Low priority\ulnone \
 - In principle I could teach fftw to work with higher prime values, including 19. The details are here http://www.fftw.org/fftw3_doc/Generating-your-own-code.html#Generating-your-own-code but it will involve a bit of playing around to see if it is possible.\
 \
-\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
-\cf0 - I could amortise out the multipliers in the convolution, and apply them to the FFT array just once regardless of batch size. I would need to watch how I handle MirrorRow (would that require different multipliers?) and the multiplications only seem to take 5% of the total run time on my Macbook Pro, so it is probably not high priority.\
+- I could amortise out the multipliers in the convolution, and apply them to the FFT array just once regardless of batch size. I would need to watch how I handle MirrorRow (would that require different multipliers?) and the multiplications only seem to take 5% of the total run time on my Macbook Pro, so it is probably not high priority.\
 \
 - [Apr 2021: I\'92m not sure what this old note means - I would need to look back through the code to try and make sense of it] I can probably speed up my ifft a bit by doing it in one go (it wastes a lot of time at the moment, and shouldn\'92t need to clear the whole array - we only need a little bit of zero-padding))}
