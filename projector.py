@@ -72,6 +72,7 @@ class ProjectorForZ_base(object):
         self.fftPlan = fftPlan       # Only currently used by GPU version, but our code
         self.fftPlan2 = fftPlan2     # expects it to be defined (as None) in other cases
         self.initialisedForCC = cc
+        self.padToSmallPrimes = padToSmallPrimes
         
         # Nnum: number of pixels across a lenslet array (after rectification)
         self.Nnum = hMatrix.Nnum
@@ -82,7 +83,7 @@ class ProjectorForZ_base(object):
         # fslice: slicing tuple specifying the actual result size that should be returned
         self.s1 = np.array(projection.shape[-2:])
         self.s2 = np.array(hMatrix.PSFShape(cc))
-        (self.fshape, self.fslice, _) = special.convolutionShape(self.s1, self.s2, self.Nnum, padToSmallPrimes)
+        (self.fshape, self.fslice, _) = special.convolutionShape(self.s1, self.s2, self.Nnum, self.padToSmallPrimes)
         
         # rfslice: slicing tuple to crop down full fft array to the shape that would be output from rfftn
         self.rfshape = (self.fshape[0], int(self.fshape[1]/2)+1)
@@ -295,12 +296,14 @@ def BestBlockFactors(jobShape, target, max=None):
             result[i] = BestFactorUpTo(jobShape[i], max[i])
     return tuple(result)
 
+# Note that padding fShape to small prime factors *degrades* performance on the GPU.
+# Presumably either the FFT algorithm handles larger factors well, or the penalty of larger arrays
+# is too much to make the padding worthwhile
+padToSmallPrimesOnGPU = False
+
 class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
     def __init__(self, projection, hMatrix, cc, fftPlan=None, fftPlan2=None):
-        # Note that padding fShape to small prime factors *degrades* performance on the GPU.
-        # Presumably either the FFT algorithm handles larger factors well, or the penalty of larger arrays
-        # is too much to make the padding worthwhile
-        super().__init__(projection, hMatrix, cc, fftPlan=fftPlan, fftPlan2=fftPlan2, padToSmallPrimes=False)
+        super().__init__(projection, hMatrix, cc, fftPlan=fftPlan, fftPlan2=fftPlan2, padToSmallPrimes=padToSmallPrimesOnGPU)
         assert(len(projection.shape) == 3)
         self.xAxisMultipliers = cp.asarray(self.xAxisMultipliers)
         self.yAxisMultipliers = cp.asarray(self.yAxisMultipliers)
@@ -810,7 +813,7 @@ class Projector_pythonSkeleton(Projector_base):
         # Compute the FFT for each z plane
         Backprojection = np.zeros((len(planes), projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
         for cc in planes:
-            (fshape, fslice, s1) = special.convolutionShape(projection.shape, hMatrix.PSFShape(cc), hMatrix.Nnum)
+            (fshape, fslice, s1) = special.convolutionShape(projection.shape, hMatrix.PSFShape(cc), hMatrix.Nnum, self.padToSmallPrimes)
             Backprojection[cc] = special.special_fftconvolve_part3(fourierZPlanes[cc], fshape, fslice, s1)
         return Backprojection
 
@@ -831,7 +834,7 @@ class Projector_pythonSkeleton(Projector_base):
         # Compute and accumulate the FFT for each z plane
         TOTALprojection = self.nativeZeros((realspace.shape[1], realspace.shape[2], realspace.shape[3]), dtype='float32')
         for cc in planes:
-            (fshape, fslice, s1) = special.convolutionShape(realspace[cc].shape, hMatrix.PSFShape(cc), hMatrix.Nnum)
+            (fshape, fslice, s1) = special.convolutionShape(realspace[cc].shape, hMatrix.PSFShape(cc), hMatrix.Nnum, self.padToSmallPrimes)
             thisProjection = special.special_fftconvolve_part3(fourierProjection[cc], fshape, fslice, s1)
             TOTALprojection += thisProjection
         return TOTALprojection
@@ -882,7 +885,7 @@ class Projector_gpuHelpers(Projector_pythonSkeleton):
         # Compute the FFT for each z plane
         Backprojection = self.nativeZeros((len(fourierZPlanes), projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
         for cc in planes:
-            (fshape, fslice, s1) = special.convolutionShape(projection.shape, hMatrix.PSFShape(cc), hMatrix.Nnum)
+            (fshape, fslice, s1) = special.convolutionShape(projection.shape, hMatrix.PSFShape(cc), hMatrix.Nnum, padToSmallPrimesOnGPU)
             # This next code is copied from special_fftconvolve_part3
             results = []
             for n in range(fourierZPlanes[cc].shape[0]):
@@ -897,7 +900,7 @@ class Projector_gpuHelpers(Projector_pythonSkeleton):
         # Compute and accumulate the FFT for each z plane
         TOTALprojection = self.nativeZeros((realspace.shape[1], realspace.shape[2], realspace.shape[3]), dtype='float32')
         for cc in planes:
-            (fshape, fslice, s1) = special.convolutionShape(realspace[cc].shape, hMatrix.PSFShape(cc), hMatrix.Nnum)
+            (fshape, fslice, s1) = special.convolutionShape(realspace[cc].shape, hMatrix.PSFShape(cc), hMatrix.Nnum, padToSmallPrimesOnGPU)
             # This next code is copied from special_fftconvolve_part3
             for n in range(fourierProjection[cc].shape[0]):
                 inv = cp.fft.irfftn(fourierProjection[cc][n], fshape)
@@ -919,7 +922,7 @@ def ProjectForZ(hMatrix, backwards, cc, source, projectorClass=Projector_allC, p
     result = projector.ProjectForZ(cc, source, hMatrix, backwards)
     # Actually, for forward projection we don't need to do this separately for every z,
     # but it's easier to do it for consistency (and this function is not used in performance-critical code anyway)
-    (fshape, fslice, s1) = special.convolutionShape(source.shape, hMatrix.PSFShape(cc), hMatrix.Nnum)
+    (fshape, fslice, s1) = special.convolutionShape(source.shape, hMatrix.PSFShape(cc), hMatrix.Nnum, False)
     return special.special_fftconvolve_part3(result, fshape, fslice, s1)
 
         

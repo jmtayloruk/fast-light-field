@@ -139,7 +139,7 @@ def BetterPrimeTable(Nnum):
         _betterPrimeTable[Nnum] = better
     return _betterPrimeTable[Nnum]
 
-def convolutionShape(in1Shape, in2Shape, Nnum, padToSmallPrimes=True):
+def convolutionShape(in1Shape, in2Shape, Nnum, padToSmallPrimes):
     # Logic copied from fftconvolve source code
     s1 = np.array(in1Shape)
     s2 = np.array(in2Shape)
@@ -173,7 +173,7 @@ def convolutionShape(in1Shape, in2Shape, Nnum, padToSmallPrimes=True):
     fslice = tuple([slice(0, int(sz)) for sz in shape])
     return (fshape, fslice, s1)
     
-def special_fftconvolve_part1(in1, bb, aa, Nnum, in2Shape, partial=False, padToSmallPrimes=True):
+def special_fftconvolve_part1(in1, bb, aa, Nnum, in2Shape, padToSmallPrimes, partial=False):
     assert((len(in1.shape) == 2) or (len(in1.shape) == 3))
     assert(len(in2Shape) == 2)
     (fshape, _, _) = convolutionShape(in1.shape, in2Shape, Nnum, padToSmallPrimes)
