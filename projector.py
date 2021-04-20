@@ -813,7 +813,8 @@ class Projector_pythonSkeleton(Projector_base):
         # Compute the FFT for each z plane
         Backprojection = np.zeros((len(planes), projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
         for cc in planes:
-            (fshape, fslice, s1) = special.convolutionShape(projection.shape, hMatrix.PSFShape(cc), hMatrix.Nnum, self.padToSmallPrimes)
+            projector = self.zProjectorClass(projection, hMatrix, cc, self.fftPlan, self.fftPlan2)
+            (fshape, fslice, s1) = special.convolutionShape(projection.shape, hMatrix.PSFShape(cc), hMatrix.Nnum, projector.padToSmallPrimes)
             Backprojection[cc] = special.special_fftconvolve_part3(fourierZPlanes[cc], fshape, fslice, s1)
         return Backprojection
 
@@ -834,7 +835,8 @@ class Projector_pythonSkeleton(Projector_base):
         # Compute and accumulate the FFT for each z plane
         TOTALprojection = self.nativeZeros((realspace.shape[1], realspace.shape[2], realspace.shape[3]), dtype='float32')
         for cc in planes:
-            (fshape, fslice, s1) = special.convolutionShape(realspace[cc].shape, hMatrix.PSFShape(cc), hMatrix.Nnum, self.padToSmallPrimes)
+            projector = self.zProjectorClass(realspace[cc], hMatrix, cc, self.fftPlan, self.fftPlan2)
+            (fshape, fslice, s1) = special.convolutionShape(realspace[cc].shape, hMatrix.PSFShape(cc), hMatrix.Nnum, projector.padToSmallPrimes)
             thisProjection = special.special_fftconvolve_part3(fourierProjection[cc], fshape, fslice, s1)
             TOTALprojection += thisProjection
         return TOTALprojection
