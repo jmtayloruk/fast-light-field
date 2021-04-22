@@ -14,7 +14,8 @@
 \f1\b0 \cf2 \ulnone - I could look into how much GPU memory I am actually using while running my code. It\'92s not clear to me that it should be much, and yet I seem to have seen signs that it may be many GB. Is it just an issue with garbage collection, or what?\
 - If I run with only 2 parallel volumes to reconstruct, it takes 1.2s instead of 5.8s for x30. It looks like this 1.2s is just death by a thousand cuts - lots of Python overheads eating into the run time. I could consider trying to improve that, but ideally I\'92d rather just be able to say that it\'92s not an issue for big problem sizes. It could be relevant for my PIV scenario, though!\
 - I need to check how the GPU scales to larger problems. If needed I could do things one plane at a time (doing the iFFT and copying back to RAM) without that incurring a huge overhead I think.\
-\
+\pard\pardeftab560\slleading20\partightenfactor0
+\cf2 \
 \pard\pardeftab720\partightenfactor0
 
 \f0\b \cf2 \ul Notes on GPU performance
@@ -52,7 +53,10 @@ For the benchmark work task (5.6s) the breakdown is:\
 \f0\b \cf2 \ul Observations\
 \pard\pardeftab720\partightenfactor0
 
-\f1\b0 \cf2 \ulnone - I have disabled calls to cupy.cuda.runtime.deviceSynchronize, because that has a big impact on the run time. I am not completely sure how cuda is smart enough to work out the dependencies in my kernels, but it really does seem to be giving correct results in the end\'85\
+\f1\b0 \cf2 \ulnone - In terms of blocks and alignment, apparently blocks should definitely be multiples of 32, ideally 1024. 
+\f2\i Signed
+\f1\i0  int types are slightly preferred.\
+- I have disabled calls to cupy.cuda.runtime.deviceSynchronize, because that has a big impact on the run time. I am not completely sure how cuda is smart enough to work out the dependencies in my kernels, but it really does seem to be giving correct results in the end\'85\
 - Blocking turned out to be really important for performance (especially in the x dimension), and so I padded my arrays out to multiples of 8 (i.e. 32 bytes), allowing us to maintain good block sizes, good cache locality, and good alignment of subsequent rows.\
 - Python code can definitely execute in parallel with GPU code. My improvement to use stride_tricks in PrecalculateFFTArray() knocked off a significant amount of time from the Python profile of that function, but didn\'92t change the overall runtime. Presumably that is because ultimately the limiting factor was the run time of the GPU code that was already in the pipeline at that point.\
 \

@@ -50,7 +50,7 @@ For the near-focal-plane deconvolution problem I am currently working with, it t
 \f0\fs24 \cf0 \CocoaLigature1 \
 optic-tectum [4]			
 \f3\fs22 \cf2 \CocoaLigature0 [[54.097476959228516], [9.557530164718628, 9.490315914154053], [3.5699703693389893, 3.5606672763824463, 3.5801541805267334], \
-					 \cf2 [5.8761820793151855], [1.5330743789672852, 1.4889581203460693], [1.5329170227050781, 1.5079047679901123, 1.507934331893921]]\cf2 \
+					 [5.8761820793151855], [1.5330743789672852, 1.4889581203460693], [1.5329170227050781, 1.5079047679901123, 1.507934331893921]]\
 					
 \f4\b \cf3 Machine specs:
 \f3\b0 \cf2  physical_cpus:4 logical_cpus:8 scpufreq(current=1961.49075, min=1600.0, max=4100.0)\
@@ -69,10 +69,19 @@ optic-tectum [4]
 \pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
 
 \f4\b \cf3 					Machine specs:
-\f3\b0 \cf2  physical_cpus:24 logical_cpus:48 scpufreq(current=1762.0258124999993, min=1200.0, max=2500.0)
-\f2\i\fs24 \cf0 \CocoaLigature1 	\
+\f3\b0 \cf2  physical_cpus:24 logical_cpus:48 scpufreq(current=1762.0258124999993, min=1200.0, max=2500.0)\
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
-\cf0 Note that the GPU implementation of the large-scale deconvolution is blazing fast compared to the CPU! 
+
+\f0\fs24 \cf0 \CocoaLigature1 suil-bheag [16]
+\f2\i 			
+\f3\i0\fs22 \cf2 \CocoaLigature0 [[13.396210432052612], [2.9962103366851807, 3.0246641635894775], [1.5529916286468506, 1.3653972148895264, 1.1758782863616943]]\
+					
+\f4\b \cf3 Machine specs:
+\f3\b0 \cf2  physical_cpus:16 logical_cpus:32 scpufreq(current=3200.0, min=0.0, max=0.0)\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
+
+\f2\i\fs24 \cf0 \CocoaLigature1 \
+Note that the GPU implementation of the large-scale deconvolution is blazing fast compared to the CPU! 
 \f0\i0 I may also be able to improve the speed of the small PIV case if I revisit that - when it\'92s only taking 2s there are probably significant python overheads.\
 For now I\'92ve confirmed that x30 parallelism is sufficient on the GPU, but I should keep an eye on that if I make further improvements to the GPU code\
 \
