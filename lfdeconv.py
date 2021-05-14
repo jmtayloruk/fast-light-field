@@ -224,10 +224,11 @@ try:
     import pycuda.driver as cuda
     import pynvml
     def PrintKeyGPUAttributes():
-      # For some reason this does not like running before I have done anything else.
-      # TODO: I should work out why this is.
-      # Presumably there is some sort of initialisation that is missing.
-      # If I run some of my code and then run this, it works.
+      # For some reason if this runs before everything else then I get an error (pycuda initialization error)
+      # As a workaround, I just do a dummy cupy operation first, and that seems to solve the issue
+      import cupy as cp
+      _ = cp.zeros(2)
+      # Now print out the GPU details
       for devicenum in range(cuda.Device.count()):
         device=cuda.Device(devicenum)
         attrs=device.get_attributes()
