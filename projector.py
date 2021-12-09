@@ -53,6 +53,14 @@ gDebugChecks = False
 # Note that turning this off will make python (CPU) code profiler reports much harder to interpret
 gSynchronizeAfterKernelCalls = False
 
+# Note that padding fShape to small prime factors *degrades* performance on the GPU.
+# Presumably either the FFT algorithm handles larger factors well, or the penalty of larger arrays
+# is too much to make the padding worthwhile
+padToSmallPrimesOnGPU = False
+# By breaking up a large FFT operation into smaller batches, the memory requirements for the FFT plan are significantly reduced.
+# I suspect this has little-to-no effect on overall performance
+reducedGPUMemoryUsage = True
+
 # Note: H.shape in python is (<num z planes>, Nnum, Nnum, <psf size>, <psf size>),
 #                       e.g. (56, 19, 19, 343, 343)
 
@@ -296,11 +304,6 @@ def BestBlockFactors(jobShape, target, max=None):
             result[i] = BestFactorUpTo(jobShape[i], max[i])
     return tuple(result)
 
-# Note that padding fShape to small prime factors *degrades* performance on the GPU.
-# Presumably either the FFT algorithm handles larger factors well, or the penalty of larger arrays
-# is too much to make the padding worthwhile
-padToSmallPrimesOnGPU = False
-
 class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
     def __init__(self, projection, hMatrix, cc, fftPlan=None, fftPlan2=None):
         super().__init__(projection, hMatrix, cc, fftPlan=fftPlan, fftPlan2=fftPlan2, padToSmallPrimes=padToSmallPrimesOnGPU)
@@ -463,7 +466,10 @@ class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
         self.batchFHShape = (halfWidth,halfWidth,self.s2[0],self.s2[1])
         if (fftPlan2 is None) or (fftPlan2.shape != self.fshape):
             dummy = cp.empty(self.batchFHShape, dtype='complex64')
-            self.fftPlan2 = cupyx.scipy.fftpack.get_fft_plan(dummy, shape=self.fshape, axes=(2,3))
+            if reducedGPUMemoryUsage:
+                self.fftPlan2 = cupyx.scipy.fftpack.get_fft_plan(dummy[0], shape=self.fshape, axes=(1,2))
+            else:
+                self.fftPlan2 = cupyx.scipy.fftpack.get_fft_plan(dummy, shape=self.fshape, axes=(2,3))
 
     def nativeZeros(self, shape, dtype=float):
         return cp.zeros(shape, dtype)
@@ -606,9 +612,9 @@ class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
 
     def GetFH(self, hMatrix, cc, bb, aa, backwards, transpose):
         if transpose:
-            fHtsFull = self.precalculatedFH[aa,bb]
+            fHtsFull = self.precalculatedFH[aa][bb]
         else:
-            fHtsFull = self.precalculatedFH[bb,aa]
+            fHtsFull = self.precalculatedFH[bb][aa]
         return fHtsFull
 
     def PrecalculateFFTArray(self, cc, source):
@@ -633,10 +639,14 @@ class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
             for aa in range(self.batchFHShape[1]):
                 batch[bb][aa] = Hcc[bb, aa]
         # Calculate all the FFTs in one big batch
-        self.precalculatedFH = cupyx.scipy.fftpack.fftn(batch, self.fshape, axes=(2,3), plan=self.fftPlan2)
+        if reducedGPUMemoryUsage:
+            self.precalculatedFH = [None]*batch.shape[0]
+            for i in range(batch.shape[0]):
+                self.precalculatedFH[i] = cupyx.scipy.fftpack.fftn(batch[i], self.fshape, axes=(1,2), plan=self.fftPlan2)
+        else:
+            self.precalculatedFH = cupyx.scipy.fftpack.fftn(batch, self.fshape, axes=(2,3), plan=self.fftPlan2)
         if gSynchronizeAfterKernelCalls:
             cp.cuda.runtime.deviceSynchronize()
-    
     
     def ProjectForZ(self, cc, source, hMatrix, backwards):
         self.PrecalculateFFTArray(cc, source)

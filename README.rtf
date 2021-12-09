@@ -85,7 +85,8 @@ If all is well, you will get a
 \cf0 # If anything goes wrong, please just drop me an email.\kerning1\expnd0\expndtw0 \
 \expnd0\expndtw0\kerning0
 \
-# Optional: run this command to get some benchmark measurements of performance on your system.\
+# Optional: run this command to get some benchmark measurements of performance on your system (takes about 5-10 minutes first time round, about 2 minutes for subsequent runs)\
+# Make sure your computer is otherwise idle - if it is doing something else while this runs, the benchmark numbers will be degraded.\
 # I would be very interested to see the output if you want to send it to me by email\
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardeftab720\pardirnatural\partightenfactor0
 \cf0 \kerning1\expnd0\expndtw0 python3 setup.py benchmark\
@@ -163,8 +164,9 @@ In this example there is a folder \'93PSFmatrix\'94 which will contain the light
 	Nnum - number of pixels in your rectified image, across each microlens footprint\
 	lambda - wavelength (nm)\
 	n - refractive index of medium\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
-\f2\i Note that the matrix filename must follow the exact format shown: it should start with \'93fdnormPSFMatrix_\'94. It is also important not to have any trailing zeroes in the parameters, e.g. you should write \'93\'85lambda520n1.mat\'94 not \'93\'85lambda520n1.0.mat\'92.\
+\f2\i \cf0 Note that the matrix filename must follow the exact format shown: it should start with \'93fdnormPSFMatrix_\'94. It is also important not to have any trailing zeroes in the parameters, e.g. you should write \'93\'85lambda520n1.mat\'94 not \'93\'85lambda520n1.0.mat\'92.\
 \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
@@ -179,7 +181,7 @@ In this example there is a folder \'93PSFmatrix\'94 which will contain the light
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
 \f1\b0\fs24 \cf0 \ulnone - Note that the first iteration will take a bit longer, as the code self-calibrates for best performance, but subsequent iterations will be faster.\
-- The code will run fastest if given significant numbers (e.g. 32) individual timepoint images to deconvolve in parallel. \
+- The code will run fastest if given significant numbers (e.g. 32) of individual timepoint images to deconvolve in parallel. \
 - For most systems, GPU-based deconvolution will be fastest. The GPU-based code is not quite as extensively tested - it should be correct, but has not been tested on many different platforms, so let me know if you encounter any errors). Run on GPU by specifying \'93-m gpu\'94 on the command line. \
 - The command line option \'93-cacheFH\'94 is a specialised option that is strictly for small reconstruction problems only. It will give faster performance (especially for small batch sizes) but has a dramatically higher memory requirement (may well exhaust available RAM).\
 - The CPU-based code should be able to handle very large volume reconstructions, but the GPU code may run out of memory (depending on the specs of your GPU).\
