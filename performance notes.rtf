@@ -114,7 +114,7 @@ Interestingly, padding the convolution seems to have given no improvement (or de
 \
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
 \cf0 \ul Memory consumption\ulnone \
-Jos\'e9\'92s example tiff file (1770x1755px) is large enough to cause memory consumption challenges.\
+Jos\'e9\'92s example tiff file (1770x1755px) was large enough to cause memory consumption challenges.\
 \
 If we run on the CPU we use several tens of GB of memory. The reason is explained in the comment where the Compare() function is used in py_light_field.cpp. If I switch to the alternative ordering that is disabled in the code (which has mutex contention problems, but lower memory consumption) we use much less memory, as expected. The ideal fix would be to define a new ordering that gives enough flexibility to reduce mutex contention but does not demand quite so much memory. 
 \f1\b I still want to fix this
@@ -122,12 +122,18 @@ If we run on the CPU we use several tens of GB of memory. The reason is explaine
 \
 If we run on the GPU then the FFT plan was using huge amounts of memory. I decided we don\'92t need to run such big batches, and the new global flag reducedGPUMemoryUsage=True brings it down to 8GB of memory for a 1500x1500px image (but note that it just runs out of 8.5GB of memory if I 
 \f2\i don\'92t
-\f0\i0  query the memory using while running[!?]). That reduction in consumption should enable Jos\'e9 to do the full deconvolution on his 11.7GB GPU. If we wanted to scale to even bigger images I would need to think about the best strategy. It\'92s now the cache of F(H) that is the main memory consumer. It would require some rejigging to change the ordering such that we didn\'92t have to cache those.\
+\f0\i0  query the memory using while running[!?]). As expected, the FFT plan change has zero impact on performance.\
+\
+That reduction in consumption should enable Jos\'e9 to do the full deconvolution on his 11.7GB GPU. If we wanted to scale to even bigger images I would need to think about the best strategy. It\'92s now the actual cache of F(H) that is the main memory consumer. It would require some rejigging to change the ordering such that we didn\'92t have to cache those.\
+\
+I should also think about how the memory consumption grows with batch size - and total problem size. Batch size will inevitably increase the requirements - in Jos\'e9\'92s test case by about 10x the deconvolved .tif file size for each timepoint - and that should at least be documented. As explained in separate file \'93gpu-ram-consumption-notes.rtf\'94 I have not managed to fully understand the behaviour.\
+\
+At the moment it doesn\'92t matter how long the overall time series is, although that might change if I wanted to save the output all into one big file instead of in separate files for each timepoint.\
 \
 \ul Things I should still investigate\
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx8232\pardirnatural\partightenfactor0
 \cf0 \ulnone - 
-\f1\b [Reminder to check separate notes about GPU performance]\
+\f1\b [Reminder to check separate notes about GPU performance, and GPU RAM consumption]\
 
 \f0\b0 \
 Can I improve the speedup obtained from 8-way threading? I am getting 800% CPU load, but am only getting 5-6x speedup overall. I and increasingly convinced the issue is memory bandwidth (e.g. on my 2cpu x 4core machine). Basically, everything just takes a little bit longer. I did see a ~10% speedup by combining operations into CalculateRowBoth() to reduce memory bandwidth demands, but I reckon any further batching would be a lot of effort for marginal gain. For the combining operations, I eliminated 25% of what I think are the uncached reads, so the net 10% speedup is perhaps a bit disappointing, but not completely out of the ballpark I would have expected. Even for small problem sets, I would need to batch things up row-by-row or I would be overflowing caches - I don\'92t think it\'92s enough to process items one after the other on the same thread.\

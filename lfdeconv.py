@@ -104,8 +104,27 @@ def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.Physical
         t0 = time.time()
         HXguess = ForwardProjectACC(hMatrix, Xguess, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector, keepNative=True)
         HXguessBack = BackwardProjectACC(hMatrix, HXguess, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector, keepNative=True)
-        errorBack = Htf / HXguessBack
-        Xguess = Xguess * errorBack
+        if True:
+            # Original code
+            errorBack = Htf / HXguessBack
+        else:
+            # Try in-place operation
+            # TODO: I could even do HXguessBack /= Htf and then a subsequent divide instead of multiply.
+            #       Might be slower, but might use less RAM if that's a concern. Probably not significant though.
+            # See GPU RAM usage notes - it is not clear whether this change has any positive impact at all(!?).
+            HXguessBack = Htf / HXguessBack
+            errorBack = HXguessBack
+        if True:
+            # Original code
+            Xguess = Xguess * errorBack
+        else:
+            # Try in-place operation
+            # See GPU RAM usage notes - this should be a no-brainer but it's not clear whether this has a positive or negative(!?) impact
+            Xguess *= errorBack
+        if False:
+            # See GPU RAM usage notes - this should be a no-brainer but it's not clear whether this has any impact
+            del errorBack
+            del HXguessBack
         Xguess[np.where(np.isnan(Xguess))] = 0
         ttime = time.time() - t0
         #print('iter %d/%d took %.1f secs' % (i+1, maxIter, ttime))
