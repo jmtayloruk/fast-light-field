@@ -239,11 +239,11 @@ def main(argv, projectorClass=proj.Projector_allC, maxiter=8, numParallel=32):
 
 try:
     import pycuda.driver as cuda
-    import pynvml
+    import cupy as cp
     def PrintKeyGPUAttributes():
+      import pynvml
       # For some reason if this runs before everything else then I get an error (pycuda initialization error)
       # As a workaround, I just do a dummy cupy operation first, and that seems to solve the issue
-      import cupy as cp
       _ = cp.zeros(2)
       # Now print out the GPU details
       for devicenum in range(cuda.Device.count()):
@@ -251,10 +251,15 @@ try:
         attrs=device.get_attributes()
         print(' {0} threads x {1} processors'.format(attrs[cuda.device_attribute.MAX_THREADS_PER_MULTIPROCESSOR], attrs[cuda.device_attribute.MULTIPROCESSOR_COUNT]))
         print(' Clock speed {0}GHz, mem speed {1}GHz x {2}B = {3:.2f}GB/s, L2 {4:.2f}MB'.format(attrs[cuda.device_attribute.CLOCK_RATE]*1e3/1e9, attrs[cuda.device_attribute.MEMORY_CLOCK_RATE]*1e3/1e9, attrs[cuda.device_attribute.GLOBAL_MEMORY_BUS_WIDTH]//8, attrs[cuda.device_attribute.MEMORY_CLOCK_RATE]*attrs[cuda.device_attribute.GLOBAL_MEMORY_BUS_WIDTH]/8e6, attrs[cuda.device_attribute.L2_CACHE_SIZE]/1e6))
-        pynvml.nvmlInit()
-        h = pynvml.nvmlDeviceGetHandleByIndex(0)
-        info = pynvml.nvmlDeviceGetMemoryInfo(h)
-        print(' Total GPU RAM {0:.2f}GB'.format(info.total/1e9))
+        # pynvml is a slightly more obscure module, so we don't insist on it being present
+        try:
+            import pynvml
+            pynvml.nvmlInit()
+            h = pynvml.nvmlDeviceGetHandleByIndex(0)
+            info = pynvml.nvmlDeviceGetMemoryInfo(h)
+            print(' Total GPU RAM {0:.2f}GB'.format(info.total/1e9))
+        except ImportError:
+            print(' Total GPU RAM unknown (pynvml not installed)')
     hasGPU = True
 except ImportError:
     hasGPU = False
