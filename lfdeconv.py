@@ -241,7 +241,6 @@ try:
     import pycuda.driver as cuda
     import cupy as cp
     def PrintKeyGPUAttributes():
-      import pynvml
       # For some reason if this runs before everything else then I get an error (pycuda initialization error)
       # As a workaround, I just do a dummy cupy operation first, and that seems to solve the issue
       _ = cp.zeros(2)
