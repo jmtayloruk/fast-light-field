@@ -57,9 +57,8 @@ gSynchronizeAfterKernelCalls = False
 # Presumably either the FFT algorithm handles larger factors well, or the penalty of larger arrays
 # is too much to make the padding worthwhile
 padToSmallPrimesOnGPU = False
-# By breaking up a large FFT operation into smaller batches, the memory requirements for the FFT plan are significantly reduced.
-# I suspect this has little-to-no effect on overall performance
-reducedGPUMemoryUsage = True
+# Debug flag to enable verbose printing of GPU memory usage at key points during the running of the code
+logGPUMemoryUsage = False
 
 # Note: H.shape in python is (<num z planes>, Nnum, Nnum, <psf size>, <psf size>),
 #                       e.g. (56, 19, 19, 343, 343)
@@ -466,10 +465,10 @@ class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
         self.batchFHShape = (halfWidth,halfWidth,self.s2[0],self.s2[1])
         if (fftPlan2 is None) or (fftPlan2.shape != self.fshape):
             dummy = cp.empty(self.batchFHShape, dtype='complex64')
-            if reducedGPUMemoryUsage:
-                self.fftPlan2 = cupyx.scipy.fftpack.get_fft_plan(dummy[0], shape=self.fshape, axes=(1,2))
-            else:
-                self.fftPlan2 = cupyx.scipy.fftpack.get_fft_plan(dummy, shape=self.fshape, axes=(2,3))
+            # Note: I looked into doing the FFTs in larger batches (e.g. for a whole row of aa),
+            # but it didn't improve overall performance much, if at all, and it requires more memory to
+            # store the results, as well as making other memory-use optimisations harder to code.
+            self.fftPlan2 = cupyx.scipy.fftpack.get_fft_plan(dummy[0,0], shape=self.fshape, axes=(0,1))
 
     def nativeZeros(self, shape, dtype=float):
         return cp.zeros(shape, dtype)
@@ -612,9 +611,15 @@ class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
 
     def GetFH(self, hMatrix, cc, bb, aa, backwards, transpose):
         if transpose:
-            fHtsFull = self.precalculatedFH[aa][bb]
-        else:
-            fHtsFull = self.precalculatedFH[bb][aa]
+            # TODO: I haven't thought through this scenario properly yet.
+            # I would have expected to need to actually perform a transpose,
+            # but in the 'else' branch below I seem to get away without doing that...?
+            # TODO: note also that we are not caching the FFT result here, but the caller should be able to do that.
+            # I should take a big picture view on whether I need to do the actual transposing,
+            # and then probably update the calling code throughout this source file
+            aa,bb = bb,aa
+        H = cp.asarray(hMatrix.Hcc(cc, backwards)[bb, aa])
+        fHtsFull = cupyx.scipy.fftpack.fftn(H, self.fshape, axes=(0,1), plan=self.fftPlan2)
         return fHtsFull
 
     def PrecalculateFFTArray(self, cc, source):
@@ -632,25 +637,8 @@ class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
         if gSynchronizeAfterKernelCalls:
             cp.cuda.runtime.deviceSynchronize()
 
-    def PrecalculateFH(self, cc, hMatrix, backwards):
-        batch = cp.empty(self.batchFHShape, dtype='complex64')
-        Hcc = hMatrix.Hcc(cc, backwards)
-        for bb in range(self.batchFHShape[0]):
-            for aa in range(self.batchFHShape[1]):
-                batch[bb][aa] = Hcc[bb, aa]
-        # Calculate all the FFTs in one big batch
-        if reducedGPUMemoryUsage:
-            self.precalculatedFH = [None]*batch.shape[0]
-            for i in range(batch.shape[0]):
-                self.precalculatedFH[i] = cupyx.scipy.fftpack.fftn(batch[i], self.fshape, axes=(1,2), plan=self.fftPlan2)
-        else:
-            self.precalculatedFH = cupyx.scipy.fftpack.fftn(batch, self.fshape, axes=(2,3), plan=self.fftPlan2)
-        if gSynchronizeAfterKernelCalls:
-            cp.cuda.runtime.deviceSynchronize()
-    
     def ProjectForZ(self, cc, source, hMatrix, backwards):
         self.PrecalculateFFTArray(cc, source)
-        self.PrecalculateFH(cc, hMatrix, backwards)
         # Now do the z projection
         return super().ProjectForZ(cc, source, hMatrix, backwards)
 
@@ -805,51 +793,73 @@ class Projector_allC(Projector_base):
         return TOTALprojection
 
 
+def LogMemory(description, garbageCollect=False):
+    if gpuAvailable:
+        _ = cp.zeros((1))  # Dummy to trigger cuda lazy initialization if we are called before any real work has been done
+        before = cuda.mem_get_info()
+        before = before[1]-before[0]
+        if logGPUMemoryUsage:
+            print("{0:.3f}GB {1}".format(before/1e9, description))
+        if garbageCollect:
+            cp.get_default_memory_pool().free_all_blocks()
+            after = cuda.mem_get_info()
+            after = after[1]-after[0]
+            if logGPUMemoryUsage:
+                if (before == after):
+                    print("-> no garbage")
+                else:
+                    print("-> {0:.3f}GB (collected {1:.3f}GB)".format(after/1e9, (before-after)/1e9))
+
 class Projector_pythonSkeleton(Projector_base):
     def BackwardProjectACC(self, hMatrix, projection, planes, progress, logPrint, numjobs, keepNative=False): # Ignores numjobs
         projection = self.asnative(projection)
+        LogMemory("BackwardProjectACC", True)
+        result = self.nativeZeros((len(planes), projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
+
         # Project each z plane in turn
         fourierZPlanes = []     # This has to be a list because in Fourier space the shapes are different for each z plane
         for cc in progress(planes, desc='Backward-project - z', leave=False):
-            fourierZPlanes.append(self.ProjectForZ(cc, projection, hMatrix, True))
-        # Now convert back to real space from Fourier space
-        result = self.InverseTransformBackwardProjection(fourierZPlanes, planes, hMatrix, projection)
+            thisFourierBackprojection = self.ProjectForZ(cc, projection, hMatrix, True)
+            self.InverseTransformBackwardProjection(result, thisFourierBackprojection, hMatrix, cc, projection)
+            # Doing garbage collection at this point does slow things down a bit, but keeps the high water mark down a bit.
+            # I don't know if it actually affects what we can cope with
+            #LogMemory("ProjectForZ[{0}]".format(cc), True)
+        LogMemory("ProjectForZ finished", True)
+
         if keepNative:
             return result
         else:
             return self.asnumpy(result)
 
-    def InverseTransformBackwardProjection(self, fourierZPlanes, planes, hMatrix, projection):
-        # Compute the FFT for each z plane
-        Backprojection = np.zeros((len(planes), projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
-        for cc in planes:
-            projector = self.zProjectorClass(projection, hMatrix, cc, self.fftPlan, self.fftPlan2)
-            (fshape, fslice, s1) = special.convolutionShape(projection.shape, hMatrix.PSFShape(cc), hMatrix.Nnum, projector.padToSmallPrimes)
-            Backprojection[cc] = special.special_fftconvolve_part3(fourierZPlanes[cc], fshape, fslice, s1)
-        return Backprojection
+    def InverseTransformBackwardProjection(self, result, thisFourierBackprojection, hMatrix, cc, projection):
+        # Compute the FFT for this z plane
+        projector = self.zProjectorClass(projection, hMatrix, cc, self.fftPlan, self.fftPlan2)
+        (fshape, fslice, s1) = special.convolutionShape(projection.shape, hMatrix.PSFShape(cc), hMatrix.Nnum, projector.padToSmallPrimes)
+        result[cc] = special.special_fftconvolve_part3(thisFourierBackprojection, fshape, fslice, s1)
 
     def ForwardProjectACC(self, hMatrix, realspace, planes, progress, logPrint, numjobs, keepNative=False): # Ignores numjobs
         realspace = self.asnative(realspace)
+        LogMemory("ForwardProjectACC", True)
+        result = self.nativeZeros((realspace.shape[1], realspace.shape[2], realspace.shape[3]), dtype='float32')
+        
         # Project each z plane in turn
         fourierProjections = []     # This has to be a list because in Fourier space the shapes are different for each z plane
         for cc in progress(planes, desc='Forward-project - z', leave=False):
-            fourierProjections.append(self.ProjectForZ(cc, realspace[cc], hMatrix, False))
-        # Now convert back to real space from Fourier space
-        result = self.InverseTransformForwardProjection(fourierProjections, planes, hMatrix, realspace)
+            thisFourierForwardProjection = self.ProjectForZ(cc, realspace[cc], hMatrix, False)
+            self.InverseTransformForwardProjection(result, thisFourierForwardProjection, hMatrix, cc, realspace)
+            #LogMemory("ProjectForZ[{0}]".format(cc), True)
+        LogMemory("ProjectForZ finished", True)
+
         if keepNative:
             return result
         else:
             return self.asnumpy(result)
     
-    def InverseTransformForwardProjection(self, fourierProjection, planes, hMatrix, realspace):
-        # Compute and accumulate the FFT for each z plane
-        TOTALprojection = self.nativeZeros((realspace.shape[1], realspace.shape[2], realspace.shape[3]), dtype='float32')
-        for cc in planes:
-            projector = self.zProjectorClass(realspace[cc], hMatrix, cc, self.fftPlan, self.fftPlan2)
-            (fshape, fslice, s1) = special.convolutionShape(realspace[cc].shape, hMatrix.PSFShape(cc), hMatrix.Nnum, projector.padToSmallPrimes)
-            thisProjection = special.special_fftconvolve_part3(fourierProjection[cc], fshape, fslice, s1)
-            TOTALprojection += thisProjection
-        return TOTALprojection
+    def InverseTransformForwardProjection(self, result, thisFourierForwardProjection, hMatrix, cc, realspace):
+        # Compute and accumulate the FFT for this z plane
+        projector = self.zProjectorClass(realspace[cc], hMatrix, cc, self.fftPlan, self.fftPlan2)
+        (fshape, fslice, s1) = special.convolutionShape(realspace[cc].shape, hMatrix.PSFShape(cc), hMatrix.Nnum, projector.padToSmallPrimes)
+        result += special.special_fftconvolve_part3(thisFourierForwardProjection, fshape, fslice, s1)
 
     def ProjectForZ(self, cc, source, hMatrix, backwards):
         # This is a perhaps a bit of a hack for now - it ensures FFT(PSF) is calculated on the GPU
@@ -893,33 +903,21 @@ class Projector_gpuHelpers(Projector_pythonSkeleton):
     def nativeZeros(self, shape, dtype=float):
         return cp.zeros(shape, dtype)
     
-    def InverseTransformBackwardProjection(self, fourierZPlanes, planes, hMatrix, projection):
-        # Compute the FFT for each z plane
-        Backprojection = self.nativeZeros((len(fourierZPlanes), projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
-        for cc in planes:
-            (fshape, fslice, s1) = special.convolutionShape(projection.shape, hMatrix.PSFShape(cc), hMatrix.Nnum, padToSmallPrimesOnGPU)
-            # This next code is copied from special_fftconvolve_part3
-            results = []
-            for n in range(fourierZPlanes[cc].shape[0]):
-                inv = cp.fft.irfftn(fourierZPlanes[cc][n], fshape)
-                # TODO: what was the purpose of the copy() here? I think I have just copied this from the fftconvolve source code. Perhaps if fslice does something nontrivial, it makes the result compact..? But fslice seems to be the same as fshape for me, here
-                inv = special._centered(inv[fslice].copy(), s1)
-                results.append(inv)
-            Backprojection[cc] = cp.array(results)
-        return Backprojection
+    def InverseTransformBackwardProjection(self, result, thisFourierBackprojection, hMatrix, cc, projection):
+        projector = self.zProjectorClass(projection, hMatrix, cc, self.fftPlan, self.fftPlan2)
+        (fshape, fslice, s1) = special.convolutionShape(projection.shape, hMatrix.PSFShape(cc), hMatrix.Nnum, projector.padToSmallPrimes)
+        # This next code is copied from special_fftconvolve_part3
+        for n in range(thisFourierBackprojection.shape[0]):
+            inv = cp.fft.irfftn(thisFourierBackprojection[n], fshape)
+            result[cc][n] = special._centered(inv[fslice], s1)
 
-    def InverseTransformForwardProjection(self, fourierProjection, planes, hMatrix, realspace):
+    def InverseTransformForwardProjection(self, result, thisFourierForwardProjection, hMatrix, cc, realspace):
         # Compute and accumulate the FFT for each z plane
-        TOTALprojection = self.nativeZeros((realspace.shape[1], realspace.shape[2], realspace.shape[3]), dtype='float32')
-        for cc in planes:
-            (fshape, fslice, s1) = special.convolutionShape(realspace[cc].shape, hMatrix.PSFShape(cc), hMatrix.Nnum, padToSmallPrimesOnGPU)
-            # This next code is copied from special_fftconvolve_part3
-            for n in range(fourierProjection[cc].shape[0]):
-                inv = cp.fft.irfftn(fourierProjection[cc][n], fshape)
-                # TODO: what was the purpose of the copy() here? I think I have just copied this from the fftconvolve source code. Perhaps if fslice does something nontrivial, it makes the result compact..? But fslice seems to be the same as fshape for me, here
-                inv = special._centered(inv[fslice].copy(), s1)
-                TOTALprojection[n] += inv
-        return TOTALprojection
+        (fshape, fslice, s1) = special.convolutionShape(realspace[cc].shape, hMatrix.PSFShape(cc), hMatrix.Nnum, padToSmallPrimesOnGPU)
+        # This next code is copied from special_fftconvolve_part3
+        for n in range(thisFourierForwardProjection.shape[0]):
+            inv = cp.fft.irfftn(thisFourierForwardProjection[n], fshape)
+            result[n] += special._centered(inv[fslice], s1)
 
 
 #########################################################################

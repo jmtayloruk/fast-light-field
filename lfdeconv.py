@@ -86,6 +86,7 @@ def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.Physical
     #  Xguess is the initial guess for the object
     ru1 = util.cpuTime('both')
     t1 = time.time()
+    proj.LogMemory("initial")
     if Htf is None:
         # Caller has not provided the initial backprojection, but has provided the camera image itself
         assert(im is not None)
@@ -94,40 +95,29 @@ def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.Physical
         # Caller has provided the initial backprojection (and so we don't expect them to provide the image)
         assert(im is None)
         Htf = projector.asnative(Htf)
+    proj.LogMemory("after Htf")
     if Xguess is None:
         # Caller has not provided the initial guess - we will use the backprojection as the initial guess
         Xguess = Htf.copy()
     else:
         # Caller has provided initial guess
         Xguess = projector.asnative(Xguess)
+    proj.LogMemory("after Xguess")
     for i in tqdm(range(maxIter), desc='RL deconv'):
+        proj.LogMemory("Start RL iter {0}".format(i))
         t0 = time.time()
         HXguess = ForwardProjectACC(hMatrix, Xguess, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector, keepNative=True)
         HXguessBack = BackwardProjectACC(hMatrix, HXguess, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector, keepNative=True)
-        if True:
-            # Original code
-            errorBack = Htf / HXguessBack
-        else:
-            # Try in-place operation
-            # TODO: I could even do HXguessBack /= Htf and then a subsequent divide instead of multiply.
-            #       Might be slower, but might use less RAM if that's a concern. Probably not significant though.
-            # See GPU RAM usage notes - it is not clear whether this change has any positive impact at all(!?).
-            HXguessBack = Htf / HXguessBack
-            errorBack = HXguessBack
-        if True:
-            # Original code
-            Xguess = Xguess * errorBack
-        else:
-            # Try in-place operation
-            # See GPU RAM usage notes - this should be a no-brainer but it's not clear whether this has a positive or negative(!?) impact
-            Xguess *= errorBack
-        if False:
-            # See GPU RAM usage notes - this should be a no-brainer but it's not clear whether this has any impact
-            del errorBack
-            del HXguessBack
+        proj.LogMemory("after Forward+BackwardProjectACC", True)
+        errorBack = cp.divide(Htf, HXguessBack, out=HXguessBack)
+        del HXguessBack   # Effectively this has been destroyed - storage is now used for errorBack
+        Xguess *= errorBack
+        del errorBack
+        proj.LogMemory("after deletions", True)
         Xguess[np.where(np.isnan(Xguess))] = 0
         ttime = time.time() - t0
         #print('iter %d/%d took %.1f secs' % (i+1, maxIter, ttime))
+    proj.LogMemory("RL iterations complete", True)
     ru2 = util.cpuTime('both')
     t2 = time.time()
     if logPrint:
