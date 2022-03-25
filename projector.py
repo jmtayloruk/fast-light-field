@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.signal import fftconvolve
 import scipy.fftpack
-import time, warnings, os
+import time, warnings, os, psutil
 from jutils import tqdm_alias as tqdm
 
 import py_light_field as plf
@@ -659,6 +659,7 @@ class Projector_base(object):
         super().__init__()
         self.fftPlan = None
         self.fftPlan2 = None
+        self.storeVolumesOnGPU = False   # Calling code may override
         self.cacheFH = False  # Default - can be updated subsequently by the caller
     
     def asnative(self, m):
@@ -672,6 +673,9 @@ class Projector_base(object):
     
     def nativeDivide(self, a, b, out):
         return np.divide(a, b, out=out)
+
+    def assertNative(self, m):
+        assert isinstance(m, np.ndarray)
 
 def CropAfterFFT(realZPlane, proj):
     result = []
@@ -687,7 +691,7 @@ class Projector_allC(Projector_base):
         # Patient planning does not actually lead to a noticable overall improvement, and takes >5 minutes to plan!
         #plf.SetPlanningMode(32)   #patient
 
-    def BackwardProjectACC(self, hMatrix, projection, planes, progress, logPrint, numjobs, keepNative=False, rlUpdateFunc=None):
+    def BackwardProjectACC(self, hMatrix, projection, planes, progress, logPrint, numjobs, rlUpdateFunc=None):
         Backprojection = np.zeros((hMatrix.numZ, projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
         pos = 0
         planeWork = []
@@ -721,7 +725,7 @@ class Projector_allC(Projector_base):
         else:
             return Backprojection
     
-    def ForwardProjectACC(self, hMatrix, realspace, planes, progress, logPrint, numjobs, keepNative=False):
+    def ForwardProjectACC(self, hMatrix, realspace, planes, progress, logPrint, numjobs):
         TOTALprojection = None
         planeWork = []
         plf.SetNumThreadsToUse(numjobs)
@@ -761,7 +765,7 @@ class Projector_allC(Projector_base):
         assert(TOTALprojection.dtype == np.float32)   # Keep an eye out for any reversion to double-precision
         return TOTALprojection
     
-    def BackwardProjectACC_old(self, hMatrix, projection, planes, progress, logPrint, numjobs, keepNative=False):
+    def BackwardProjectACC_old(self, hMatrix, projection, planes, progress, logPrint, numjobs):
         # Plane-by-plane code left for reference
         Backprojection = np.zeros((hMatrix.numZ, projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
         plf.SetNumThreadsToUse(numjobs)
@@ -776,7 +780,7 @@ class Projector_allC(Projector_base):
             Backprojection[cc] = special.special_fftconvolve_part3(fourierZPlane, proj.fshape, proj.fslice, proj.s1, useCCode=True)
         return Backprojection
 
-    def ForwardProjectACC_old(self, hMatrix, realspace, planes, progress, logPrint, numjobs, keepNative=False):
+    def ForwardProjectACC_old(self, hMatrix, realspace, planes, progress, logPrint, numjobs):
         TOTALprojection = None
         plf.SetNumThreadsToUse(numjobs)
         for cc in progress(planes, 'Forward-project - z', leave=False):
@@ -798,14 +802,13 @@ class Projector_allC(Projector_base):
         assert(TOTALprojection.dtype == np.float32)   # Keep an eye out for any reversion to double-precision
         return TOTALprojection
 
-
 def LogMemory(description, garbageCollect=False):
     if gpuAvailable:
         _ = cp.zeros((1))  # Dummy to trigger cuda lazy initialization if we are called before any real work has been done
         before = cuda.mem_get_info()
         before = before[1]-before[0]
         if logGPUMemoryUsage:
-            print("{0:.3f}GB {1}".format(before/1e9, description))
+            print("{0:.3f}GB {1} (CPU RAM {2:.3f}GB)".format(before/1e9, description, psutil.virtual_memory()[3]/1e9))
         if garbageCollect:
             cp.get_default_memory_pool().free_all_blocks()
             after = cuda.mem_get_info()
@@ -817,11 +820,14 @@ def LogMemory(description, garbageCollect=False):
                     print("-> {0:.3f}GB (collected {1:.3f}GB)".format(after/1e9, (before-after)/1e9))
 
 class Projector_pythonSkeleton(Projector_base):
-    def BackwardProjectACC(self, hMatrix, projection, planes, progress, logPrint, numjobs, keepNative=False, rlUpdateFunc=None): # Ignores numjobs
+    def BackwardProjectACC(self, hMatrix, projection, planes, progress, logPrint, numjobs, rlUpdateFunc=None): # Ignores numjobs
         projection = self.asnative(projection)
         LogMemory("BackwardProjectACC", True)
         if rlUpdateFunc is None:
-            result = self.nativeZeros((len(planes), projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
+            if self.storeVolumesOnGPU:
+                result = self.nativeZeros((len(planes), projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
+            else:
+                result = np.zeros((len(planes), projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
         else:
             planeResult = self.nativeZeros((projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
 
@@ -845,7 +851,7 @@ class Projector_pythonSkeleton(Projector_base):
         if rlUpdateFunc is not None:
             return None
         else:
-            if keepNative:
+            if self.storeVolumesOnGPU:
                 return result
             else:
                 return self.asnumpy(result)
@@ -858,7 +864,7 @@ class Projector_pythonSkeleton(Projector_base):
         # rather than assigning a new array to the local variable 'result'.
         result[:] = special.special_fftconvolve_part3(thisFourierBackprojection, fshape, fslice, s1)
 
-    def ForwardProjectACC(self, hMatrix, realspace, planes, progress, logPrint, numjobs, keepNative=False): # Ignores numjobs
+    def ForwardProjectACC(self, hMatrix, realspace, planes, progress, logPrint, numjobs): # Ignores numjobs
         realspace = self.asnative(realspace)
         LogMemory("ForwardProjectACC", True)
         result = self.nativeZeros((realspace.shape[1], realspace.shape[2], realspace.shape[3]), dtype='float32')
@@ -871,7 +877,7 @@ class Projector_pythonSkeleton(Projector_base):
             #LogMemory("ProjectForZ[{0}]".format(cc), True)
         LogMemory("ProjectForZ finished", True)
 
-        if keepNative:
+        if self.storeVolumesOnGPU:
             return result
         else:
             return self.asnumpy(result)
@@ -926,6 +932,9 @@ class Projector_gpuHelpers(Projector_pythonSkeleton):
     
     def nativeDivide(self, a, b, out):
         return cp.divide(a, b, out=out)
+    
+    def assertNative(self, m):
+        assert isinstance(m, cp.ndarray)
 
     def InverseTransformBackwardProjection(self, result, thisFourierBackprojection, hMatrix, cc, projection):
         projector = self.zProjectorClass(projection, hMatrix, cc, self.fftPlan, self.fftPlan2)
@@ -933,7 +942,10 @@ class Projector_gpuHelpers(Projector_pythonSkeleton):
         # This next code is copied from special_fftconvolve_part3
         for n in range(thisFourierBackprojection.shape[0]):
             inv = cp.fft.irfftn(thisFourierBackprojection[n], fshape)
-            result[n] = special._centered(inv[fslice], s1)
+            if isinstance(result, cp.ndarray):
+                result[n] = special._centered(inv[fslice], s1)
+            else:
+                result[n] = special._centered(inv[fslice], s1).get()
 
     def InverseTransformForwardProjection(self, result, thisFourierForwardProjection, hMatrix, cc, realspace):
         # Compute and accumulate the FFT for each z plane

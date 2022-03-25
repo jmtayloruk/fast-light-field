@@ -24,7 +24,7 @@ os.environ['MKL_DYNAMIC'] = 'FALSE'
 # Most of the core code has now been encapsulated in classes in projector.py
 #########################################################################
 
-def BackwardProjectACC(hMatrix, projection, planes=None, progress=tqdm, logPrint=True, numjobs=util.PhysicalCoreCount(), projector=proj.Projector_allC(), keepNative=False, rlUpdateFunc=None):
+def BackwardProjectACC(hMatrix, projection, planes=None, progress=tqdm, logPrint=True, numjobs=util.PhysicalCoreCount(), projector=proj.Projector_allC(), rlUpdateFunc=None):
     assert(len(projection.shape) == 3)  # We only now support batch jobs (although batch size [dimension 0] can of course be 1)
     if planes is None:
         planes = range(hMatrix.numZ)
@@ -33,7 +33,7 @@ def BackwardProjectACC(hMatrix, projection, planes=None, progress=tqdm, logPrint
 
     ru1 = util.cpuTime('both')
     t1 = time.time()
-    Backprojection = projector.BackwardProjectACC(hMatrix, projection, planes, progress, logPrint, numjobs, keepNative, rlUpdateFunc)
+    Backprojection = projector.BackwardProjectACC(hMatrix, projection, planes, progress, logPrint, numjobs, rlUpdateFunc)
     ru2 = util.cpuTime('both')
     t2 = time.time()
 
@@ -48,7 +48,7 @@ def BackwardProjectACC(hMatrix, projection, planes=None, progress=tqdm, logPrint
 
     return Backprojection
 
-def ForwardProjectACC(hMatrix, realspace, planes=None, progress=tqdm, logPrint=True, numjobs=util.PhysicalCoreCount(), projector=proj.Projector_allC(), keepNative=False):
+def ForwardProjectACC(hMatrix, realspace, planes=None, progress=tqdm, logPrint=True, numjobs=util.PhysicalCoreCount(), projector=proj.Projector_allC()):
     assert(len(realspace.shape) == 4)  # We only now support batch jobs (although batch size [dimension 1] can of course be 1)
     if planes is None:
         planes = range(hMatrix.numZ)
@@ -57,7 +57,7 @@ def ForwardProjectACC(hMatrix, realspace, planes=None, progress=tqdm, logPrint=T
 
     ru1 = util.cpuTime('both')
     t1 = time.time()
-    TOTALprojection = projector.ForwardProjectACC(hMatrix, realspace, planes, progress, logPrint, numjobs, keepNative)
+    TOTALprojection = projector.ForwardProjectACC(hMatrix, realspace, planes, progress, logPrint, numjobs)
     assert(TOTALprojection.dtype == np.float32)   # Keep an eye out for any reversion to double-precision
     ru2 = util.cpuTime('both')
     t2 = time.time()
@@ -83,41 +83,52 @@ def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.Physical
     else:
         # Caller has provided the initial backprojection (and so we don't expect them to provide the image)
         assert(im is None)
-        Htf = projector.asnative(Htf)
+        if projector.storeVolumesOnGPU:
+            Htf = projector.asnative(Htf)
     proj.LogMemory("after Htf")
     if Xguess is None:
         # Caller has not provided the initial guess - we will use the backprojection as the initial guess
         Xguess = Htf.copy()
     else:
         # Caller has provided initial guess
-        Xguess = projector.asnative(Xguess)
+        if projector.storeVolumesOnGPU:
+            Xguess = projector.asnative(Xguess)
     proj.LogMemory("after Xguess")
     for i in tqdm(range(maxIter), desc='RL deconv'):
         proj.LogMemory("Start RL iter {0}".format(i))
         t0 = time.time()
-        HXguess = ForwardProjectACC(hMatrix, Xguess, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector, keepNative=True)
+        HXguess = ForwardProjectACC(hMatrix, Xguess, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector)
         
         def RLUpdateFunc(Xguess, Htf, HXguessBack, cc=slice(None)):
-            errorBack = projector.nativeDivide(Htf[cc], HXguessBack, out=HXguessBack)
-            del HXguessBack   # Effectively this has been destroyed - storage is now used for errorBack
-            Xguess[cc] *= errorBack
-            del errorBack
+            projector.assertNative(HXguessBack)
+            if isinstance(HXguessBack, np.ndarray):
+                # We are working on the CPU
+                errorBack = np.divide(Htf[cc], np.asarray(HXguessBack), out=HXguessBack)
+                del HXguessBack   # Effectively this has been destroyed - storage is now used for errorBack
+                Xguess[cc] *= errorBack
+                del errorBack
+                Xguess[cc][np.where(np.isnan(Xguess[cc]))] = 0  # Note: this is marginally faster than cp.nan_to_num(copy=False), at least when we don't have NaNs
+            else:
+                # We are presumably working with a GPU
+                if projector.storeVolumesOnGPU:
+                    # All calculations and results stay on the GPU
+                    errorBack = projector.nativeDivide(Htf[cc], HXguessBack, out=HXguessBack)
+                    del HXguessBack   # Effectively this has been destroyed - storage is now used for errorBack
+                    Xguess[cc] *= errorBack
+                    del errorBack
+                    Xguess[cc][cp.where(cp.isnan(Xguess[cc]))] = 0  # Note: this is marginally faster than cp.nan_to_num(copy=False), at least when we don't have NaNs
+                else:
+                    # Intermediate calculations are on the GPU, but then we bring the final result back to the CPU
+                    errorBack = cp.divide(cp.asarray(Htf[cc]), HXguessBack, out=HXguessBack)
+                    del HXguessBack   # Effectively this has been destroyed - storage is now used for errorBack
+                    mul = cp.asarray(Xguess[cc]) * errorBack
+                    del errorBack
+                    mul[cp.where(cp.isnan(mul))] = 0  # Note: this is marginally faster than cp.nan_to_num(copy=False), at least when we don't have NaNs
+                    Xguess[cc] = mul.get()
             #proj.LogMemory("RLUpdateFunc complete for {0}".format(cc), True)
         
-        if False:
-            # Old code for reference
-            HXguessBack = BackwardProjectACC(hMatrix, HXguess, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector, keepNative=True)#, rlUpdateFunc=lambda x:RLUpdateFunc(Xguess, Htf, x))
-            proj.LogMemory("after Forward+BackwardProjectACC", True)
-            errorBack = projector.nativeDivide(Htf, HXguessBack, out=HXguessBack)
-            del HXguessBack   # Effectively this has been destroyed - storage is now used for errorBack
-            Xguess *= errorBack
-            del errorBack
-            proj.LogMemory("after deletions", True)
-        else:
-            # New code in progress
-            HXguessBack = BackwardProjectACC(hMatrix, HXguess, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector, keepNative=True, rlUpdateFunc=lambda x,cc:RLUpdateFunc(Xguess, Htf, x, cc))
-            proj.LogMemory("after Forward+BackwardProjectACC", True)
-        Xguess[np.where(np.isnan(Xguess))] = 0
+        BackwardProjectACC(hMatrix, HXguess, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector, rlUpdateFunc=lambda x,cc:RLUpdateFunc(Xguess, Htf, x, cc))
+        proj.LogMemory("after Forward+BackwardProjectACC", True)
         ttime = time.time() - t0
         #print('iter %d/%d took %.1f secs' % (i+1, maxIter, ttime))
     proj.LogMemory("RL iterations complete", True)

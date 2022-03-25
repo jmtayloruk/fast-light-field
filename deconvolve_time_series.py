@@ -40,14 +40,15 @@ def main(argv, maxIter=8, numParallel=32):
         gpuHelp = ' or gpu'
     else:
         gpuHelp = ' [gpu unavailable]'
-    parser.add_argument('-m', '--mode', dest='platform', metavar='PLATFORM', choices=['cpu', 'gpu'], default='cpu', help='deconvolve on cpu%s'%gpuHelp)
+    parser.add_argument('-m', '--mode', dest='platform', metavar='PLATFORM', choices=['cpu', 'gpu', 'gpubig'], default='cpu', help='deconvolve on cpu%s'%gpuHelp)
     parser.add_argument('-b', '--batch-size', dest='numParallel', metavar='BATCH-SIZE', type=int, default=32, help='number of simultaneous deconvolutions')
     parser.add_argument('-i', '--iters', dest='numIter', metavar='RL-ITERS', type=int, default=8, help='number of iterations of Richardson-Lucy to run')
+    parser.add_argument('-v', '--volumes-on-gpu', dest='storeVolumesOnGPU', action='store_true', default=False, help='store volume data on GPU (requires 4x the GB occupied by a stack)')
     parser.add_argument('-c', '--cacheFH', dest='cacheFH', action='store_true', default=False, help='enable caching (see documentation - use with care)')
     parser.add_argument('-d', '--dest', dest='destDir', metavar='DEST-DIR', default='.', help='directory in which deconvolved output will be saved')
     parser.add_argument('-p', '--psf', dest='psfFile', metavar='PSF-FILE', required=True, default=argparse.SUPPRESS, help='path to PSF file (will be created if needed)')
     parser.add_argument('-t', '--timepoints', dest='timepoints', metavar='IMG', required=True, default=argparse.SUPPRESS, nargs='+', help='files to deconvolve')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     projectorClass = proj.Projector_allC
     if args.platform == 'gpu':
@@ -55,7 +56,12 @@ def main(argv, maxIter=8, numParallel=32):
             projectorClass = proj.Projector_gpuHelpers
         else:
             print('\033[0;33mNOTE: GPU unavailable - reverting to CPU\033[0m')
+    else:
+        if args.storeVolumesOnGPU:
+            print('\033[0;33mNOTE: Ignoring "store volumes on GPU" as GPU was not specified for reconstruction\033[0m')
+            args.storeVolumesOnGPU = False
     projector = projectorClass()
+    projector.storeVolumesOnGPU = args.storeVolumesOnGPU
     projector.cacheFH = args.cacheFH
     hMatrix = psfmatrix.LoadMatrix(args.psfFile, createPSF=True)
 
