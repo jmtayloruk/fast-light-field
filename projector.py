@@ -669,7 +669,9 @@ class Projector_base(object):
     
     def nativeZeros(self, shape, dtype=float):
         return np.zeros(shape, dtype)
-
+    
+    def nativeDivide(self, a, b, out):
+        return np.divide(a, b, out=out)
 
 def CropAfterFFT(realZPlane, proj):
     result = []
@@ -685,7 +687,7 @@ class Projector_allC(Projector_base):
         # Patient planning does not actually lead to a noticable overall improvement, and takes >5 minutes to plan!
         #plf.SetPlanningMode(32)   #patient
 
-    def BackwardProjectACC(self, hMatrix, projection, planes, progress, logPrint, numjobs, keepNative=False):
+    def BackwardProjectACC(self, hMatrix, projection, planes, progress, logPrint, numjobs, keepNative=False, rlUpdateFunc=None):
         Backprojection = np.zeros((hMatrix.numZ, projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
         pos = 0
         planeWork = []
@@ -713,7 +715,11 @@ class Projector_allC(Projector_base):
             realZPlanes = plf.InverseRFFTList(inverseWork)
             for cc in planes:
                 Backprojection[cc] = CropAfterFFT(realZPlanes[cc], self.zProjectorClass(projection, hMatrix, cc))
-        return Backprojection
+        if rlUpdateFunc is not None:
+            rlUpdateFunc(Backprojection, slice(None))
+            return None
+        else:
+            return Backprojection
     
     def ForwardProjectACC(self, hMatrix, realspace, planes, progress, logPrint, numjobs, keepNative=False):
         TOTALprojection = None
@@ -811,31 +817,44 @@ def LogMemory(description, garbageCollect=False):
                     print("-> {0:.3f}GB (collected {1:.3f}GB)".format(after/1e9, (before-after)/1e9))
 
 class Projector_pythonSkeleton(Projector_base):
-    def BackwardProjectACC(self, hMatrix, projection, planes, progress, logPrint, numjobs, keepNative=False): # Ignores numjobs
+    def BackwardProjectACC(self, hMatrix, projection, planes, progress, logPrint, numjobs, keepNative=False, rlUpdateFunc=None): # Ignores numjobs
         projection = self.asnative(projection)
         LogMemory("BackwardProjectACC", True)
-        result = self.nativeZeros((len(planes), projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
+        if rlUpdateFunc is None:
+            result = self.nativeZeros((len(planes), projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
+        else:
+            planeResult = self.nativeZeros((projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
 
         # Project each z plane in turn
         fourierZPlanes = []     # This has to be a list because in Fourier space the shapes are different for each z plane
         for cc in progress(planes, desc='Backward-project - z', leave=False):
             thisFourierBackprojection = self.ProjectForZ(cc, projection, hMatrix, True)
-            self.InverseTransformBackwardProjection(result, thisFourierBackprojection, hMatrix, cc, projection)
+            if rlUpdateFunc is not None:
+                self.InverseTransformBackwardProjection(planeResult, thisFourierBackprojection, hMatrix, cc, projection)
+                rlUpdateFunc(planeResult, cc)
+            else:
+                self.InverseTransformBackwardProjection(result[cc], thisFourierBackprojection, hMatrix, cc, projection)
             # Doing garbage collection at this point does slow things down a bit, but keeps the high water mark down a bit.
             # I don't know if it actually affects what we can cope with
             #LogMemory("ProjectForZ[{0}]".format(cc), True)
+            
+        if rlUpdateFunc is not None:
+            del planeResult
         LogMemory("ProjectForZ finished", True)
 
-        if keepNative:
-            return result
+        if rlUpdateFunc is not None:
+            return None
         else:
-            return self.asnumpy(result)
+            if keepNative:
+                return result
+            else:
+                return self.asnumpy(result)
 
     def InverseTransformBackwardProjection(self, result, thisFourierBackprojection, hMatrix, cc, projection):
         # Compute the FFT for this z plane
         projector = self.zProjectorClass(projection, hMatrix, cc, self.fftPlan, self.fftPlan2)
         (fshape, fslice, s1) = special.convolutionShape(projection.shape, hMatrix.PSFShape(cc), hMatrix.Nnum, projector.padToSmallPrimes)
-        result[cc] = special.special_fftconvolve_part3(thisFourierBackprojection, fshape, fslice, s1)
+        result = special.special_fftconvolve_part3(thisFourierBackprojection, fshape, fslice, s1)
 
     def ForwardProjectACC(self, hMatrix, realspace, planes, progress, logPrint, numjobs, keepNative=False): # Ignores numjobs
         realspace = self.asnative(realspace)
@@ -903,13 +922,16 @@ class Projector_gpuHelpers(Projector_pythonSkeleton):
     def nativeZeros(self, shape, dtype=float):
         return cp.zeros(shape, dtype)
     
+    def nativeDivide(self, a, b, out):
+        return cp.divide(a, b, out=out)
+
     def InverseTransformBackwardProjection(self, result, thisFourierBackprojection, hMatrix, cc, projection):
         projector = self.zProjectorClass(projection, hMatrix, cc, self.fftPlan, self.fftPlan2)
         (fshape, fslice, s1) = special.convolutionShape(projection.shape, hMatrix.PSFShape(cc), hMatrix.Nnum, projector.padToSmallPrimes)
         # This next code is copied from special_fftconvolve_part3
         for n in range(thisFourierBackprojection.shape[0]):
             inv = cp.fft.irfftn(thisFourierBackprojection[n], fshape)
-            result[cc][n] = special._centered(inv[fslice], s1)
+            result[n] = special._centered(inv[fslice], s1)
 
     def InverseTransformForwardProjection(self, result, thisFourierForwardProjection, hMatrix, cc, realspace):
         # Compute and accumulate the FFT for each z plane

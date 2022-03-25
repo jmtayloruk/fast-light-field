@@ -24,10 +24,8 @@ os.environ['MKL_DYNAMIC'] = 'FALSE'
 # Most of the core code has now been encapsulated in classes in projector.py
 #########################################################################
 
-def BackwardProjectACC(hMatrix, projection, planes=None, progress=tqdm, logPrint=True, numjobs=util.PhysicalCoreCount(), projector=proj.Projector_allC(), keepNative=False):
-    singleJob = (len(projection.shape) == 2)
-    if singleJob:   # Cope with both a single 2D plane and an array of multiple 2D planes to process independently
-        projection = projection[np.newaxis,:,:]
+def BackwardProjectACC(hMatrix, projection, planes=None, progress=tqdm, logPrint=True, numjobs=util.PhysicalCoreCount(), projector=proj.Projector_allC(), keepNative=False, rlUpdateFunc=None):
+    assert(len(projection.shape) == 3)  # We only now support batch jobs (although batch size [dimension 0] can of course be 1)
     if planes is None:
         planes = range(hMatrix.numZ)
     if progress is None:
@@ -35,8 +33,7 @@ def BackwardProjectACC(hMatrix, projection, planes=None, progress=tqdm, logPrint
 
     ru1 = util.cpuTime('both')
     t1 = time.time()
-    Backprojection = projector.BackwardProjectACC(hMatrix, projection, planes, progress, logPrint, numjobs, keepNative)
-    assert(Backprojection.dtype == np.float32)   # Keep an eye out for any reversion to double-precision
+    Backprojection = projector.BackwardProjectACC(hMatrix, projection, planes, progress, logPrint, numjobs, keepNative, rlUpdateFunc)
     ru2 = util.cpuTime('both')
     t2 = time.time()
 
@@ -49,15 +46,10 @@ def BackwardProjectACC(hMatrix, projection, planes=None, progress=tqdm, logPrint
     f.write('%f\t%f\t%f\t%f\t%f\t%f\n' % (0, 0, 0, 0, (ru2-ru1)[0], (ru2-ru1)[1]))
     f.close()
 
-    if singleJob:
-        return Backprojection[:,0]
-    else:
-        return Backprojection
+    return Backprojection
 
 def ForwardProjectACC(hMatrix, realspace, planes=None, progress=tqdm, logPrint=True, numjobs=util.PhysicalCoreCount(), projector=proj.Projector_allC(), keepNative=False):
-    singleJob = (len(realspace.shape) == 3)
-    if singleJob:   # Cope with both a single 2D plane and an array of multiple 2D planes to process independently
-        realspace = realspace[:,np.newaxis,:,:]
+    assert(len(realspace.shape) == 4)  # We only now support batch jobs (although batch size [dimension 1] can of course be 1)
     if planes is None:
         planes = range(hMatrix.numZ)
     if progress is None:
@@ -75,10 +67,7 @@ def ForwardProjectACC(hMatrix, realspace, planes=None, progress=tqdm, logPrint=T
         print('work elapsed wallclock time %f'%(t2-t1))
         print('Total work delta rusage:', ru2-ru1)
     
-    if singleJob:
-        return TOTALprojection[0]
-    else:
-        return TOTALprojection
+    return TOTALprojection
 
 def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.PhysicalCoreCount(), projector=proj.Projector_allC(), im=None):
     # Note:
@@ -107,13 +96,27 @@ def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.Physical
         proj.LogMemory("Start RL iter {0}".format(i))
         t0 = time.time()
         HXguess = ForwardProjectACC(hMatrix, Xguess, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector, keepNative=True)
-        HXguessBack = BackwardProjectACC(hMatrix, HXguess, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector, keepNative=True)
-        proj.LogMemory("after Forward+BackwardProjectACC", True)
-        errorBack = cp.divide(Htf, HXguessBack, out=HXguessBack)
-        del HXguessBack   # Effectively this has been destroyed - storage is now used for errorBack
-        Xguess *= errorBack
-        del errorBack
-        proj.LogMemory("after deletions", True)
+        
+        def RLUpdateFunc(Xguess, Htf, HXguessBack, cc=slice(None)):
+            errorBack = projector.nativeDivide(Htf[cc], HXguessBack, out=HXguessBack)
+            del HXguessBack   # Effectively this has been destroyed - storage is now used for errorBack
+            Xguess[cc] *= errorBack
+            del errorBack
+            #proj.LogMemory("RLUpdateFunc complete for {0}".format(cc), True)
+        
+        if False:
+            # Old code for reference
+            HXguessBack = BackwardProjectACC(hMatrix, HXguess, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector, keepNative=True)#, rlUpdateFunc=lambda x:RLUpdateFunc(Xguess, Htf, x))
+            proj.LogMemory("after Forward+BackwardProjectACC", True)
+            errorBack = projector.nativeDivide(Htf, HXguessBack, out=HXguessBack)
+            del HXguessBack   # Effectively this has been destroyed - storage is now used for errorBack
+            Xguess *= errorBack
+            del errorBack
+            proj.LogMemory("after deletions", True)
+        else:
+            # New code in progress
+            HXguessBack = BackwardProjectACC(hMatrix, HXguess, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector, keepNative=True, rlUpdateFunc=lambda x,cc:RLUpdateFunc(Xguess, Htf, x, cc))
+            proj.LogMemory("after Forward+BackwardProjectACC", True)
         Xguess[np.where(np.isnan(Xguess))] = 0
         ttime = time.time() - t0
         #print('iter %d/%d took %.1f secs' % (i+1, maxIter, ttime))
@@ -136,7 +139,7 @@ def main(argv, projectorClass=proj.Projector_allC, maxiter=8, numParallel=32):
         
     print('Reminder: this test code will use a matrix that is not fully normalised, to reproduce results from original Matlab code')
     # Load the input image and PSF matrix
-    inputImage = lfimage.LoadLightFieldTiff('Data/02_Rectified/exampleData/20131219WORM2_small_full_neg_X1_N15_cropped_uncompressed.tif')
+    inputImage = lfimage.LoadLightFieldTiff('Data/02_Rectified/exampleData/20131219WORM2_small_full_neg_X1_N15_cropped_uncompressed.tif')[np.newaxis].copy()
     # Note that the PSF matrix we are using here is not normalised in the way I believe it should be.
     # This is purely intended to replicate the previous results obtained by Prevedel's code.
     hMatrix = psfmatrix.LoadMatrix('PSFmatrix/reducedPSFmatrix_M40NA0.95MLPitch150fml3000from-24to0zspacing3Nnum15lambda520n1.mat', createPSF=True)
@@ -155,7 +158,7 @@ def main(argv, projectorClass=proj.Projector_allC, maxiter=8, numParallel=32):
         print('== Running basic (single-threaded backprojection) ==')
 	    # Run my back-projection code (single-threaded) on a cropped version of Prevedel's data
         Htf = BackwardProjectACC(hMatrix, inputImage, planes=None, numjobs=1, progress=None, logPrint=False, projector=projector)
-        definitive = tifffile.imread('Data/03_Reconstructed/exampleData/definitive_worm_crop_X15_backproject.tif')
+        definitive = tifffile.imread('Data/03_Reconstructed/exampleData/definitive_worm_crop_X15_backproject.tif')[:,np.newaxis]
         testOutcomes += util.CheckComparison(definitive, Htf*10, 1.0, 'Compare against matlab result')
 
     if 'prime' in argv:
@@ -170,7 +173,7 @@ def main(argv, projectorClass=proj.Projector_allC, maxiter=8, numParallel=32):
         print('Problem size {0}={1}MB'.format(Htf.shape, Htf.size*Htf.itemsize/1e6))
         deconvolvedResult = DeconvRL(hMatrix, Htf, maxIter=maxiter, Xguess=Htf.copy(), logPrint=False, projector=projector)
         # Note that this is the file generated by the Matlab code, but after I have fixed the 'max' bug at z=0
-        definitive = tifffile.imread('Data/03_Reconstructed/exampleData/definitive_worm_crop_X15_iter8.tif')
+        definitive = tifffile.imread('Data/03_Reconstructed/exampleData/definitive_worm_crop_X15_iter8.tif')[:,np.newaxis]
         testOutcomes += util.CheckComparison(definitive, deconvolvedResult*1e3, 1.0, 'Compare against matlab result')
 
     if 'profile32' in argv:
@@ -189,7 +192,7 @@ def main(argv, projectorClass=proj.Projector_allC, maxiter=8, numParallel=32):
         # This does not test overall correctness, but it runs with two different (albeit proportional)
         # images and checks that the result matches the result for two totally independent calls on a single array.
         print('Testing image pair deconvolution:')
-        candidate = np.tile(inputImage[np.newaxis,:,:], (2,1,1))
+        candidate = np.tile(inputImage, (2,1,1))
         candidate[1] *= 1.4
         planesToUse = None   # Use all planes
         if planesToUse is None:
@@ -204,11 +207,11 @@ def main(argv, projectorClass=proj.Projector_allC, maxiter=8, numParallel=32):
         print('New method took', time.time()-t1)
 
         # Run for the individual images, and check we get the same result as with the dual round-trip
-        temp = BackwardProjectACC(hMatrix, candidate[0], planes=None, numjobs=1, logPrint=False, projector=projector)
+        temp = BackwardProjectACC(hMatrix, candidate[0][np.newaxis], planes=None, numjobs=1, logPrint=False, projector=projector)
         firstRoundtrip = ForwardProjectACC(hMatrix, temp, planes=None, numjobs=1, logPrint=False, projector=projector)
         testOutcomes += util.CheckComparison(firstRoundtrip, dualRoundtrip[0], 1e-6, 'Compare single and dual deconvolution #1', '<<1')
 
-        temp = BackwardProjectACC(hMatrix, candidate[1], planes=None, numjobs=1, logPrint=False, projector=projector)
+        temp = BackwardProjectACC(hMatrix, candidate[1][np.newaxis], planes=None, numjobs=1, logPrint=False, projector=projector)
         secondRoundtrip = ForwardProjectACC(hMatrix, temp, planes=None, numjobs=1, logPrint=False, projector=projector)
         testOutcomes += util.CheckComparison(secondRoundtrip, dualRoundtrip[1], 1e-6, 'Compare single and dual deconvolution #2', '<<1')
 
