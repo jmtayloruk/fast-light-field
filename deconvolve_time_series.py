@@ -56,10 +56,10 @@ def main(argv, maxIter=8, numParallel=32):
             projectorClass = proj.Projector_gpuHelpers
         else:
             print('\033[0;33mNOTE: GPU unavailable - reverting to CPU\033[0m')
-    else:
-        if args.storeVolumesOnGPU:
-            print('\033[0;33mNOTE: Ignoring "store volumes on GPU" as GPU was not specified for reconstruction\033[0m')
-            args.storeVolumesOnGPU = False
+            args.platform = 'cpu'
+    if (args.platform == 'cpu') and args.storeVolumesOnGPU:
+        print('\033[0;33mNOTE: Ignoring "store volumes on GPU" as GPU was not specified for reconstruction\033[0m')
+        args.storeVolumesOnGPU = False
     projector = projectorClass()
     projector.storeVolumesOnGPU = args.storeVolumesOnGPU
     projector.cacheFH = args.cacheFH
@@ -85,7 +85,7 @@ def main(argv, maxIter=8, numParallel=32):
         ProcessBatch(projector, hMatrix, args.timepoints[t:tEnd], args.destDir, args.numIter)
 
 if __name__ == "__main__":
-    main(sys.argv)
+    main(sys.argv[1:])
 
 # Quick test:
 # python deconvolve_time_series.py --psf "PSFmatrix/fdnormPSFmatrix_M22.2NA0.5MLPitch125fml3125from-4to0zspacing4Nnum19lambda520n1.33.mat" --dest tempOutput --timepoints "/Users/jonny/Movies/Nils files/Raw-camera-images/Right/Cam_Right_40_X1.tif"
