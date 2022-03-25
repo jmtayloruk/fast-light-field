@@ -854,7 +854,9 @@ class Projector_pythonSkeleton(Projector_base):
         # Compute the FFT for this z plane
         projector = self.zProjectorClass(projection, hMatrix, cc, self.fftPlan, self.fftPlan2)
         (fshape, fslice, s1) = special.convolutionShape(projection.shape, hMatrix.PSFShape(cc), hMatrix.Nnum, projector.padToSmallPrimes)
-        result = special.special_fftconvolve_part3(thisFourierBackprojection, fshape, fslice, s1)
+        # Note: We need the [:] to ensure we save into the array sub-view that result represents,
+        # rather than assigning a new array to the local variable 'result'.
+        result[:] = special.special_fftconvolve_part3(thisFourierBackprojection, fshape, fslice, s1)
 
     def ForwardProjectACC(self, hMatrix, realspace, planes, progress, logPrint, numjobs, keepNative=False): # Ignores numjobs
         realspace = self.asnative(realspace)
