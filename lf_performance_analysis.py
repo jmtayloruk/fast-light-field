@@ -133,7 +133,7 @@ def IsNumericArg(arg, stem):
 
 def SetImage(img, batchSize):
     print('Will use image shape {0}, batch x{1}'.format(img.shape, batchSize))
-    return img, np.tile(img[np.newaxis,:,:], (batchSize,1,1))
+    return img[np.newaxis], np.tile(img[np.newaxis,:,:], (batchSize,1,1))
 
 def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=None, numJobs=plf.GetNumThreadsToUse(), projectorClass=proj.Projector_allC):
     #########################################################################
