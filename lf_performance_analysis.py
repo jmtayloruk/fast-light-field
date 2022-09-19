@@ -149,9 +149,10 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
         print('NOTE: cache is not being primed - timings for early runs will include FFT planning time')
 
     numJobs = SetNumJobs(numJobs)
+    iterations = 4
     
     # Default to cpu mode unless/until explicitly specified otherwise
-    args = ['no-cache-FH', 'cpu', 'no-profile', 'default-matrix', 'default-image'] + argv
+    args = ['no-cache-FH', 'volumes-on-cpu', 'cpu', 'back-project', 'no-profile', 'default-matrix', 'default-image'] + argv
     projector = None
     results = []
 
@@ -161,19 +162,36 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
             projectorClass = proj.Projector_gpuHelpers
             projector = projectorClass()
             projector.cacheFH = cacheFH
+            projector.storeVolumesOnGPU = storeVolumesOnGPU
         elif arg == 'cpu':
             projectorClass = proj.Projector_allC
             projector = projectorClass()
             projector.cacheFH = cacheFH
+        elif arg == 'back-project':
+            print('Benchmarking backprojection operator')
+            backProjectOnly = True
+        elif arg == 'deconv':
+            print('Benchmarking full deconvolution')
+            backProjectOnly = False
         elif arg == 'profile':
             profile = True
         elif arg == 'no-profile':
             profile = False
+        elif arg == 'volumes-on-gpu':
+            storeVolumesOnGPU = True
+            if projector is not None:
+                projector.storeVolumesOnGPU = storeVolumesOnGPU
+        elif arg == 'volumes-on-cpu':
+            storeVolumesOnGPU = False
+            if projector is not None:
+                projector.storeVolumesOnGPU = storeVolumesOnGPU
         elif IsNumericArg(arg, 'j'):
             numJobs = SetNumJobs(int(arg[1:]))
         elif IsNumericArg(arg, 'x'):
             batchSize = int(arg[1:])
-            inputImage,inputImageBatch = SetImage(inputImage, batchSize)
+            inputImage,inputImageBatch = SetImage(inputImage[0], batchSize)
+        elif IsNumericArg(arg, 'i'):
+            iterations = int(arg[1:])
 
         elif arg == 'default-matrix':
             hMatrix = psfmatrix.LoadMatrix(matPath)
@@ -254,7 +272,10 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
             # Run my new fast code
             print('Benchmarking new fast code (single image)')
             def RunThis():
-                return lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, progress=util.noProgressBar, numjobs=numJobs, projector=projector, logPrint=False)
+                if backProjectOnly:
+                    return lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, progress=util.noProgressBar, numjobs=numJobs, projector=projector, logPrint=False)
+                else:
+                    return lfdeconv.DeconvRL(hMatrix, Htf=None, maxIter=iterations, Xguess=None, im=inputImage, logPrint=False, numjobs=numJobs, projector=projector)
         elif arg == 'new-piv':
             # Run my code in the sort of scenario I would expect to run it in for my PIV experiments.
             print('Benchmarking new fast code (PIV scenario)')
@@ -264,7 +285,10 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
             # Run my code in the sort of scenario I would expect to run it in when batch-processing video
             print('Benchmarking new fast code (batch scenario)')
             def RunThis():
-                return lfdeconv.BackwardProjectACC(hMatrix, inputImageBatch, planes=planesToProcess, progress=util.noProgressBar, numjobs=numJobs, projector=projector, logPrint=False)
+                if backProjectOnly:
+                    return lfdeconv.BackwardProjectACC(hMatrix, inputImageBatch, planes=planesToProcess, progress=util.noProgressBar, numjobs=numJobs, projector=projector, logPrint=False)
+                else:
+                    return lfdeconv.DeconvRL(hMatrix, Htf=None, maxIter=iterations, Xguess=None, im=inputImageBatch, progress=util.noProgressBar, logPrint=False, numjobs=numJobs, projector=projector)
         else:
             print('UNRECOGNISED ARGUMENT:', arg)
             

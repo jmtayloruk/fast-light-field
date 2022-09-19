@@ -69,7 +69,7 @@ def ForwardProjectACC(hMatrix, realspace, planes=None, progress=tqdm, logPrint=T
     
     return TOTALprojection
 
-def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.PhysicalCoreCount(), projector=proj.Projector_allC(), im=None):
+def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.PhysicalCoreCount(), projector=proj.Projector_allC(), im=None, progress=tqdm):
     # Note:
     #  Htf is the *initial* backprojection of the camera image
     #  Xguess is the initial guess for the object
@@ -94,8 +94,8 @@ def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.Physical
         if projector.storeVolumesOnGPU:
             Xguess = projector.asnative(Xguess)
     proj.LogMemory("after Xguess")
-    for i in tqdm(range(maxIter), desc='RL deconv'):
-        proj.LogMemory("Start RL iter {0}".format(i))
+    for i in progress(range(maxIter), desc='RL deconv'):
+        proj.LogMemory("Start RL iter {0}/{1}".format(i+1, maxIter))
         t0 = time.time()
         HXguess = ForwardProjectACC(hMatrix, Xguess, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector)
         
@@ -107,26 +107,31 @@ def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.Physical
                 del HXguessBack   # Effectively this has been destroyed - storage is now used for errorBack
                 Xguess[cc] *= errorBack
                 del errorBack
-                Xguess[cc][np.where(np.isnan(Xguess[cc]))] = 0  # Note: this is marginally faster than cp.nan_to_num(copy=False), at least when we don't have NaNs
+                Xguess[cc][np.where(np.isnan(Xguess[cc]))] = 0
             else:
-                # We are presumably working with a GPU
+                # We are presumably working with a GPU.
+                #
+                # Performance notes re nan masking:
+                # 1. My cp.where construction is marginally faster than cp.nan_to_num(copy=False), at least when we don't have NaNs
+                # 2. If I run a profiler, this appears to take almost 25% of the total run time.
+                #    However, eliminating it doesn't speed things up, so I think this is just acting as a checkpoint for asynchronous GPU work.
                 if projector.storeVolumesOnGPU:
                     # All calculations and results stay on the GPU
                     errorBack = projector.nativeDivide(Htf[cc], HXguessBack, out=HXguessBack)
                     del HXguessBack   # Effectively this has been destroyed - storage is now used for errorBack
                     Xguess[cc] *= errorBack
                     del errorBack
-                    Xguess[cc][cp.where(cp.isnan(Xguess[cc]))] = 0  # Note: this is marginally faster than cp.nan_to_num(copy=False), at least when we don't have NaNs
+                    Xguess[cc][cp.where(cp.isnan(Xguess[cc]))] = 0
                 else:
                     # Intermediate calculations are on the GPU, but then we bring the final result back to the CPU
                     errorBack = cp.divide(cp.asarray(Htf[cc]), HXguessBack, out=HXguessBack)
                     del HXguessBack   # Effectively this has been destroyed - storage is now used for errorBack
                     mul = cp.asarray(Xguess[cc]) * errorBack
                     del errorBack
-                    mul[cp.where(cp.isnan(mul))] = 0  # Note: this is marginally faster than cp.nan_to_num(copy=False), at least when we don't have NaNs
+                    mul[cp.where(cp.isnan(mul))] = 0
                     Xguess[cc] = mul.get()
-            #proj.LogMemory("RLUpdateFunc complete for {0}".format(cc), True)
-        
+            #proj.LogMemory("RLUpdateFunc complete for {0}".format(cc), False)
+
         BackwardProjectACC(hMatrix, HXguess, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector, rlUpdateFunc=lambda x,cc:RLUpdateFunc(Xguess, Htf, x, cc))
         proj.LogMemory("after Forward+BackwardProjectACC", True)
         ttime = time.time() - t0
@@ -254,15 +259,8 @@ try:
         attrs=device.get_attributes()
         print(' {0} threads x {1} processors'.format(attrs[cuda.device_attribute.MAX_THREADS_PER_MULTIPROCESSOR], attrs[cuda.device_attribute.MULTIPROCESSOR_COUNT]))
         print(' Clock speed {0}GHz, mem speed {1}GHz x {2}B = {3:.2f}GB/s, L2 {4:.2f}MB'.format(attrs[cuda.device_attribute.CLOCK_RATE]*1e3/1e9, attrs[cuda.device_attribute.MEMORY_CLOCK_RATE]*1e3/1e9, attrs[cuda.device_attribute.GLOBAL_MEMORY_BUS_WIDTH]//8, attrs[cuda.device_attribute.MEMORY_CLOCK_RATE]*attrs[cuda.device_attribute.GLOBAL_MEMORY_BUS_WIDTH]/8e6, attrs[cuda.device_attribute.L2_CACHE_SIZE]/1e6))
-        # pynvml is a slightly more obscure module, so we don't insist on it being present
-        try:
-            import pynvml
-            pynvml.nvmlInit()
-            h = pynvml.nvmlDeviceGetHandleByIndex(0)
-            info = pynvml.nvmlDeviceGetMemoryInfo(h)
-            print(' Total GPU RAM {0:.2f}GB'.format(info.total/1e9))
-        except ImportError:
-            print(' Total GPU RAM unknown (pynvml not installed)')
+        total = cuda.mem_get_info()[1]
+        print(' Total GPU RAM {0:.2f}GB'.format(total/1e9))
     hasGPU = True
 except ImportError:
     hasGPU = False

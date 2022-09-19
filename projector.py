@@ -42,6 +42,9 @@ gExpandXTargetBlocks = (1, 15, 8)
 gCalculateRowsTargetBlocks = (3, 8, 8)
 gCalculateRowsMaxBlocks = (3, 13, 13)
 
+#########################################################################
+# Global variables that affect GPU code behaviour
+#########################################################################
 gPadFactor = 8
 # Flag controlling a few debug checks.
 # This has a slight performance penalty, for making a few self-consistency checks
@@ -58,7 +61,17 @@ gSynchronizeAfterKernelCalls = False
 # is too much to make the padding worthwhile
 padToSmallPrimesOnGPU = False
 # Debug flag to enable verbose printing of GPU memory usage at key points during the running of the code
-logGPUMemoryUsage = False
+logGPUMemoryUsage = True
+
+# This flag replaces all the GPU work with dummy functions,
+# to help examine what the CPU-based overheads are for the GPU code
+dummyGPUWork = False
+# This flag [not recommended] has the GPU calculate FFT(H) in larger batches (e.g. for a whole row of aa),
+# but it didn't improve overall performance much, if at all: only about 1% in the test case I tried!
+# It has the downside of requiring more memory to store the results,
+# as well as making other memory-use optimisations harder to code.
+doBatchFH = False
+
 
 # Note: H.shape in python is (<num z planes>, Nnum, Nnum, <psf size>, <psf size>),
 #                       e.g. (56, 19, 19, 343, 343)
@@ -140,7 +153,7 @@ class ProjectorForZ_base(object):
         # However, it's not immediately clear to me how to fill out the full fftn array from rfftn
         # in the case of a 2D transform.
         # For 1D it's the reversed conjugate, but for 2D it's more complicated than that.
-        # It's possible that it's actually nontrivial, in spite of the fact that
+        # I think it's actually nontrivial, in spite of the fact that
         # you can get away without it when only computing fft/ifft for real arrays)
         fHtsFull = self.GetFH(hMatrix, cc, bb, aa, backwards, False)
         accum = self.convolvePart2(projection,bb,aa,fHtsFull,mirrorY,mirrorX, accum)
@@ -158,6 +171,9 @@ class ProjectorForZ_base(object):
             accum = self.convolvePart3(projection,bb,self.Nnum-aa-1,fHtsFull,mirrorX,accum)
         return accum
 
+    def AccumulatingInto(self, accum):
+        pass
+
     def ProjectForZY(self, cc, bb, source, hMatrix, backwards):
         assert(source.dtype == np.float32)   # Keep an eye out for if we are provided with double-precision inputs
         #f = open('perf_diags/%d_%d.txt'%(cc,bb), "w")
@@ -174,8 +190,11 @@ class ProjectorForZ_base(object):
             _result = self.nativeZeros((source.shape[0], self.rfshape[0], self.rfshape_xPadded[1]), dtype='complex64')
         result = _result[:,:,0:self.rfshape[1]]
 
+        self.AccumulatingInto(result)
         for aa in range(bb,int((hMatrix.Nnum+1)/2)):
             result = self.convolve(source, hMatrix, cc, bb, aa, backwards, result)
+        self.AccumulatingInto(None)
+
         t2 = time.time()
         assert(result.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
         #f.write('%d\t%f\t%f\t%f\t%f\t%f\n' % (os.getpid(), t1, t2, t2-t1, self.cpuTime[0], self.cpuTime[1]))
@@ -282,6 +301,21 @@ def CallKernel(kernel, workShape, blockShape, params):
             assert(False)
     # Call through to the kernel
     kernel(tuple(gridShape), tuple(blockShape), params)
+    if gSynchronizeAfterKernelCalls:
+        cp.cuda.runtime.deviceSynchronize()
+
+def CallKernel2D(kernel, workShape, blockShape, params):
+    gridShape = (workShape[0]//blockShape[0], workShape[1]//blockShape[1])
+    # Call through to the kernel
+    kernel(gridShape, blockShape, params)
+    if gSynchronizeAfterKernelCalls:
+        cp.cuda.runtime.deviceSynchronize()
+
+def CallKernel3DGrid(kernel, gridShape, blockShape, params):
+    # At one point I thought there was some overhead to calculating shapes and converting between
+    # tuples and arrays, so I decided to precalculate all that.
+    # This function is now not much more than a wrapper
+    kernel(gridShape, blockShape, params)
     if gSynchronizeAfterKernelCalls:
         cp.cuda.runtime.deviceSynchronize()
 
@@ -409,6 +443,47 @@ class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
                 accum[pos3] += partialFourierOfProjection[pos3_partial] * conj(fHTsFull_unmirrored[pos2]) * emy;
             }
             ''', 'calculateRowsMirrored')
+        
+        if dummyGPUWork:
+            # Empty kernels to help look at overheads elsewhere in the code
+            self.mirrorX_kernel = cp.RawKernel(r'''
+                #include <cupy/complex.cuh>
+                extern "C" __global__ void mirrorX(const complex<float>* x, const complex<float>* mirrorXMultiplier, complex<float>* result)
+                {
+                }
+                ''', 'mirrorX')
+            self.mirrorY_kernel = cp.RawKernel(r'''
+                #include <cupy/complex.cuh>
+                extern "C" __global__ void mirrorY(const complex<float>* x, const complex<float>* mirrorYMultiplier, complex<float>* result)
+                {
+                }
+                ''', 'mirrorY')
+
+            self.expandX_kernel = cp.RawKernel(r'''
+                #include <cupy/complex.cuh>
+                extern "C" __global__
+                void expandX(const complex<float>* x, const complex<float>* expandXMultiplier, int smallDimXY, int smallDimX, complex<float>* result)
+                {
+                }
+                ''', 'expandX')
+
+            self.calculateRows_kernel = cp.RawKernel(r'''
+                #include <cupy/complex.cuh>
+                extern "C" __global__
+                void calculateRows(const complex<float>* partialFourierOfProjection, const complex<float>* fHTsFull_unmirrored,
+                const complex<float>* yAxisMultipliers, int smallDimY, int smallDimX, int fHtsDimX, complex<float>* accum)
+                {
+                }
+                ''', 'calculateRows')
+
+            self.calculateRowsMirrored_kernel = cp.RawKernel(r'''
+                #include <cupy/complex.cuh>
+                extern "C" __global__
+                void calculateRowsMirrored(const complex<float>* partialFourierOfProjection, const complex<float>* fHTsFull_unmirrored,
+                const complex<float>* yAxisMultipliers, int smallDimY, int smallDimX, int fHtsDimX, complex<float>* accum)
+                {
+                }
+                ''', 'calculateRowsMirrored')            
         # Set the block sizes we use when calling our custom GPU kernels.
         # To *ensure* we can make that a block size that performs well, we will deliberately over-allocate space in our accumlator array,
         # which then allows us to use a nice round block size even if it overruns the array in the x dimension
@@ -465,10 +540,10 @@ class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
         self.batchFHShape = (halfWidth,halfWidth,self.s2[0],self.s2[1])
         if (fftPlan2 is None) or (fftPlan2.shape != self.fshape):
             dummy = cp.empty(self.batchFHShape, dtype='complex64')
-            # Note: I looked into doing the FFTs in larger batches (e.g. for a whole row of aa),
-            # but it didn't improve overall performance much, if at all, and it requires more memory to
-            # store the results, as well as making other memory-use optimisations harder to code.
-            self.fftPlan2 = cupyx.scipy.fftpack.get_fft_plan(dummy[0,0], shape=self.fshape, axes=(0,1))
+            if doBatchFH:
+                self.fftPlan2 = cupyx.scipy.fftpack.get_fft_plan(dummy[0], shape=self.fshape, axes=(1,2))
+            else:
+                self.fftPlan2 = cupyx.scipy.fftpack.get_fft_plan(dummy[0,0], shape=self.fshape, axes=(0,1))
 
     def nativeZeros(self, shape, dtype=float):
         return cp.zeros(shape, dtype)
@@ -476,7 +551,7 @@ class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
     def MirrorXArray(self, fHtsFull):
         # Utility function to convert the FFT of a PSF to the FFT of the X mirror of that same PSF
         result = cp.empty_like(fHtsFull)
-        CallKernel(self.mirrorX_kernel, fHtsFull.shape, self.mirrorXBlocks,
+        CallKernel2D(self.mirrorX_kernel, tuple(fHtsFull.shape), self.mirrorXBlocks,
                    (fHtsFull, self.mirrorXMultiplier, result))
         return result
     
@@ -485,7 +560,7 @@ class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
         if blocks is None:
             blocks = self.mirrorYBlocks
         result = cp.empty_like(fHtsFull)
-        CallKernel(self.mirrorY_kernel, fHtsFull.shape, blocks, (fHtsFull, self.mirrorYMultiplier, result))
+        CallKernel2D(self.mirrorY_kernel, fHtsFull.shape, blocks, (fHtsFull, self.mirrorYMultiplier, result))
         return result
 
     def special_fftconvolve_py(self, projection, fHtsFull, bb, aa, Nnum, mirrorX, xAxisMultipliers, yAxisMultipliers, accum, earlyExit=0):
@@ -530,8 +605,10 @@ class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
         expandXMultiplier = self.xAxisMultipliers[1+aa,0:int(self.fshape[-1]/2+1)]
         _partialFourierOfProjection = cp.empty((fftArray.shape[0], fftArray.shape[1], self.rfshape_xPadded[1]), dtype='complex64')
         partialFourierOfProjection = _partialFourierOfProjection[:,:,0:expandXMultiplier.shape[0]]
-        CallKernel(self.expandX_kernel, _partialFourierOfProjection.shape, blocks,
-                   (fftArray, expandXMultiplier, np.int32(element_strides(fftArray)[0]), np.int32(element_strides(fftArray)[-2]), partialFourierOfProjection))
+        gridShape = tuple(_partialFourierOfProjection.shape // np.array(blocks))
+        
+        CallKernel3DGrid(self.expandX_kernel, gridShape, blocks,
+                     (fftArray, expandXMultiplier, np.int32(element_strides(fftArray)[0]), np.int32(element_strides(fftArray)[-2]), partialFourierOfProjection))
         return partialFourierOfProjection
     
     def CalibrateBlockFactors(self, kernelCall, workShape):
@@ -583,20 +660,32 @@ class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
         #print('Best shape {0}, took {1:.2f}ms. Tried {2} in {3:.2f}s'.format(bestShape, bestTime*1e3, numTries, tEnd-tStart))
         return bestShape
     
+    def AccumulatingInto(self, accum, blocks=None):
+        if blocks is None:
+            blocks = self.calculateRowsBlocks
+        if accum is None:
+            self.fftconvolve2WorkShape = None
+            self.fftconvolve2GridShape = None
+        else:
+            self.fftconvolve2WorkShape = (accum.shape[0], accum.shape[1], element_strides(accum)[-2])        # Adapt to the padded length of accum
+            self.fftconvolve2GridShape = tuple(np.array(self.fftconvolve2WorkShape) // np.array(blocks))
+
     def special_fftconvolve2_mirror(self, partialFourierOfProjection, fHtsFull, bb, aa, Nnum, accum, blocks=None):
         if blocks is None:
             blocks = self.calculateRowsBlocks
-        workShape = (accum.shape[0], accum.shape[1], element_strides(accum)[-2])        # Adapt to the padded length of accum
-        CallKernel(self.calculateRowsMirrored_kernel, workShape, blocks,
-                   (partialFourierOfProjection, fHtsFull, self.yAxisMultipliers[1,bb],
-                    np.int32(partialFourierOfProjection.shape[1]), np.int32(element_strides(partialFourierOfProjection)[-2]), np.int32(fHtsFull.shape[1]), accum))
+        else:
+            self.AccumulatingInto(accum, blocks)
+        CallKernel3DGrid(self.calculateRowsMirrored_kernel, self.fftconvolve2GridShape, blocks,
+                       (partialFourierOfProjection, fHtsFull, self.yAxisMultipliers[1,bb],
+                        np.int32(partialFourierOfProjection.shape[1]), np.int32(element_strides(partialFourierOfProjection)[-2]), np.int32(fHtsFull.shape[1]), accum))
         return accum
 
     def special_fftconvolve2_nomirror(self, partialFourierOfProjection, fHtsFull, bb, aa, Nnum, accum, blocks=None):
         if blocks is None:
             blocks = self.calculateRowsBlocks
-        workShape = (accum.shape[0], accum.shape[1], element_strides(accum)[-2])        # Adapt to the padded length of accum
-        CallKernel(self.calculateRows_kernel, workShape, blocks,
+        else:
+            self.AccumulatingInto(accum, blocks)
+        CallKernel3DGrid(self.calculateRows_kernel, self.fftconvolve2GridShape, blocks,
                        (partialFourierOfProjection, fHtsFull, self.yAxisMultipliers[0,bb],
                         np.int32(partialFourierOfProjection.shape[1]), np.int32(element_strides(partialFourierOfProjection)[-2]), np.int32(fHtsFull.shape[1]), accum))
         return accum
@@ -609,18 +698,25 @@ class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
         self.cpuTime += util.cpuTime('both')-cpu0
         return accum
 
+    def BatchCalculateFH(self, hMatrix, cc, backwards):
+        def temp(hMatrix, cc, backwards):
+            H = cp.asarray(hMatrix.Hcc(cc, backwards))
+            self.fHCache = [None]*hMatrix.Nnum
+            for bb in hMatrix.iterableBRange:
+                self.fHCache[bb] = cupyx.scipy.fftpack.fftn(H[bb], self.fshape, axes=(1,2), plan=self.fftPlan2)
+        bench = benchmark(temp, (hMatrix, cc, backwards), n_warmup=0, n_repeat=1)
+        global totalFHTime
+        totalFHTime += bench._ts
+    
     def GetFH(self, hMatrix, cc, bb, aa, backwards, transpose):
         if transpose:
-            # TODO: I haven't thought through this scenario properly yet.
-            # I would have expected to need to actually perform a transpose,
-            # but in the 'else' branch below I seem to get away without doing that...?
-            # TODO: note also that we are not caching the FFT result here, but the caller should be able to do that.
-            # I should take a big picture view on whether I need to do the actual transposing,
-            # and then probably update the calling code throughout this source file
             aa,bb = bb,aa
-        H = cp.asarray(hMatrix.Hcc(cc, backwards)[bb, aa])
-        fHtsFull = cupyx.scipy.fftpack.fftn(H, self.fshape, axes=(0,1), plan=self.fftPlan2)
-        return fHtsFull
+        if doBatchFH:
+            return self.fHCache[bb][aa]
+        else:
+            H = cp.asarray(hMatrix.Hcc(cc, backwards)[bb, aa])
+            fHtsFull = cupyx.scipy.fftpack.fftn(H, self.fshape, axes=(0,1), plan=self.fftPlan2)
+            return fHtsFull
 
     def PrecalculateFFTArray(self, cc, source):
         # Rejig 'projection' into a shape we can work with more easily
@@ -639,6 +735,8 @@ class ProjectorForZ_gpuHelpers(ProjectorForZ_base):
 
     def ProjectForZ(self, cc, source, hMatrix, backwards):
         self.PrecalculateFFTArray(cc, source)
+        if doBatchFH:
+            self.BatchCalculateFH(hMatrix, cc, backwards)
         # Now do the z projection
         return super().ProjectForZ(cc, source, hMatrix, backwards)
 
@@ -802,13 +900,14 @@ class Projector_allC(Projector_base):
         assert(TOTALprojection.dtype == np.float32)   # Keep an eye out for any reversion to double-precision
         return TOTALprojection
 
+startTime = time.time()
 def LogMemory(description, garbageCollect=False):
     if gpuAvailable:
         _ = cp.zeros((1))  # Dummy to trigger cuda lazy initialization if we are called before any real work has been done
         before = cuda.mem_get_info()
         before = before[1]-before[0]
         if logGPUMemoryUsage:
-            print("{0:.3f}GB {1} (CPU RAM {2:.3f}GB)".format(before/1e9, description, psutil.virtual_memory()[3]/1e9))
+            print("{0:.3f}GB {1} (CPU RAM {2:.3f}GB, elapsed time {3:.2f}s)".format(before/1e9, description, psutil.virtual_memory()[3]/1e9, time.time()-startTime))
         if garbageCollect:
             cp.get_default_memory_pool().free_all_blocks()
             after = cuda.mem_get_info()
@@ -838,15 +937,15 @@ class Projector_pythonSkeleton(Projector_base):
             if rlUpdateFunc is not None:
                 self.InverseTransformBackwardProjection(planeResult, thisFourierBackprojection, hMatrix, cc, projection)
                 rlUpdateFunc(planeResult, cc)
-            else:
+            elif not dummyGPUWork:
                 self.InverseTransformBackwardProjection(result[cc], thisFourierBackprojection, hMatrix, cc, projection)
             # Doing garbage collection at this point does slow things down a bit, but keeps the high water mark down a bit.
             # I don't know if it actually affects what we can cope with
-            #LogMemory("ProjectForZ[{0}]".format(cc), True)
+            #LogMemory("Bk ProjectForZ[{0}]".format(cc), False)
             
         if rlUpdateFunc is not None:
             del planeResult
-        LogMemory("ProjectForZ finished", True)
+        LogMemory("BackwardProjectACC finished", True)
 
         if rlUpdateFunc is not None:
             return None
@@ -874,8 +973,8 @@ class Projector_pythonSkeleton(Projector_base):
         for cc in progress(planes, desc='Forward-project - z', leave=False):
             thisFourierForwardProjection = self.ProjectForZ(cc, realspace[cc], hMatrix, False)
             self.InverseTransformForwardProjection(result, thisFourierForwardProjection, hMatrix, cc, realspace)
-            #LogMemory("ProjectForZ[{0}]".format(cc), True)
-        LogMemory("ProjectForZ finished", True)
+            #LogMemory("Fd ProjectForZ[{0}]".format(cc), False)
+        LogMemory("ForwardProjectACC finished", True)
 
         if self.storeVolumesOnGPU:
             return result
@@ -939,22 +1038,18 @@ class Projector_gpuHelpers(Projector_pythonSkeleton):
     def InverseTransformBackwardProjection(self, result, thisFourierBackprojection, hMatrix, cc, projection):
         projector = self.zProjectorClass(projection, hMatrix, cc, self.fftPlan, self.fftPlan2)
         (fshape, fslice, s1) = special.convolutionShape(projection.shape, hMatrix.PSFShape(cc), hMatrix.Nnum, projector.padToSmallPrimes)
-        # This next code is copied from special_fftconvolve_part3
-        for n in range(thisFourierBackprojection.shape[0]):
-            inv = cp.fft.irfftn(thisFourierBackprojection[n], fshape)
-            if isinstance(result, cp.ndarray):
-                result[n] = special._centered(inv[fslice], s1)
-            else:
-                result[n] = special._centered(inv[fslice], s1).get()
+        inv = cp.fft.irfftn(thisFourierBackprojection, fshape, axes=(1,2))
+        if isinstance(result, cp.ndarray):
+            result[:] = special._centered(inv[(slice(None),)+fslice], s1)
+        else:
+            result[:] = special._centered(inv[(slice(None),)+fslice], s1).get()
+    
 
     def InverseTransformForwardProjection(self, result, thisFourierForwardProjection, hMatrix, cc, realspace):
         # Compute and accumulate the FFT for each z plane
         (fshape, fslice, s1) = special.convolutionShape(realspace[cc].shape, hMatrix.PSFShape(cc), hMatrix.Nnum, padToSmallPrimesOnGPU)
-        # This next code is copied from special_fftconvolve_part3
-        for n in range(thisFourierForwardProjection.shape[0]):
-            inv = cp.fft.irfftn(thisFourierForwardProjection[n], fshape)
-            result[n] += special._centered(inv[fslice], s1)
-
+        inv = cp.fft.irfftn(thisFourierForwardProjection, fshape, axes=(1,2))
+        result[:] += special._centered(inv[(slice(None),)+fslice], s1)
 
 #########################################################################
 # Older, simple versions of backprojection code, for reference.

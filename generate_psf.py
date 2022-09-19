@@ -651,6 +651,10 @@ def GeneratePSF(M, NA, MLPitch, Nnum, OSR, n, fml, lam, zmin, zmax, zspacing, no
         Backprojection2 = np.zeros((projection.shape[0], projection.shape[0], x3length))
         imcenter = imcenterinit_mp + int(Nnum/2)
         # Original code convolves a point at _aa,_bb with the rotated H
+        # Instead, here we observe that if we know we are convolving *a single point* with the PSF,
+        # we can just "rubber stamp" the PSF values in the appropriate place.
+        # We avoid having to do any explicit convolution, and hence this code is way faster
+        # (taking seconds rather than hours!)
         for aa in range(Nnum):
             for bb in range(Nnum):
                 # No need to call Rotate180 - we can just mirror the axes and that has the same effect
