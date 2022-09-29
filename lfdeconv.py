@@ -43,7 +43,7 @@ def BackwardProjectACC(hMatrix, projection, planes=None, progress=tqdm, logPrint
         print('Total work delta rusage:', ru2-ru1)
     
     f = open('overall.txt', 'w')
-    f.write('%f\t%f\t%f\t%f\t%f\t%f\n' % (0, 0, 0, 0, (ru2-ru1)[0], (ru2-ru1)[1]))
+    f.write('%f\t%f\t%f\t%f\t%f\t%f\n' % (t1, t2, 0, 0, (ru2-ru1)[0], (ru2-ru1)[1]))
     f.close()
 
     return Backprojection
@@ -75,7 +75,7 @@ def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.Physical
     #  Xguess is the initial guess for the object
     ru1 = util.cpuTime('both')
     t1 = time.time()
-    proj.LogMemory("initial")
+    proj.LogMemory("Starting DeconvRL")
     if Htf is None:
         # Caller has not provided the initial backprojection, but has provided the camera image itself
         assert(im is not None)
@@ -85,7 +85,7 @@ def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.Physical
         assert(im is None)
         if projector.storeVolumesOnGPU:
             Htf = projector.asnative(Htf)
-    proj.LogMemory("after Htf")
+    proj.LogMemoryDetailed("after Htf")
     if Xguess is None:
         # Caller has not provided the initial guess - we will use the backprojection as the initial guess
         Xguess = Htf.copy()
@@ -93,7 +93,7 @@ def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.Physical
         # Caller has provided initial guess
         if projector.storeVolumesOnGPU:
             Xguess = projector.asnative(Xguess)
-    proj.LogMemory("after Xguess")
+    proj.LogMemoryDetailed("after Xguess")
     for i in progress(range(maxIter), desc='RL deconv'):
         proj.LogMemory("Start RL iter {0}/{1}".format(i+1, maxIter))
         t0 = time.time()
@@ -101,13 +101,18 @@ def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.Physical
         
         def RLUpdateFunc(Xguess, Htf, HXguessBack, cc=slice(None)):
             projector.assertNative(HXguessBack)
+            proj.LogMemoryDetailed("RLUpdateFunc starting for {0}".format(cc))
             if isinstance(HXguessBack, np.ndarray):
                 # We are working on the CPU
                 errorBack = np.divide(Htf[cc], np.asarray(HXguessBack), out=HXguessBack)
+                proj.LogMemoryDetailed("RLUpdateFunc after errorback")
+        
                 del HXguessBack   # Effectively this has been destroyed - storage is now used for errorBack
                 Xguess[cc] *= errorBack
+                proj.LogMemoryDetailed("RLUpdateFunc after Xguess multiplication")
                 del errorBack
-                Xguess[cc][np.where(np.isnan(Xguess[cc]))] = 0
+                #Xguess[cc][np.where(np.isnan(Xguess[cc]))] = 0
+                proj.LogMemoryDetailed("RLUpdateFunc after nan-masking")
             else:
                 # We are presumably working with a GPU.
                 #
@@ -130,7 +135,7 @@ def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.Physical
                     del errorBack
                     mul[cp.where(cp.isnan(mul))] = 0
                     Xguess[cc] = mul.get()
-            #proj.LogMemory("RLUpdateFunc complete for {0}".format(cc), False)
+            proj.LogMemoryDetailed("RLUpdateFunc complete for {0}".format(cc))
 
         BackwardProjectACC(hMatrix, HXguess, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector, rlUpdateFunc=lambda x,cc:RLUpdateFunc(Xguess, Htf, x, cc))
         proj.LogMemory("after Forward+BackwardProjectACC", True)

@@ -15,6 +15,10 @@ def AnalyzeTestResults(numJobsUsed):
     # (data stored in 'overall.txt'), accumulates some summary statistics on it,
     # and appends the results to the 'stats.txt' file.
     # Clearly this function could do with more commenting to explain what's going on!!
+    #
+    # Note also that deconvolution-performance-analysis.ipynb does more detailed analysis
+    # of thread performance of my C code.
+    
     with open('overall.txt') as f:
         csv_reader = csv.reader(f, delimiter='\t')
         for row in csv_reader:
@@ -23,80 +27,14 @@ def AnalyzeTestResults(numJobsUsed):
     endTime = float(row[1])
     userTime = float(row[4])
     sysTime = float(row[5])
-
-    rows = []
-    for fn in glob.glob('perf_diags/*_*.txt'):
-        with open(fn) as f:
-            csv_reader = csv.reader(f, delimiter='\t')
-            for row in csv_reader:
-                pass
-            rows.append(row)
-    rows = np.array(rows).astype('float').transpose()
-    firstPid = np.min(rows[0])
-    rows[0] -= firstPid
-    rows[1:3] -= startTime
-    rows = rows[:,np.argsort(rows[1],kind='mergesort')]
-    rows = rows[:,rows[0].argsort(kind='mergesort')]
-
-    deadTimeStart = 0
-    deadTimeMid = 0
-    deadTimeEnd = 0
-    threadWorkTime = 0
-    thisThreadStartTime = 0
-    longestThreadRunTime = 0
-    longestThreadRunPid = -1
-    latestStartTime = 0
-    userTimeBreakdown = 0
-    sysTimeBreakdown = 0
-    for i in range(rows.shape[1]):
-        pid = rows[0,i]
-        t0 = rows[1,i]
-        t1 = rows[2,i]
-        userTimeBreakdown += rows[4,i]
-        sysTimeBreakdown += rows[5,i]
-        if (i == 0):
-            deadTimeStart += t0
-            thisThreadStartTime = t0
-            latestStartTime = t0
-        else:
-            if (pid == rows[0,i-1]):
-                deadTimeMid += t0 - rows[2,i-1]
-            else:
-                latestStartTime = max(latestStartTime, t0)
-                thisThreadRunTime = rows[2,i-1]-thisThreadStartTime  # For previous pid
-                if (thisThreadRunTime > longestThreadRunTime):
-                    longestThreadRunPid = rows[0,i-1]
-                    longestThreadRunTime = thisThreadRunTime
-                thisThreadStartTime = t0
-                deadTimeStart += t0
-                deadTimeEnd += (endTime-startTime) - rows[2,i-1]
-        threadWorkTime += t1-t0
-        plt.plot([t0, t1], [pid, pid])
-        plt.plot(t0, pid, 'x')
-    thisThreadRunTime = t1-thisThreadStartTime
-    if (thisThreadRunTime > longestThreadRunTime):
-        longestThreadRunPid = pid
-        longestThreadRunTime = thisThreadRunTime
-    deadTimeEnd += (endTime-startTime) - rows[2,-1]
     print('Elapsed time', endTime-startTime)
-    print('Longest thread run time', longestThreadRunTime, 'pid', int(longestThreadRunPid))
-    print('Latest start time', latestStartTime)
-    print('Thread work time', threadWorkTime)
-    print('Dead time', deadTimeStart, deadTimeMid, deadTimeEnd)
-    print(' Total', deadTimeStart + deadTimeMid + deadTimeEnd)
     print('User cpu time', userTime)
     print('System cpu time', sysTime)
-    print('User cpu time for subset', userTimeBreakdown)
-    print('System cpu time for subset', sysTimeBreakdown)
 
     with open('stats.txt', 'a') as f:
-        f.write('%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\n' % (numJobsUsed, endTime-startTime, threadWorkTime, \
-                        longestThreadRunTime, latestStartTime, deadTimeStart, deadTimeMid, deadTimeEnd, userTime, sysTime))
+        f.write('%f\t%f\t%f\t%f\n' % (numJobsUsed, endTime-startTime, userTime, sysTime))
 
-    plt.xlim(0, endTime-startTime)
-    plt.ylim(-0.5,np.max(rows[0])+0.5)
-    plt.show()
-    
+
 def decomment(csvfile):
     # Strip comments from a CSV file
     for row in csvfile:
@@ -132,7 +70,6 @@ def IsNumericArg(arg, stem):
     return arg.startswith(stem) and arg[len(stem):].isnumeric()
 
 def SetImage(img, batchSize):
-    print('Will use image shape {0}, batch x{1}'.format(img.shape, batchSize))
     return img[np.newaxis], np.tile(img[np.newaxis,:,:], (batchSize,1,1))
 
 def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=None, numJobs=plf.GetNumThreadsToUse(), projectorClass=proj.Projector_allC):
@@ -213,23 +150,28 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
         elif arg == 'piv-image':
             inputImage,inputImageBatch = SetImage(np.zeros((19*19,19*19), dtype='float32'), batchSize)
         elif arg == 'smaller-image':
-            inputImage,inputImageBatch = SetImage(inputImage[0:20*15,0:15*15], batchSize)
+            inputImage,inputImageBatch = SetImage(inputImage[0,0:20*15,0:15*15], batchSize)
         elif arg == 'olaf-image':
             # This is just a dummy image with the same dimensions as Nils's test image for the Olaf code
             # Note that the image dimensions are deliberately the wrong way round, since that seems to be what we are given from Matlab for this dataset
             inputImage,inputImageBatch = SetImage(np.zeros((1463, 1273), dtype='float32'), batchSize)
 
         elif arg == 'parallel-scaling':
-            # Investigate performance for different numbers of parallel threads
-            # Note that this is just for a single inputImage - I haven't used this code for a while.
-            for _numJobs in range(1,numJobs):
-                print('Profiling with {0} parallel threads:'.format(_numJobs))
-                hMatrix.ClearCache()
-                ru1 = util.cpuTime('both')
-                temp = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=None, numjobs=_numJobs)
-                ru2 = util.cpuTime('both')
-                print('overall delta rusage:', ru2-ru1)
-                AnalyzeTestResults(_numJobs)
+            # Investigate performance for different numbers of parallel CPU threads
+            if (projectorClass is proj.Projector_gpuHelpers):
+                print('NOTE: will not investigate parallel scaling on GPU')
+            else:
+                for _numJobs in range(1,numJobs+1):
+                    print('Profiling with {0} parallel threads:'.format(_numJobs))
+                    hMatrix.ClearCache()
+                    ru1 = util.cpuTime('both')
+                    if backProjectOnly:
+                        temp = lfdeconv.BackwardProjectACC(hMatrix, inputImageBatch, planes=planesToProcess, progress=util.noProgressBar, numjobs=_numJobs, projector=projector, logPrint=False)
+                    else:
+                        temp = lfdeconv.DeconvRL(hMatrix, Htf=None, maxIter=iterations, Xguess=None, im=inputImageBatch, logPrint=False, numjobs=_numJobs, projector=projector)
+                    ru2 = util.cpuTime('both')
+                    print('overall delta rusage:', ru2-ru1)
+                    AnalyzeTestResults(_numJobs)
         elif arg == 'analyze-saved-data':
             # Plot some analysis based on previously-acquired performance statistics
             plt.title('Dummy work on empty arrays')
@@ -293,6 +235,7 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
             print('UNRECOGNISED ARGUMENT:', arg)
             
         if RunThis is not None:
+            print('Running with batch image shape {0}, batch x{1}'.format(inputImageBatch.shape, batchSize))
             if profile:
                 pr = cProfile.Profile()
                 pr.enable()

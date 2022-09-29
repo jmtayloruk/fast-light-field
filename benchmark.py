@@ -14,7 +14,7 @@ import lf_performance_analysis as perf
 import projector as proj
 import lfdeconv
 
-def main(testThreadScaling=False, prefix=[], prefix2=[]):
+def main(testThreadScaling=False, benchmarkCPU=True, benchmarkGPU=proj.gpuAvailable, prefix=[], prefix2=[]):
     # Timing measurements for a 'typical scenario and for my PIV scenario
     results = []
     
@@ -26,9 +26,14 @@ def main(testThreadScaling=False, prefix=[], prefix2=[]):
     else:
         jobsToTest = [util.PhysicalCoreCount()]
 
-    platforms = ['cpu']
-    if proj.gpuAvailable:
-        platforms.append('gpu')
+    platforms = []
+    if benchmarkCPU:
+        platforms.append('cpu')
+    if benchmarkGPU:
+        if proj.gpuAvailable:
+            platforms.append('gpu')
+        else:
+            print('NOTE: will not benchmark GPU - no available GPU detected')
 
     for plat in platforms:
         print('Platform: {0}'.format(plat))

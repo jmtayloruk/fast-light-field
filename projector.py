@@ -20,13 +20,6 @@ except ImportError:
     #print('Unable to import cupy - no GPU support will be available')
     gpuAvailable = False
 
-
-# Ensure existence of the directory we will use to log performance diagnostics
-try:
-    os.mkdir('perf_diags')
-except FileExistsError:
-    pass
-
 #########################################################################
 # Global variables that affect GPU kernel block selection (see code below for usage)
 #########################################################################
@@ -60,8 +53,11 @@ gSynchronizeAfterKernelCalls = False
 # Presumably either the FFT algorithm handles larger factors well, or the penalty of larger arrays
 # is too much to make the padding worthwhile
 padToSmallPrimesOnGPU = False
-# Debug flag to enable verbose printing of GPU memory usage at key points during the running of the code
-logGPUMemoryUsage = True
+# Debug variable to enable verbose printing of GPU memory usage at key points during the running of the code
+# 0: off
+# 1: basic summary
+# 2: detailed breakdown for each step of the code
+logGPUMemoryUsage = 1
 
 # This flag replaces all the GPU work with dummy functions,
 # to help examine what the CPU-based overheads are for the GPU code
@@ -72,6 +68,27 @@ dummyGPUWork = False
 # as well as making other memory-use optimisations harder to code.
 doBatchFH = False
 
+startTime = time.time()
+def LogMemory(description, garbageCollect=False):
+    if gpuAvailable:
+        _ = cp.zeros((1))  # Dummy to trigger cuda lazy initialization if we are called before any real work has been done
+        before = cuda.mem_get_info()
+        before = before[1]-before[0]
+        if logGPUMemoryUsage:
+            print("{0:.3f}GB {1} (CPU RAM {2:.3f}GB, elapsed time {3:.2f}s)".format(before/1e9, description, psutil.virtual_memory()[3]/1e9, time.time()-startTime))
+        if garbageCollect:
+            cp.get_default_memory_pool().free_all_blocks()
+            after = cuda.mem_get_info()
+            after = after[1]-after[0]
+            if logGPUMemoryUsage:
+                if (before == after):
+                    print("-> no garbage")
+                else:
+                    print("-> {0:.3f}GB (collected {1:.3f}GB)".format(after/1e9, (before-after)/1e9))
+def LogMemoryDetailed(description):
+    # This function offers an optional way to log more granular information about memory usage
+    if logGPUMemoryUsage > 1:
+        LogMemory(desription)
 
 # Note: H.shape in python is (<num z planes>, Nnum, Nnum, <psf size>, <psf size>),
 #                       e.g. (56, 19, 19, 343, 343)
@@ -176,7 +193,6 @@ class ProjectorForZ_base(object):
 
     def ProjectForZY(self, cc, bb, source, hMatrix, backwards):
         assert(source.dtype == np.float32)   # Keep an eye out for if we are provided with double-precision inputs
-        #f = open('perf_diags/%d_%d.txt'%(cc,bb), "w")
         t1 = time.time()
         singleJob = (len(source.shape) == 2)
         if singleJob:   # Cope with both a single 2D plane and an array of multiple 2D planes to process independently
@@ -197,8 +213,6 @@ class ProjectorForZ_base(object):
 
         t2 = time.time()
         assert(result.dtype == np.complex64)   # Keep an eye out for any reversion to double-precision
-        #f.write('%d\t%f\t%f\t%f\t%f\t%f\n' % (os.getpid(), t1, t2, t2-t1, self.cpuTime[0], self.cpuTime[1]))
-        #f.close()
         if singleJob:
             return result[0]
         else:
@@ -791,6 +805,8 @@ class Projector_allC(Projector_base):
 
     def BackwardProjectACC(self, hMatrix, projection, planes, progress, logPrint, numjobs, rlUpdateFunc=None):
         Backprojection = np.zeros((hMatrix.numZ, projection.shape[0], projection.shape[1], projection.shape[2]), dtype='float32')
+        LogMemory("BackwardProjectACC after allocation of {0}MB".format(Backprojection.size*Backprojection.itemsize/1e6), False)
+
         pos = 0
         planeWork = []
         plf.SetNumThreadsToUse(numjobs)
@@ -803,7 +819,9 @@ class Projector_allC(Projector_base):
         else:
             cacheIdentifierToUse = None
             plf.DisableFHCaching()
+        LogMemoryDetailed("BackwardProjectACC calling ProjectForZList")
         fourierZPlanes = plf.ProjectForZList(planeWork, cacheIdentifierToUse)
+        LogMemoryDetailed("BackwardProjectACC after ProjectForZList")
         if False:
             for cc in planes:
                 # Compute the iFFT for each z plane
@@ -815,9 +833,16 @@ class Projector_allC(Projector_base):
                 proj = self.zProjectorClass(projection, hMatrix, cc)
                 inverseWork.append((fourierZPlanes[cc], proj.fshape[-2], proj.fshape[-1]))
             realZPlanes = plf.InverseRFFTList(inverseWork)
+            LogMemoryDetailed("BackwardProjectACC after InverseRFFTList")
+            del fourierZPlanes, inverseWork # Clean up memory we have finished with
+            LogMemoryDetailed("BackwardProjectACC after InverseRFFTList cleanup")
             for cc in planes:
                 Backprojection[cc] = CropAfterFFT(realZPlanes[cc], self.zProjectorClass(projection, hMatrix, cc))
+                realZPlanes[cc] = None  # Clean up memory we have finished with
+            LogMemoryDetailed("BackwardProjectACC after CropAfterFFT")
+
         if rlUpdateFunc is not None:
+            LogMemoryDetailed("BackwardProjectACC calling rlUpdateFunc")
             rlUpdateFunc(Backprojection, slice(None))
             return None
         else:
@@ -837,7 +862,9 @@ class Projector_allC(Projector_base):
         else:
             cacheIdentifierToUse = None
             plf.DisableFHCaching()
+        LogMemoryDetailed("ForwardProjectACC calling ProjectForZList")
         fourierProjections = plf.ProjectForZList(planeWork, cacheIdentifierToUse)
+        LogMemoryDetailed("ForwardProjectACC after ProjectForZList")
         if False:
             for cc in planes:
                 # Transform back from Fourier space into real space
@@ -854,12 +881,17 @@ class Projector_allC(Projector_base):
                 proj = self.zProjectorClass(realspace[0], hMatrix, cc)
                 inverseWork.append((fourierProjections[cc], proj.fshape[-2], proj.fshape[-1]))
             thisProjection = plf.InverseRFFTList(inverseWork)
+            LogMemoryDetailed("ForwardProjectACC after InverseRFFTList")
+            del fourierProjections, inverseWork # Clean up memory we have finished with
+            LogMemoryDetailed("ForwardProjectACC after InverseRFFTList cleanup")
             for cc in planes:
                 crop = CropAfterFFT(thisProjection[cc], self.zProjectorClass(realspace[0], hMatrix, cc))
+                thisProjection[cc] = None  # Clean up memory we have finished with
                 if TOTALprojection is None:
                     TOTALprojection = crop
                 else:
                     TOTALprojection += crop
+            LogMemoryDetailed("ForwardProjectACC after CropAfterFFT")
         assert(TOTALprojection.dtype == np.float32)   # Keep an eye out for any reversion to double-precision
         return TOTALprojection
     
@@ -900,24 +932,6 @@ class Projector_allC(Projector_base):
         assert(TOTALprojection.dtype == np.float32)   # Keep an eye out for any reversion to double-precision
         return TOTALprojection
 
-startTime = time.time()
-def LogMemory(description, garbageCollect=False):
-    if gpuAvailable:
-        _ = cp.zeros((1))  # Dummy to trigger cuda lazy initialization if we are called before any real work has been done
-        before = cuda.mem_get_info()
-        before = before[1]-before[0]
-        if logGPUMemoryUsage:
-            print("{0:.3f}GB {1} (CPU RAM {2:.3f}GB, elapsed time {3:.2f}s)".format(before/1e9, description, psutil.virtual_memory()[3]/1e9, time.time()-startTime))
-        if garbageCollect:
-            cp.get_default_memory_pool().free_all_blocks()
-            after = cuda.mem_get_info()
-            after = after[1]-after[0]
-            if logGPUMemoryUsage:
-                if (before == after):
-                    print("-> no garbage")
-                else:
-                    print("-> {0:.3f}GB (collected {1:.3f}GB)".format(after/1e9, (before-after)/1e9))
-
 class Projector_pythonSkeleton(Projector_base):
     def BackwardProjectACC(self, hMatrix, projection, planes, progress, logPrint, numjobs, rlUpdateFunc=None): # Ignores numjobs
         projection = self.asnative(projection)
@@ -941,7 +955,7 @@ class Projector_pythonSkeleton(Projector_base):
                 self.InverseTransformBackwardProjection(result[cc], thisFourierBackprojection, hMatrix, cc, projection)
             # Doing garbage collection at this point does slow things down a bit, but keeps the high water mark down a bit.
             # I don't know if it actually affects what we can cope with
-            #LogMemory("Bk ProjectForZ[{0}]".format(cc), False)
+            LogMemoryDetailed("Bk ProjectForZ[{0}]".format(cc))
             
         if rlUpdateFunc is not None:
             del planeResult
@@ -973,7 +987,7 @@ class Projector_pythonSkeleton(Projector_base):
         for cc in progress(planes, desc='Forward-project - z', leave=False):
             thisFourierForwardProjection = self.ProjectForZ(cc, realspace[cc], hMatrix, False)
             self.InverseTransformForwardProjection(result, thisFourierForwardProjection, hMatrix, cc, realspace)
-            #LogMemory("Fd ProjectForZ[{0}]".format(cc), False)
+            LogMemoryDetailed("Fd ProjectForZ[{0}]".format(cc))
         LogMemory("ForwardProjectACC finished", True)
 
         if self.storeVolumesOnGPU:
