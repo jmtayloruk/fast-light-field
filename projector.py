@@ -863,7 +863,7 @@ class Projector_allC(Projector_base):
             cacheIdentifierToUse = None
             plf.DisableFHCaching()
         LogMemoryDetailed("ForwardProjectACC calling ProjectForZList")
-        fourierProjections = plf.ProjectForZList(planeWork, cacheIdentifierToUse)
+        fourierProjections = plf.ProjectForZList(planeWork, cacheIdentifierToUse, realspace.shape[1])
         LogMemoryDetailed("ForwardProjectACC after ProjectForZList")
         if False:
             for cc in planes:
