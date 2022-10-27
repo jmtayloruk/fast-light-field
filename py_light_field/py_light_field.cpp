@@ -31,6 +31,9 @@ int NumActualProcessorsAvailable(void)
  */
 int gFFTPlanMethod = FFTW_MEASURE;
 int gNumThreadsToUse = NumActualProcessorsAvailable();        // But can be modified using API call
+// This is a special constant used when sorting work items (see Compare function).
+// It is set by the calling code just before the sort command.
+int gMutexContentionFactor;
 
 #if 1
     /*  This whole subclass exists to work around a weird shortcoming of the std::complex implementation that comes with LLVM.
@@ -333,6 +336,7 @@ private:  // To ensure callers go through our accessor functions
 public:
     int         cc, order;
     double      runStartTime, runEndTime, mutexWaitStartTime[2], mutexWaitEndTime[2];
+    size_t      memoryUsage;
     int         ranOnThread;
     
     WorkItem(int _cc, int _order) : complete(false), persistentMemory(false), dependency(NULL), dependencyCount(0), cc(_cc), order(_order)
@@ -385,14 +389,14 @@ public:
         dependency = dep;
         dep->AdjustDependencyCount(+1);
     }
-#if 1
+#if 0
     // Reorder so that all items associated with the same offset within a lenslet are batched together (for all z).
     // The idea is that this reduces mutex contention when processing only a few timepoints at a time.
     static int Compare(WorkItem *a, WorkItem *b)        // Note that the pointers are because the std::vector itself is a vector of pointers
     {
         return a->order < b->order;
     }
-#else
+#elif 0
     // Attempted reorder to reduce the amount of allocated memory floating around, i.e. try and have FFTs used
     // as soon as possible after they are computed. For small problem sizes this *might* improve cache usage a little bit.
     // The problem, though, is that it leads to mutex contention. I have not tried to resolve that limitation yet.
@@ -421,6 +425,60 @@ public:
         // Then z [for sorting of FFTs]
         // Then in-place sort order, by default
         return a->cc < b->cc;
+    }
+#else
+    /*  This sort order tries to optimise two criteria simultaneously:
+        1. Minimise memory usage, i.e. try and have FFTs used as soon as possible after they are computed.
+            This avoids potentially using hundreds of times more RAM than the size of a volume(!),
+            which is catastrophic for large problem sizes.
+        2. Minimise mutex contention, i.e. make sure there are sufficient other work items between any two
+            that refer to the same z and t value.
+     
+        To do this we aim to process each z in sequence, but we may batch up in z if there are insufficient
+        timepoints to enable each thread to work independently on a different timepoint (if this is not the
+        case then we risk mutex contention)
+     
+        The z coordinate does not feature in the "order" variable, in other words it has us do the equivalent
+        operations for all z and t in sequence, before moving on to the next a,b lenslet position.
+        What we need to do is to batch things up into small groups of z, and do *everything* for that group
+        before moving on to other z coordinates.
+        The z batch size needs to be just big enough to avoid mutex contention (see gMutexContentionFactor),
+        but otherwise as small as possible to avoid memory bloat with intermediate FFT results etc hanging
+        around for any longer than needed.
+        TODO: after that first priority, it will be interesting to see if either one of my two above strategies is better than the other.
+        for
+     */
+    static int Compare(const WorkItem *a, const WorkItem *b)        // Note that the pointers are because the std::vector itself is a vector of pointers
+    {
+        const WorkItem *aRoot = a, *bRoot = b;
+        int aLen = 0, bLen = 0;
+        while (aRoot->dependency != NULL)
+        {
+            aRoot = aRoot->dependency;
+            aLen++;
+        }
+        while (bRoot->dependency != NULL)
+        {
+            bRoot = bRoot->dependency;
+            bLen++;
+        }
+        // Primary sort order: ultimate root dependency order
+        if (aRoot->order != bRoot->order)
+            return aRoot->order < bRoot->order;
+        // Sort kind-of on z coordinate, but adjusted such that that we may process a few
+        // z coordinates together, to avoid mutex contention if we have more threads than timepoints
+        int aRootCC = aRoot->cc / gMutexContentionFactor;
+        int bRootCC = bRoot->cc / gMutexContentionFactor;
+        if (aRootCC != bRootCC)
+            return aRootCC < bRootCC;
+        // Then shallowest dependency chain first, since they will become available first.
+        if (aLen != bLen)
+            return aLen < bLen;
+        // Then z [for sorting of FFTs]
+        // And finally in-place sort order, by default
+        int aCC = a->cc / gMutexContentionFactor;
+        int bCC = b->cc / gMutexContentionFactor;
+        return aCC < bCC;
     }
 #endif
     virtual void *DestArray() = 0;
@@ -580,6 +638,24 @@ public:
     virtual void *SrcArray2() { return mem3; }
 };
 
+size_t gMemoryUsage = 0;
+
+void TrackAllocation(JPythonArray<TYPE> *array, bool dealloc=false)
+{
+    size_t size = sizeof(TYPE);
+    for (int i = 0; i < array->NDims(); i++)
+        size *= array->Dims()[i];
+    if (dealloc)
+        __sync_fetch_and_sub(&gMemoryUsage, size);
+    else
+        __sync_fetch_and_add(&gMemoryUsage, size);
+}
+
+void TrackDeallocation(JPythonArray<TYPE> *array)
+{
+    TrackAllocation(array, true);
+}
+
 class FHWorkItemBase : public WorkItem
 {
 public:
@@ -597,6 +673,7 @@ public:
         npy_intp dims[2] = { fshapeY, fshapeX };
         npy_intp strides[2] = { int((fshapeX + 15)/16)*16, 1 };     // Ensure 16-byte alignment of each row, which seems to make things *slightly* faster
         fftResult = new JPythonArray2D<TYPE>(NULL, dims, strides);
+        TrackAllocation(fftResult);
         ALWAYS_ASSERT(!(((size_t)fftResult->Data()) & 0xF));        // Check base alignment. In fact, just plain malloc seems to give sufficient alignment.
         destArrayForLogging = fftResult->Data();
     }
@@ -611,6 +688,7 @@ public:
     virtual void CleanUpAllocations(void)
     {
         ALWAYS_ASSERT(fftResult != NULL);
+        TrackDeallocation(fftResult);
         delete fftResult;
         fftResult = NULL;
     }
@@ -678,7 +756,7 @@ public:
                                    FFTW_FORWARD, gFFTPlanMethod);
 #endif
         //PySys_WriteStdout("Plan %d %d %d %d %d\n", _cc, fftResult->Dims(0), fftResult->Dims(1), fftResult->Strides(0), fftResult->Strides(1));
-        delete fftResult; fftResult = NULL;
+        CleanUpAllocations();
     }
     
     virtual ~FHWorkItem()
@@ -795,9 +873,7 @@ public:
     {
         //  Set up the FFT plan.
         fftwf_plan_with_nthreads(1);
-        npy_intp paddedInputDims[2] = { fshapeY, int(fshapeX/2)+1 };
-        paddedMatrix = new JPythonArray2D<TYPE>(NULL, paddedInputDims, NULL);
-        
+        AllocatePaddedMatrix();
         int dims[2] = { result.Dims(0), result.Dims(1) };
         int inFullShape[2] = { paddedMatrix->Dims(0), paddedMatrix->Strides(0) };
         int outFullShape[2] = { result.Dims(0), result.Strides(0) };
@@ -811,13 +887,25 @@ public:
                                        result.Data(), outFullShape,
                                        1/*stride*/, 0/*unused*/,
                                        gFFTPlanMethod);
-        
+        DeallocatePaddedMatrix();
     }
     
     virtual ~IFFTWorkItem()
     {
-        delete paddedMatrix;
         fftwf_destroy_plan(plan);
+    }
+    
+    void AllocatePaddedMatrix(void)
+    {
+        npy_intp paddedInputDims[2] = { fshapeY, int(fshapeX/2)+1 };
+        paddedMatrix = new JPythonArray2D<TYPE>(NULL, paddedInputDims, NULL);
+        TrackAllocation(paddedMatrix);
+    }
+    
+    void DeallocatePaddedMatrix(void)
+    {
+        TrackDeallocation(paddedMatrix);
+        delete paddedMatrix;
     }
     
     virtual void Run(void)
@@ -827,6 +915,7 @@ public:
         // TODO: need to confirm whether I use result.Dims() or the dims of something else, if I consider a case with extra padding.
         // The answer seems to be result.Dims since my code works like this, but I should check for sure and write a definitive comment here.
         float inverseTotalSize = 1.0f / (float(result.Dims(0)) * float(result.Dims(1)));
+        AllocatePaddedMatrix();
         ALWAYS_ASSERT(paddedMatrix->Dims(0) >= fab.Dims(0)); // This assertion is because we don't support cropping the input matrix, only padding
         ALWAYS_ASSERT(paddedMatrix->Dims(1) >= fab.Dims(1));
         paddedMatrix->SetZero();     // Inefficient, but I will do this for now. TODO: update this code to only zero out the (small number of) values we won't be overwriting in the loop
@@ -842,6 +931,8 @@ public:
         
         // Compute the full 2D FFT (i.e. not just the RFFT)
         fftwf_execute_dft_c2r(plan, (fftwf_complex *)paddedMatrix->Data(), result.Data());
+        
+        DeallocatePaddedMatrix();
     }
     virtual void *DestArray() { return result.Data(); };
     virtual void *SrcArray1() { return fab.Data(); };
@@ -889,8 +980,9 @@ public:
     
     virtual void CleanUpAllocations(void)
     {
-        
     }
+    
+    virtual const JMutex *AccumMutex(void) const { return accumMutex; }     // Just an accessor to be able to log which work items are dependent on the same mutex
     
     void special_fftconvolve_part1(JPythonArray2D<TYPE> &result, JPythonArray1D<TYPE> expandXMultiplier, int bb, int aa)
     {
@@ -1007,6 +1099,8 @@ enum
 };
 const char *workNames[kNumWorkTypes] = { "fft", "trans", "mirror", "conv" };
 
+double gLastReportingTime = GetTime();
+
 struct ThreadInfo
 {
     int                     threadIDCounter;
@@ -1018,7 +1112,7 @@ struct ThreadInfo
     
     void *ThreadFunc(void)
     {
-        int         thisThreadID;
+        int         w, thisThreadID;
         {
             LocalGetMutex lgm(workQueueMutex, workQueueMutexBlock_us);
             thisThreadID = threadIDCounter++;
@@ -1035,8 +1129,15 @@ struct ThreadInfo
             {
             repeat:
                 LocalGetMutex lgm(workQueueMutex, workQueueMutexBlock_us);
+                
+                if (t1 > gLastReportingTime + 20.0)
+                {
+                    PySys_WriteStdout("Time %.1lf. Memory usage: %.3lfGB\n", t1, gMemoryUsage/1e9);
+                    gLastReportingTime = t1;
+                }
+                
                 // Run anything that is not blocked, prioritising the convolution work
-                for (int w = kNumWorkTypes - 1; w >= 0; w--)
+                for (w = kNumWorkTypes - 1; w >= 0; w--)
                 {
                     if (workCounter[w] < work[w]->size())
                     {
@@ -1061,7 +1162,7 @@ struct ThreadInfo
                     // We should wait for something to unblock.
                     // We *MUST* prioritise the early work types (which in practice means the mirror),
                     // because otherwise we could end up deadlocked.
-                    for (int w = 0; w < kNumWorkTypes; w++)
+                    for (w = 0; w < kNumWorkTypes; w++)
                     {
                         if (workCounter[w] < work[w]->size())
                         {
@@ -1091,6 +1192,7 @@ struct ThreadInfo
             workItem->runStartTime = GetTime();
             workItem->Run();
             workItem->runEndTime = GetTime();
+            workItem->memoryUsage = __sync_fetch_and_add(&gMemoryUsage, 0);
         }
         return NULL;
     }
@@ -1151,7 +1253,7 @@ void CleanUpWork(std::vector<WorkItem *> work[kNumWorkTypes], const char *thread
         FILE *threadFile = fopen(threadFileName, mode);
         for (int w = 0; w < kNumWorkTypes; w++)
             for (size_t i = 0; i < work[w].size(); i++)
-                fprintf(threadFile, "%d\t%d\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\t%ld\t%ld\t%ld\n", work[w][i]->ranOnThread, w, work[w][i]->runStartTime, work[w][i]->runEndTime, work[w][i]->mutexWaitStartTime[0], work[w][i]->mutexWaitEndTime[0], work[w][i]->mutexWaitStartTime[1], work[w][i]->mutexWaitEndTime[1], (long)work[w][i]->DestArray(), (long)work[w][i]->SrcArray1(), (long)work[w][i]->SrcArray2());
+                fprintf(threadFile, "%d\t%d\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\t%zd\t%ld\t%ld\t%ld\n", work[w][i]->ranOnThread, w, work[w][i]->runStartTime, work[w][i]->runEndTime, work[w][i]->mutexWaitStartTime[0], work[w][i]->mutexWaitEndTime[0], work[w][i]->mutexWaitStartTime[1], work[w][i]->mutexWaitEndTime[1], work[w][i]->memoryUsage, (long)work[w][i]->DestArray(), (long)work[w][i]->SrcArray1(), (long)work[w][i]->SrcArray2());
         fclose(threadFile);
     }
     for (int w = 0; w < kNumWorkTypes; w++)
@@ -1289,12 +1391,11 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
 {
     try
     {
-        // For now this is just a placeholder that calls through to ProjectForZ, but ultimately I intend to do all the work in one massive batch.
-        // Doing that will help reduce lock contention when we only have a few timepoints to process.
         PyObject    *workList;
         const char  *cacheIdentifier;
+        int         numTimepoints;
         bool        useCache = false;
-        if (!PyArg_ParseTuple(args, "O!z", &PyList_Type, &workList, &cacheIdentifier))
+        if (!PyArg_ParseTuple(args, "O!zi", &PyList_Type, &workList, &cacheIdentifier, &numTimepoints))
         {
             return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
         }
@@ -1368,7 +1469,14 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
             PyArrayObject *_accum = (PyArrayObject *)PyArray_ZEROS(3, output_dims, NPY_CFLOAT, 0);
             JPythonArray3D<TYPE> accum(_accum);
             PyList_SetItem(resultList, cc, (PyObject *)_accum);  // Steals reference
+            TrackAllocation(&accum);
 
+#if 0
+            PySys_WriteStdout("Set up work items for z=%d\n", cc);
+            PySys_WriteStdout("fshape=%d,%d. rfshape=%d,%d\n", fshapeY, fshapeX, rfshapeY, rfshapeX);
+            PySys_WriteStdout("Memory usage: %.3lfGB\n", gMemoryUsage/1e9);
+#endif
+            
             // Set up the work items describing the complete projection operation for this z plane
             fftwf_plan plan = NULL;
             std::vector<JMutex*> accumMutex(projection.Dims(0));
@@ -1427,23 +1535,66 @@ extern "C" PyObject *ProjectForZList(PyObject *self, PyObject *args)
             }
             allPlans.push_back(plan);
         }
-#if 1
+        //PySys_WriteStdout("Sorting. Memory usage: %.3lfGB\n", gMemoryUsage/1e9);
+
         /*  Some sort of sorting is necessary to avoid mutex contention.
             However, sorting in this manner slows down a single-timepoint reconstruction by about 10%.
             I presume this is due to poor cache usage, or the need to allocate more blocks of memory simultaneously.
             TODO: I should investigate a better approach (which might include giving individual threads larger chunks
                   of work to do, so an individual thread does less jumping around)  */
+        // Calculate how many z coordinates we need to batch up in order to avoid mutex contention
+        // when processing the work items in the standard order to minimise memory usage
+        gMutexContentionFactor = 1 + int(gNumThreadsToUse / numTimepoints);
+        //PySys_WriteStdout("Z block factor %d (%d, %d)\n", gMutexContentionFactor, gNumThreadsToUse, numTimepoints);
         for (int w = 0; w < kNumWorkTypes; w++)
             std::stable_sort(work[w].begin(), work[w].end(), WorkItem::Compare);
+        
+#if 1
+        /*  Generate a report on what we *think* mutex contention will be like.
+            For each work item, look at how far back we have to go to find a work item that uses the same mutex.
+            If that distance is consistently larger than the number of cores, we shouldn't have issues with mutex contention
+        */
+        FILE *mutexReport = fopen("mutex_report_static.txt", "w");
+        ALWAYS_ASSERT(mutexReport != NULL);
+        for (size_t i = 0; i < work[kWorkConvolve].size(); i++)
+        {
+            const JMutex *thisMutex = ((ConvolveWorkItem*)work[kWorkConvolve][i])->AccumMutex();
+            int distance = 0;
+            int j;
+            for (j = i-1; j >= 0; j--)
+            {
+                distance++;
+                if (thisMutex == ((ConvolveWorkItem*)work[kWorkConvolve][j])->AccumMutex())
+                    break;
+            }
+            if (j >= 0)
+                fprintf(mutexReport, "%zd\t%d\t%p\n", i, distance, thisMutex);
+            else
+                fprintf(mutexReport, "%zd\t%d\n", i, 0);
+        }
+        fclose(mutexReport);
 #endif
         
         // Do the actual hard work (parallelised)
+        //PySys_WriteStdout("Running. Memory usage: %.3lfGB\n", gMemoryUsage/1e9);
         RunWork(work);
         CleanUpWork(work, gThreadFileName, "w", useCache);
         for (size_t i = 0; i < allMutexes.size(); i++)
             delete allMutexes[i];
         for (size_t i = 0; i < allPlans.size(); i++)
             fftwf_destroy_plan(allPlans[i]);
+        
+        // At this point we are tracking memory usage of the result variables.
+        // They belong to the caller after this, so we need to stop tracking
+        // their memory usage ourselves. Otherwise our memory usage will grow
+        // (misleadingly) as we are called multiple times.
+        for (long i = 0; i < PyList_Size(resultList); i++)
+        {
+            PyArrayObject *_accum = (PyArrayObject *)PyList_GetItem(resultList, i);
+            JPythonArray3D<TYPE> accum(_accum);
+            TrackAllocation(&accum, true);
+        }
+
         return resultList;
     }
     catch (const std::invalid_argument& e)
