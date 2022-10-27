@@ -148,13 +148,13 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
         elif arg == 'default-image':
             inputImage,inputImageBatch = SetImage(defaultImage, batchSize)
         elif arg == 'piv-image':
-            inputImage,inputImageBatch = SetImage(np.zeros((19*19,19*19), dtype='float32'), batchSize)
+            inputImage,inputImageBatch = SetImage(np.ones((19*19,19*19), dtype='float32'), batchSize)
         elif arg == 'smaller-image':
             inputImage,inputImageBatch = SetImage(inputImage[0,0:20*15,0:15*15], batchSize)
         elif arg == 'olaf-image':
             # This is just a dummy image with the same dimensions as Nils's test image for the Olaf code
             # Note that the image dimensions are deliberately the wrong way round, since that seems to be what we are given from Matlab for this dataset
-            inputImage,inputImageBatch = SetImage(np.zeros((1463, 1273), dtype='float32'), batchSize)
+            inputImage,inputImageBatch = SetImage(np.ones((1463, 1273), dtype='float32'), batchSize)
 
         elif arg == 'parallel-scaling':
             # Investigate performance for different numbers of parallel CPU threads
