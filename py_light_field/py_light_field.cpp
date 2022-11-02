@@ -34,6 +34,8 @@ int gNumThreadsToUse = NumActualProcessorsAvailable();        // But can be modi
 // This is a special constant used when sorting work items (see Compare function).
 // It is set by the calling code just before the sort command.
 int gMutexContentionFactor;
+// How often we write a brief progress reporting message to the console during operation
+double gProgressReportingInterval = 1e10;
 
 #if 1
     /*  This whole subclass exists to work around a weird shortcoming of the std::complex implementation that comes with LLVM.
@@ -199,6 +201,18 @@ struct TimeStruct
         }
     }
 };
+
+extern "C" PyObject *GetProgressReportingInterval(PyObject *self, PyObject *args)
+{
+    return Py_BuildValue("d", gProgressReportingInterval);
+}
+
+extern "C" PyObject *SetProgressReportingInterval(PyObject *self, PyObject *args)
+{
+    if (!PyArg_ParseTuple(args, "d", &gProgressReportingInterval))
+        return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
+    Py_RETURN_NONE;
+}
 
 extern "C" PyObject *GetNumThreadsToUse(PyObject *self, PyObject *args)
 {
@@ -906,6 +920,7 @@ public:
     {
         TrackDeallocation(paddedMatrix);
         delete paddedMatrix;
+        paddedMatrix = NULL;
     }
     
     virtual void Run(void)
@@ -936,7 +951,7 @@ public:
     }
     virtual void *DestArray() { return result.Data(); };
     virtual void *SrcArray1() { return fab.Data(); };
-    virtual void *SrcArray2() { return paddedMatrix->Data(); };
+    virtual void *SrcArray2() { return ((paddedMatrix == NULL) ? NULL : paddedMatrix->Data()); };
 };
 
 class ConvolveWorkItem : public WorkItem
@@ -1099,7 +1114,7 @@ enum
 };
 const char *workNames[kNumWorkTypes] = { "fft", "trans", "mirror", "conv" };
 
-double gLastReportingTime = GetTime();
+double gLastProgressReportingTime = GetTime();
 
 struct ThreadInfo
 {
@@ -1117,11 +1132,10 @@ struct ThreadInfo
             LocalGetMutex lgm(workQueueMutex, workQueueMutexBlock_us);
             thisThreadID = threadIDCounter++;
         }
-
-//        PySys_WriteStdout("%.3lf === Running thread %d === \n", GetTime(), thisThreadID);
+        //printf("%.3lf === Running thread %d === \n", GetTime(), thisThreadID);
         while (1)
         {
-//            printf("== %d Picking a work item ==\n", thisThreadID);
+            //printf("== %d Picking a work item ==\n", thisThreadID);
             WorkItem *workItem = NULL;
             // Pick a work item to run.
             double t1 = GetTime();
@@ -1130,10 +1144,10 @@ struct ThreadInfo
             repeat:
                 LocalGetMutex lgm(workQueueMutex, workQueueMutexBlock_us);
                 
-                if (t1 > gLastReportingTime + 20.0)
+                if (t1 > gLastProgressReportingTime + gProgressReportingInterval)
                 {
-                    PySys_WriteStdout("Time %.1lf. Memory usage: %.3lfGB\n", t1, gMemoryUsage/1e9);
-                    gLastReportingTime = t1;
+                    printf("Time %.1lf. Memory usage: %.3lfGB\n", t1, gMemoryUsage/1e9);
+                    gLastProgressReportingTime = t1;
                 }
                 
                 // Run anything that is not blocked, prioritising the convolution work
@@ -1201,7 +1215,14 @@ struct ThreadInfo
 void *ThreadFunc(void *params)
 {
     ThreadInfo  *threadInfo = (ThreadInfo *)params;
-    return threadInfo->ThreadFunc();
+    void *result;
+    PyGILState_STATE gstate;
+    gstate = PyGILState_Ensure();
+    Py_BEGIN_ALLOW_THREADS
+        result = threadInfo->ThreadFunc();
+    Py_END_ALLOW_THREADS
+    PyGILState_Release(gstate);
+    return result;
 }
 
 void RunWork(std::vector<WorkItem *> work[kNumWorkTypes])
@@ -1209,41 +1230,42 @@ void RunWork(std::vector<WorkItem *> work[kNumWorkTypes])
     JMutex workQueueMutex;
     long workQueueMutexBlock_us = 0;
     double pollingTime = 0;
-    if ((false))
-    {
-        // Initially doing this single-threaded (and in the correct order of work types), for test purposes
-        printf("Running single-threaded\n");
-        for (int w = 0; w < kNumWorkTypes; w++)
-            for (size_t i = 0; i < work[w].size(); i++)
-                work[w][i]->Run();
-    }
-    else if ((false))
-    {
-        // Intermediate code, for test purposes. This code is parallelised but does all the FFT work first, then all mirroring, then the actual convolutions
-        printf("Running semi-parallelised\n");
-        for (int w = 0; w < kNumWorkTypes; w++)
+    Py_BEGIN_ALLOW_THREADS
+        if ((false))
         {
-            printf("Run work (%d)\n", w);
-            ThreadInfo threadInfo { 0, {0, 0, 0, 0}, &workQueueMutex, &workQueueMutexBlock_us, &pollingTime, {&work[w], new std::vector<WorkItem *>(), new std::vector<WorkItem *>(), new std::vector<WorkItem *>()} };     // 'new' leaks, but this is only temporary code anyway
+            // Initially doing this single-threaded (and in the correct order of work types), for test purposes
+            //printf("Running single-threaded\n");
+            for (int w = 0; w < kNumWorkTypes; w++)
+                for (size_t i = 0; i < work[w].size(); i++)
+                    work[w][i]->Run();
+        }
+        else if ((false))
+        {
+            // Intermediate code, for test purposes. This code is parallelised but does all the FFT work first, then all mirroring, then the actual convolutions
+            //printf("Running semi-parallelised\n");
+            for (int w = 0; w < kNumWorkTypes; w++)
+            {
+                ThreadInfo threadInfo { 0, {0, 0, 0, 0}, &workQueueMutex, &workQueueMutexBlock_us, &pollingTime, {&work[w], new std::vector<WorkItem *>(), new std::vector<WorkItem *>(), new std::vector<WorkItem *>()} };     // 'new' leaks, but this is only temporary code anyway
+                std::vector<pthread_t> threads(gNumThreadsToUse);
+                for (int i = 0; i < gNumThreadsToUse; i++)
+                    pthread_create(&threads[i], NULL, ThreadFunc, &threadInfo);
+                for (int i = 0; i < gNumThreadsToUse; i++)
+                    pthread_join(threads[i], NULL);
+            }
+        }
+        else
+        {
+            // Final parallelised code
+            //printf("Running multithreaded\n");
+            ThreadInfo threadInfo { 0, {0, 0, 0, 0}, &workQueueMutex, &workQueueMutexBlock_us, &pollingTime, {&work[0], &work[1], &work[2], &work[3]} };
             std::vector<pthread_t> threads(gNumThreadsToUse);
             for (int i = 0; i < gNumThreadsToUse; i++)
                 pthread_create(&threads[i], NULL, ThreadFunc, &threadInfo);
             for (int i = 0; i < gNumThreadsToUse; i++)
                 pthread_join(threads[i], NULL);
+            //printf("%.1lfms spent waiting to acquire work queue mutex. %.1lfms spent polling.\n", workQueueMutexBlock_us/1e3, pollingTime*1e3);
         }
-        printf("Returning from RunWork\n");
-    }
-    else
-    {
-        // Final parallelised code
-        ThreadInfo threadInfo { 0, {0, 0, 0, 0}, &workQueueMutex, &workQueueMutexBlock_us, &pollingTime, {&work[0], &work[1], &work[2], &work[3]} };
-        std::vector<pthread_t> threads(gNumThreadsToUse);
-        for (int i = 0; i < gNumThreadsToUse; i++)
-            pthread_create(&threads[i], NULL, ThreadFunc, &threadInfo);
-        for (int i = 0; i < gNumThreadsToUse; i++)
-            pthread_join(threads[i], NULL);
-//        printf("%.1lfms spent waiting to acquire work queue mutex. %.1lfms spent polling.\n", workQueueMutexBlock_us/1e3, pollingTime*1e3);
-    }
+    Py_END_ALLOW_THREADS
 }
 
 void CleanUpWork(std::vector<WorkItem *> work[kNumWorkTypes], const char *threadFileName, const char *mode, bool useCache)
@@ -1251,6 +1273,12 @@ void CleanUpWork(std::vector<WorkItem *> work[kNumWorkTypes], const char *thread
     if ((threadFileName != NULL) && (strlen(threadFileName) > 0))
     {
         FILE *threadFile = fopen(threadFileName, mode);
+        if (threadFile == NULL)
+        {
+            PyErr_Format(PyErr_NewException((char*)"exceptions.RuntimeError", NULL, NULL), "Unable to write to thread file %s", threadFileName);
+            // This is maybe not the most meaningful exception, but we are already set up to catch this invalid_argument in the parent code...
+            throw std::invalid_argument("Unable to write to thread file");
+        }
         for (int w = 0; w < kNumWorkTypes; w++)
             for (size_t i = 0; i < work[w].size(); i++)
                 fprintf(threadFile, "%d\t%d\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\t%zd\t%ld\t%ld\t%ld\n", work[w][i]->ranOnThread, w, work[w][i]->runStartTime, work[w][i]->runEndTime, work[w][i]->mutexWaitStartTime[0], work[w][i]->mutexWaitEndTime[0], work[w][i]->mutexWaitStartTime[1], work[w][i]->mutexWaitEndTime[1], work[w][i]->memoryUsage, (long)work[w][i]->DestArray(), (long)work[w][i]->SrcArray1(), (long)work[w][i]->SrcArray2());
@@ -1908,6 +1936,8 @@ static PyMethodDef plf_methods[] = {
     {"InverseRFFTList", InverseRFFTList, METH_VARARGS},
     {"SetStatsFile", SetStatsFile, METH_VARARGS},
     {"SetThreadFileName", SetThreadFileName, METH_VARARGS},
+    {"GetProgressReportingInterval", GetProgressReportingInterval, METH_NOARGS},
+    {"SetProgressReportingInterval", SetProgressReportingInterval, METH_VARARGS},
     {"GetNumThreadsToUse", GetNumThreadsToUse, METH_NOARGS},
     {"SetNumThreadsToUse", SetNumThreadsToUse, METH_VARARGS},
     {"GetPlanningMode", GetPlanningMode, METH_NOARGS},

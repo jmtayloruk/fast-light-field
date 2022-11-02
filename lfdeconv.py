@@ -39,7 +39,7 @@ def BackwardProjectACC(hMatrix, projection, planes=None, progress=tqdm, logPrint
 
     # Save some diagnostics
     if logPrint:
-        print('work elapsed wallclock time %f'%(t2-t1))
+        print('Backward project: elapsed wallclock time %f'%(t2-t1))
         print('Total work delta rusage:', ru2-ru1)
     
     f = open('overall.txt', 'w')
@@ -63,8 +63,8 @@ def ForwardProjectACC(hMatrix, realspace, planes=None, progress=tqdm, logPrint=T
     t2 = time.time()
 
     # Print out some diagnostics
-    if (logPrint):
-        print('work elapsed wallclock time %f'%(t2-t1))
+    if logPrint:
+        print('Forward project: elapsed wallclock time %f'%(t2-t1))
         print('Total work delta rusage:', ru2-ru1)
     
     return TOTALprojection

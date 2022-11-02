@@ -63,7 +63,9 @@ def SetNumJobs(nj):
     plf.SetNumThreadsToUse(nj)
     nj = plf.GetNumThreadsToUse()  # Read the value back, so we know the true number even if "0" was specified
     print('Will use {0} parallel threads'.format(nj))
-    plf.SetThreadFileName('threads{0}.txt'.format(nj))
+    # JT: I have disabled this because it overrides the path set in benchmark.py
+    #     I'm not sure if I rely on this threadsN.txt anywhere, though...
+    #plf.SetThreadFileName('threads{0}.txt'.format(nj))
     return nj
 
 def IsNumericArg(arg, stem):
@@ -206,7 +208,7 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
             # so that is not included in the timings of subsequent tests
             # TODO: I think this will not fully prime everything when running on the GPU,
             # because the self-calibrating block sizes will vary depending on the number of images
-            print('Priming cache')
+            print('Priming cache (single image)')
             def RunThis():
                 result = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, progress=util.noProgressBar, projector=projector, logPrint=False)
                 return result
