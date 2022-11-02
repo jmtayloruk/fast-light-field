@@ -1,20 +1,25 @@
 {\rtf1\ansi\ansicpg1252\cocoartf1671\cocoasubrtf600
-{\fonttbl\f0\fnil\fcharset0 Menlo-Regular;\f1\fnil\fcharset0 Menlo-Italic;\f2\fnil\fcharset0 Menlo-BoldItalic;
-}
+{\fonttbl\f0\fnil\fcharset0 Menlo-Bold;\f1\fnil\fcharset0 Menlo-Regular;\f2\fnil\fcharset0 Menlo-Italic;
+\f3\fnil\fcharset0 Menlo-BoldItalic;}
 {\colortbl;\red255\green255\blue255;\red0\green0\blue0;}
 {\*\expandedcolortbl;;\csgray\c0;}
-\paperw11900\paperh16840\margl1440\margr1440\vieww22300\viewh20360\viewkind0
+\paperw11900\paperh16840\margl1440\margr1440\vieww22300\viewh16580\viewkind0
 \pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
 
-\f0\fs22 \cf2 \ul \ulc2 \CocoaLigature0 Memory usage on GPU\
+\f0\b\fs22 \cf2 \CocoaLigature0 I will leave these detailed notes here in case I want to refer back to them in future, but I think the code has moved on from this and is now more memory-efficient. It also looks like the overheads are such that there are only marginal gains from doing a batch size of more than about 4-8 for a large volume - so GPU RAM usage is maybe less of a concern now.
+\f1\b0 \ul \
+\
+\
+Memory usage on GPU\
 \
 \pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardeftab720\pardirnatural\partightenfactor0
-\cf2 \ulnone Jose has 11GB of RAM, optic-tectum has 8.5GB\
+\ulnone Jose has 11GB of RAM, optic-tectum has 8.5GB\
 \pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
-\cf2 \ul \ulc2 \
+\ul \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
 \ulnone I first realised that the 64-way-parallel FFT plan was what was using up all the RAM, so I divide it up into 8 smaller blocks. That has made quite a difference:\
 \pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardeftab720\pardirnatural\partightenfactor0
-\cf2 \
+\
 == For a 18%-sized array (750x750) ==\
 With small FFT plan: 4.5GB remaining (used 4GB)\
 With large FFT plan: 2.7GB remaining (used 5.8GB)\
@@ -27,13 +32,16 @@ With large FFT plan: out of memory\
 With small FFT plan: 0.42GB remaining (used 8.08GB)\
 With large FFT plan: out of memory\
 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardeftab720\pardirnatural\partightenfactor0
 \ul Batch deconvolution\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardeftab720\pardirnatural\partightenfactor0
 \ulnone Then I started to look at batch deconvolution, because that will require non-trivial amounts of extra RAM to do the different timepoints in parallel.\
 \
 For Jos\'e9\'92s test file, the output file size was 100MB per timepoint (I think in fact I must be overwriting the same output file repeatedly, as I am just echoing the input filename). The numbers have now got a bit garbled, but earlier on I reckoned memory usage per timepoint was actually 10x the output file size, i.e. 1GB per timepoint. I\'92m not now sure about those numbers as I can\'92t reproduce them now.\
 \
 Part of that will be due to .tif being 16 bit vs 32-bit variables for internal calculation. That gives a factor of 2. I have several copies of the back-projection kicking around as part of the RL algorithm, and they are all kept in GPU RAM. In Prevedel\'92s RL algorithm I have Htf, HXguessBack, errorBack, Xguess and the new backprojection that I am currently calculating. That makes 5, which gives me my 10x factor.\
 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardeftab720\pardirnatural\partightenfactor0
 \ul Some batch measurements\ulnone \
 8x1-way batch deconvolution took 5m13, GPU RAM low water mark was 4.55GB\
 2x4-way batch deconvolution took 2m24, GPU RAM low water mark was 3.4GB (0.36 near end of iter 0 first time round!?)\
@@ -42,48 +50,53 @@ Part of that will be due to .tif being 16 bit vs 32-bit variables for internal c
 \
 1-way batch deconvolution of 1500x1500 image took 2m37, GPU RAM low water mark was 0.07GB.\
 2-way batch deconvolution of 1500x1500 image 
-\f1\i runs out of memory\
+\f2\i runs out of memory\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardeftab720\pardirnatural\partightenfactor0
 
-\f0\i0 \
+\f1\i0 \
 2-way batch deconvolution of 1200x1200 image, GPU RAM low water mark was 0.54GB.\
 3-way batch deconvolution of 1200x1200 image, GPU RAM low water mark was 0.24GB.\
 4-way batch deconvolution of 1200x1200 image runs out of GPU RAM whether or not I do in-place - with a slight random variation in how far it gets before it fails, so I think it\'92s right on the cusp.\
 \
 \
  
-\f1\i Higher at 0.8GB if I don\'92t do my in-place trick. Madness again! But drops to 0.34GB with no in-place and changing to a *= operation. It\'92s almost as if in-place is using 
-\f2\b more
-\f1\b0  RAM somehow!?
-\f0\i0 \
+\f2\i Higher at 0.8GB if I don\'92t do my in-place trick. Madness again! But drops to 0.34GB with no in-place and changing to a *= operation. It\'92s almost as if in-place is using 
+\f3\b more
+\f2\b0  RAM somehow!?
+\f1\i0 \
 \
 1-way batch deconvolution of 1500x1500 image took 2m37, GPU RAM low water mark was 0.07GB. 
-\f1\i But is actually less bad if I don\'92t do my in-place trick. Madness.
-\f0\i0 \
+\f2\i But is actually less bad if I don\'92t do my in-place trick. Madness.
+\f1\i0 \
 2-way batch deconvolution of 1500x1500 image 
-\f1\i runs out of memory whether or not I do my in-place trick.\
+\f2\i runs out of memory whether or not I do my in-place trick.\
 
-\f0\i0 \
+\f1\i0 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardeftab720\pardirnatural\partightenfactor0
 \ul Reducing batch deconvolution memory requirements, and weird behaviour\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardeftab720\pardirnatural\partightenfactor0
 \ulnone It seems as if I shouldn\'92t need the 5x multiplier for my intermediate arrays. I thought I could reduce it to 3, by using an in-place operation for the ratio calculation and deleting HXguessBack and errorBack. (In fact, I am not sure if I need to do an in-place ratio as we should have deleted all the FH caches by then, and will not actually be at our low water mark any more).\
 \
 The behaviour I saw has been very inconsistent. Even explicitly invoking Python garbage collection has no effect. I don\'92t know if it\'92s that the cupy/GPU storage has its own garbage collection or memory pools, or whether FFT plans/caches/etc are being stored/evicted in an inconsistent way. I see really weird behaviour though - in some cases in-place operations etc seem to 
-\f1\i increase
-\f0\i0  the memory usage, and the 2x4 way deconvolution example shows an initial low water mark that we never return to, which I feel must be hinting at something relevant.\
+\f2\i increase
+\f1\i0  the memory usage, and the 2x4 way deconvolution example shows an initial low water mark that we never return to, which I feel must be hinting at something relevant.\
 \
 I also see cases where doing an additional calculation apparently 
-\f1\i frees up
-\f0\i0  memory!? I can\'92t see how even a destructive operation should be able to do that. \
+\f2\i frees up
+\f1\i0  memory!? I can\'92t see how even a destructive operation should be able to do that. \
 \pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
-\cf2 0.296/8.514GB after Forward+BackwardProjectACC\
+0.296/8.514GB after Forward+BackwardProjectACC\
 0.296/8.514GB after garbage collection\
 2.226/8.514GB after error calculation\
 2.226/8.514GB after multiplication\
 2.226/8.514GB after deletions\
 2.226/8.514GB after garbage collection\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
 
-\f1\i and with my old non-destructive RL code:\
+\f2\i and with my old non-destructive RL code:\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
 
-\f0\i0 0.653/8.514GB after Forward+BackwardProjectACC\
+\f1\i0 0.653/8.514GB after Forward+BackwardProjectACC\
 0.653/8.514GB after garbage collection\
 0.653/8.514GB after error calculation\
 0.858/8.514GB after multiplication\
@@ -91,13 +104,14 @@ I also see cases where doing an additional calculation apparently
 0.858/8.514GB after garbage collection\
 \
 \pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardeftab720\pardirnatural\partightenfactor0
-\cf2 I think I would need a detailed allocation map on the GPU to delve any deeper into this\'85\
+I think I would need a detailed allocation map on the GPU to delve any deeper into this\'85\
 \pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
-\cf2 \
 \
 \
 \
 \
+\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
 \ul Various commands to run\ulnone \
 \
 python deconvolve_time_series.py -b 1 -m gpu --psf "PSFmatrix/fdnormPSFmatrix_M11.11NA0.6MLPitch125fml1060from-264to264zspacing12Nnum15lambda520n1.33.mat" --dest DeconvolvedOutput --timepoints Jose-deconvolution/img_000X000001_crop750.tif Jose-deconvolution/img_000X000001_crop750.tif Jose-deconvolution/img_000X000001_crop750.tif Jose-deconvolution/img_000X000001_crop750.tif Jose-deconvolution/img_000X000001_crop750.tif Jose-deconvolution/img_000X000001_crop750.tif Jose-deconvolution/img_000X000001_crop750.tif Jose-deconvolution/img_000X000001_crop750.tif\
