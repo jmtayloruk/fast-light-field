@@ -654,9 +654,9 @@ public:
 
 size_t gMemoryUsage = 0;
 
-void TrackAllocation(JPythonArray<TYPE> *array, bool dealloc=false)
+template<class _TYPE> void TrackAllocation(JPythonArray<_TYPE> *array, bool dealloc=false)
 {
-    size_t size = sizeof(TYPE);
+    size_t size = sizeof(_TYPE);
     for (int i = 0; i < array->NDims(); i++)
         size *= array->Dims()[i];
     if (dealloc)
@@ -665,7 +665,7 @@ void TrackAllocation(JPythonArray<TYPE> *array, bool dealloc=false)
         __sync_fetch_and_add(&gMemoryUsage, size);
 }
 
-void TrackDeallocation(JPythonArray<TYPE> *array)
+template <class _TYPE> void TrackDeallocation(JPythonArray<_TYPE> *array)
 {
     TrackAllocation(array, true);
 }
@@ -1687,13 +1687,15 @@ extern "C" PyObject *InverseRFFTList(PyObject *self, PyObject *args)
             }
             
             JPythonArray3D<TYPE> fab(_fab);
+            TrackAllocation(&fab);
             
             npy_intp output_dims[3] = { fab.Dims(0), fshapeY, fshapeX };
             PyArrayObject *_result = (PyArrayObject *)PyArray_EMPTY(3, output_dims, NPY_FLOAT, 0);
             PyList_SetItem(resultList, cc, (PyObject *)_result);  // Steals reference
             JPythonArray3D<RTYPE> result(_result);
             ALWAYS_ASSERT(!(((size_t)result.Data()) & 0xF));        // Check alignment. Just plain malloc seems to give sufficient alignment.
-            
+            TrackAllocation(&result);
+
             int ifCounter = 0;
             for (int i = 0; i < fab.Dims(0); i++)
             {
@@ -1703,6 +1705,29 @@ extern "C" PyObject *InverseRFFTList(PyObject *self, PyObject *args)
         }
         RunWork(work);
         CleanUpWork(work, gThreadFileName, "a", false);
+ 
+        // This next loop only exists to un-track the memory usage of the input arrays,
+        // which we tracked in the earlier loop simply because it makes our memory usage
+        // look weird if we don't track them
+        for (int cc = 0; cc < numZPlanes; cc++)
+        {
+            PyObject *planeInfo = PyList_GetItem(workList, cc);
+            PyArrayObject *_fab;
+            int fshapeY, fshapeX;
+            if (!PyArg_ParseTuple(planeInfo, "O!ii",
+                                  &PyArray_Type, &_fab,
+                                  &fshapeY, &fshapeX))
+            {
+                return NULL;    // PyArg_ParseTuple already sets an appropriate PyErr
+            }
+            JPythonArray3D<TYPE> fab(_fab);
+            TrackDeallocation(&fab);
+            
+            PyObject *_result = PyList_GetItem(resultList, cc);
+            JPythonArray3D<RTYPE> result(_result);
+            TrackDeallocation(&result);
+        }
+
         return resultList;
     }
     catch (const std::invalid_argument& e)
