@@ -1,3 +1,4 @@
+# These list an exact combination of module versions that I know works.
 Cython==0.29.21
 h5py==2.10.0
 numpy==1.19.1
@@ -8,5 +9,5 @@ scipy==1.5.1
 six==1.15.0
 tifffile==2020.7.22
 tqdm==4.48.0
-joblib==0.16.0
+#joblib==0.16.0   # Not required any more
 matplotlib=3.3.0

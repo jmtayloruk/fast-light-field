@@ -9,5 +9,5 @@ scipy>=1.4.1
 six>=1.15.0
 tifffile>=2019.7.2
 tqdm>=4.48.0
-joblib>=0.14.1
+#joblib>=0.14.1   # Not required any more
 matplotlib>=3.0.3
