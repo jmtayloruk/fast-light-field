@@ -15,6 +15,7 @@ def ErrorIfGPUUnavailable():
     # as it will raise an exception if cupy is not available.
     # The function's purpose is simply to raise a more user-friendly error than the one we would otherwise get!
     try:
+        import cupy as cp
         _ = cp.zeros((1,))
     except:
         raise RuntimeError("GPU acceleration requested, but no Python/GPU support installed on this computer. Consult installation instructions for fast-light-field")
