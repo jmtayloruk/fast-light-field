@@ -10,6 +10,15 @@ import time
 def EnableDiagnostics():
     plf.SetProgressReportingInterval(10.0)
 
+def ErrorIfGPUUnavailable():
+    # This should only be run when we are expecting to use GPU support,
+    # as it will raise an exception if cupy is not available.
+    # The function's purpose is simply to raise a more user-friendly error than the one we would otherwise get!
+    try:
+        _ = cp.zeros((1,))
+    except:
+        raise RuntimeError("GPU acceleration requested, but no Python/GPU support installed on this computer. Consult installation instructions for fast-light-field")
+
 # Simple accessors to work around the fact that I'm not sure if I can access
 # class variables directly from Matlab
 def NumZForMatrix(H):
