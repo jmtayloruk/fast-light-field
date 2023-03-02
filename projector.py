@@ -57,7 +57,7 @@ padToSmallPrimesOnGPU = False
 # 0: off
 # 1: basic summary
 # 2: detailed breakdown for each step of the code
-logGPUMemoryUsage = 1
+logGPUMemoryUsage = 0
 
 # This flag replaces all the GPU work with dummy functions,
 # to help examine what the CPU-based overheads are for the GPU code

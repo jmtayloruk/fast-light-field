@@ -125,10 +125,15 @@ Note that the matrix filename must follow the exact format shown: it should star
 Although the entire fast-light-field project is not currently packaged as a formal python module of its own, you can still import individual .py files (e.g. hMatrix and lfdeconv) and call the functions from your own python code. The APIs are not yet formally documented, but the code in `deconvolve_time_series.py` etc provides a suitable demonstration of usage.
 
 ### Best performance
-- Note that the first iteration will take a bit longer, as the code self-calibrates for best performance, but subsequent iterations will be faster.
+- Note that the first iteration will take a bit longer (potentially a *lot* longer on the GPU), as the code self-calibrates for best performance, but subsequent iterations will be faster.
 - The code will run fastest if given significant numbers (e.g. 32) of individual timepoint images to deconvolve in parallel. 
 - For most systems, GPU-based deconvolution will be fastest. The GPU-based code is not quite as extensively tested - it should be correct, but has not been tested on many different platforms, so let me know if you encounter any errors). Run on GPU by specifying `-m gpu` on the command line. 
 - The command line option `-cacheFH` is a specialised option that is strictly for small reconstruction problems only. It will give faster performance (especially for small batch sizes) but has a dramatically higher memory requirement (may well exhaust available RAM).
 - The CPU-based code should be able to handle very large volume reconstructions, but the GPU code may run out of memory (depending on the specs of your GPU).
 - The code will use all available cores on the CPU, but does not currently farm out work across a cluster of computers (handle this manually by running different jobs on different computers)
 - The code will not make use of multiple GPUs - let me know if you have this setup and we can work together to get this working.
+
+## Benchmarking
+
+As mentioned in the installation instructions, you can get some quick-ish benchmark measurements by running `python3 setup.py benchmark`.
+For more in-depth benchmarks on realistically-sized tasks (as presented in our manuscript), see `benchmarking.ipynb`.

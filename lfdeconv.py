@@ -69,20 +69,28 @@ def ForwardProjectACC(hMatrix, realspace, planes=None, progress=tqdm, logPrint=T
     
     return TOTALprojection
 
-def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.PhysicalCoreCount(), projector=proj.Projector_allC(), im=None, progress=tqdm):
-    # Note:
-    #  Htf is the *initial* backprojection of the camera image
-    #  Xguess is the initial guess for the object
+def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.PhysicalCoreCount(), projector=proj.Projector_allC(), im=None, progress=tqdm, prevedel=True, trustMask=None):
+    '''
+        Htf       ndarray  The *initial* backprojection of the camera image
+        Xguess    ndarray  The initial guess for the object
+        prevedel  bool     Use the variation of the Richardson-Lucy algorithm used in the code associated with Prevedel et al (2014).
+                            This is subtly different from the standard Richardson-Lucy algorithm (and I'm not sure why they have done it differently).
+                            The flag defaults to True for pixel-by-pixel compatibility with the output from Prevedel et al's code.
+                            Note that if set to False it is important to also use trustMask to avoid background light issues leading to major native focal plane artefacts
+        trustMask ndarray  Mask of pixels in the camera image that should be used in the reconstruction (only applicable when prevedel=False).
+                            See note "reconstruction methods.md"
+    '''
     ru1 = util.cpuTime('both')
     t1 = time.time()
     proj.LogMemory("Starting DeconvRL")
     if Htf is None:
         # Caller has not provided the initial backprojection, but has provided the camera image itself
         assert(im is not None)
-        Htf = BackwardProjectACC(hMatrix, im, progress=None, projector=projector)
+        if (prevedel) or (Xguess is None):
+            # We will need to know the backprojection of the image
+            Htf = BackwardProjectACC(hMatrix, im, progress=None, projector=projector)
     else:
         # Caller has provided the initial backprojection (and so we don't expect them to provide the image)
-        assert(im is None)
         if projector.storeVolumesOnGPU:
             Htf = projector.asnative(Htf)
     proj.LogMemoryDetailed("after Htf")
@@ -94,50 +102,95 @@ def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.Physical
         if projector.storeVolumesOnGPU:
             Xguess = projector.asnative(Xguess)
     proj.LogMemoryDetailed("after Xguess")
+
+    if trustMask is not None:
+        wh = np.where(trustMask == 0)
+        for _im in im:
+            assert(np.sum(_im[wh]) == 0)   # Caller must ensure image=0 in untrusted regions
+        trustBack = BackwardProjectACC(hMatrix, trustMask[np.newaxis], progress=None, projector=projector)
+        
+    def RLUpdateFuncPrevedel(Xguess, Htf, HXguessBack, cc=slice(None)):
+        assert(trustMask is None)
+        projector.assertNative(HXguessBack)
+        proj.LogMemoryDetailed("RLUpdateFunc starting for {0}".format(cc))
+        if isinstance(HXguessBack, np.ndarray):
+            # We are working on the CPU
+            errorBack = np.divide(Htf[cc], np.asarray(HXguessBack), out=HXguessBack)
+            proj.LogMemoryDetailed("RLUpdateFunc after errorback")
+            
+            del HXguessBack   # Effectively this has been destroyed - storage is now used for errorBack
+            Xguess[cc] *= errorBack
+            proj.LogMemoryDetailed("RLUpdateFunc after Xguess multiplication")
+            del errorBack
+            Xguess[cc][np.where(np.isnan(Xguess[cc]))] = 0
+            proj.LogMemoryDetailed("RLUpdateFunc after nan-masking")
+        else:
+            # We are presumably working with a GPU.
+            #
+            # Performance notes re nan masking:
+            # 1. My cp.where construction is marginally faster than cp.nan_to_num(copy=False), at least when we don't have NaNs
+            # 2. If I run a profiler, this appears to take almost 25% of the total run time.
+            #    However, eliminating it doesn't speed things up, so I think this is just acting as a checkpoint for asynchronous GPU work.
+            if projector.storeVolumesOnGPU:
+                # All calculations and results stay on the GPU
+                errorBack = projector.nativeDivide(Htf[cc], HXguessBack, out=HXguessBack)
+                del HXguessBack   # Effectively this has been destroyed - storage is now used for errorBack
+                Xguess[cc] *= errorBack
+                del errorBack
+                Xguess[cc][cp.where(cp.isnan(Xguess[cc]))] = 0
+            else:
+                # Intermediate calculations are on the GPU, but then we bring the final result back to the CPU
+                errorBack = cp.divide(cp.asarray(Htf[cc]), HXguessBack, out=HXguessBack)
+                del HXguessBack   # Effectively this has been destroyed - storage is now used for errorBack
+                mul = cp.asarray(Xguess[cc]) * errorBack
+                del errorBack
+                mul[cp.where(cp.isnan(mul))] = 0
+                Xguess[cc] = mul.get()
+        proj.LogMemoryDetailed("RLUpdateFunc complete for {0}".format(cc))
+
+    def RLUpdateFuncStandard(Xguess, errorBack, cc=slice(None)):
+        projector.assertNative(errorBack)
+        proj.LogMemoryDetailed("RLUpdateFunc starting for {0}".format(cc))
+        if isinstance(errorBack, np.ndarray):
+            # We are working on the CPU
+            Xguess[cc] *= errorBack
+            if (trustMask is not None):
+                # Note that trustBack[cc] is 1xYxX whereas Xguess[cc] is  NxYxX.
+                # Nevertheless broadcasting rules should ensure the operation acts on every volume in the batch
+                Xguess[cc] /= trustBack[cc]
+            proj.LogMemoryDetailed("RLUpdateFunc after Xguess multiplication")
+            del errorBack
+            Xguess[cc][np.where(np.isnan(Xguess[cc]))] = 0
+            proj.LogMemoryDetailed("RLUpdateFunc after nan-masking")
+        else:
+            assert(trustMask is None) # Not yet implemented for GPU (shouldn't be hard...)
+            # We are presumably working with a GPU.
+            #
+            # Performance notes re nan masking:
+            # 1. My cp.where construction is marginally faster than cp.nan_to_num(copy=False), at least when we don't have NaNs
+            # 2. If I run a profiler, this appears to take almost 25% of the total run time.
+            #    However, eliminating it doesn't speed things up, so I think this is just acting as a checkpoint for asynchronous GPU work.
+            if projector.storeVolumesOnGPU:
+                # All calculations and results stay on the GPU
+                Xguess[cc] *= errorBack
+                del errorBack
+                Xguess[cc][cp.where(cp.isnan(Xguess[cc]))] = 0
+            else:
+                # Intermediate calculations are on the GPU, but Xguess lives on the CPU
+                # It therefore makes most sense to do the multiplication there too
+                errorBack[cp.where(cp.isnan(errorBack))] = 0
+                Xguess[cc] *= errorBack.get()
+        proj.LogMemoryDetailed("RLUpdateFunc complete for {0}".format(cc))
+
     for i in progress(range(maxIter), desc='RL deconv'):
         proj.LogMemory("Start RL iter {0}/{1}".format(i+1, maxIter))
         t0 = time.time()
         HXguess = ForwardProjectACC(hMatrix, Xguess, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector)
-        
-        def RLUpdateFunc(Xguess, Htf, HXguessBack, cc=slice(None)):
-            projector.assertNative(HXguessBack)
-            proj.LogMemoryDetailed("RLUpdateFunc starting for {0}".format(cc))
-            if isinstance(HXguessBack, np.ndarray):
-                # We are working on the CPU
-                errorBack = np.divide(Htf[cc], np.asarray(HXguessBack), out=HXguessBack)
-                proj.LogMemoryDetailed("RLUpdateFunc after errorback")
-        
-                del HXguessBack   # Effectively this has been destroyed - storage is now used for errorBack
-                Xguess[cc] *= errorBack
-                proj.LogMemoryDetailed("RLUpdateFunc after Xguess multiplication")
-                del errorBack
-                #Xguess[cc][np.where(np.isnan(Xguess[cc]))] = 0
-                proj.LogMemoryDetailed("RLUpdateFunc after nan-masking")
-            else:
-                # We are presumably working with a GPU.
-                #
-                # Performance notes re nan masking:
-                # 1. My cp.where construction is marginally faster than cp.nan_to_num(copy=False), at least when we don't have NaNs
-                # 2. If I run a profiler, this appears to take almost 25% of the total run time.
-                #    However, eliminating it doesn't speed things up, so I think this is just acting as a checkpoint for asynchronous GPU work.
-                if projector.storeVolumesOnGPU:
-                    # All calculations and results stay on the GPU
-                    errorBack = projector.nativeDivide(Htf[cc], HXguessBack, out=HXguessBack)
-                    del HXguessBack   # Effectively this has been destroyed - storage is now used for errorBack
-                    Xguess[cc] *= errorBack
-                    del errorBack
-                    Xguess[cc][cp.where(cp.isnan(Xguess[cc]))] = 0
-                else:
-                    # Intermediate calculations are on the GPU, but then we bring the final result back to the CPU
-                    errorBack = cp.divide(cp.asarray(Htf[cc]), HXguessBack, out=HXguessBack)
-                    del HXguessBack   # Effectively this has been destroyed - storage is now used for errorBack
-                    mul = cp.asarray(Xguess[cc]) * errorBack
-                    del errorBack
-                    mul[cp.where(cp.isnan(mul))] = 0
-                    Xguess[cc] = mul.get()
-            proj.LogMemoryDetailed("RLUpdateFunc complete for {0}".format(cc))
-
-        BackwardProjectACC(hMatrix, HXguess, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector, rlUpdateFunc=lambda x,cc:RLUpdateFunc(Xguess, Htf, x, cc))
+        if prevedel:
+            BackwardProjectACC(hMatrix, HXguess, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector, rlUpdateFunc=lambda x,cc:RLUpdateFuncPrevedel(Xguess, Htf, x, cc))
+        else:
+            error = im / HXguess
+            BackwardProjectACC(hMatrix, error, numjobs=numjobs, progress=None, logPrint=logPrint, projector=projector, rlUpdateFunc=lambda x,cc:RLUpdateFuncStandard(Xguess, x, cc))
         proj.LogMemory("after Forward+BackwardProjectACC", True)
         ttime = time.time() - t0
         #print('iter %d/%d took %.1f secs' % (i+1, maxIter, ttime))

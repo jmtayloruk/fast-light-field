@@ -1,6 +1,8 @@
-{\rtf1\ansi\ansicpg1252\cocoartf1404\cocoasubrtf470
-{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\rtf1\ansi\ansicpg1252\cocoartf1671\cocoasubrtf600
+{\fonttbl\f0\fswiss\fcharset0 Helvetica;\f1\fswiss\fcharset0 Helvetica-Oblique;\f2\fswiss\fcharset0 Helvetica-Bold;
+}
 {\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
 \paperw11900\paperh16840\margl1440\margr1440\vieww18340\viewh15160\viewkind0
 \pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
 
@@ -12,20 +14,28 @@
 \uc0\u8730  Confirmed that Ht matches. I have also written new code to calculate Ht, which is astronomically faster than their original code (since I eliminate the convolution and a lot of other associated unnecessary work)\
 \
 \ul Bug in their code\
-\ulnone There is a bug in their code when z=0, whereby the max() operator does not work as they intend in calcPSF. I have added a workaround for that bug in my copy of their code (and fixed it in my python code!)\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+\cf0 \ulnone There is a bug in their code when z=0, whereby the max() operator does not work as they intend in calcPSF. I have added a workaround for that bug in my copy of their code (and fixed it in my python code!)\
 \
-Their normalisation to max(H) is rather arbitrary, does not conserve flux, and means that strictly speaking the RL never converges (additional iterations scale up the output, even if the structure has mostly converged). I now do a proper flux normalisation.\
-\ul \
+Their normalisation to max(H) is rather arbitrary, does not conserve flux, and means that strictly speaking the RL never converges (additional iterations scale up the output, even if the structure has mostly converged). I now do a proper flux normalisation in the forward direction.\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+\cf0 \ul \
 Investigate\ulnone \
 - I seem to remember seeing some slightly odd effects in the off-axis reconstruction near the native focal plane, where it was reconstructing a rectangle with a single-pixel-wide strip of a different intensity at the edge. It\'92s not inconceivable that that could be an off-by-one bug in their PSF generation, so I should investigate that I think\'85\
+- See test-deconv-types.ipynb. I am starting to think it has to do with the way the backprojection works for the spatially-varying PSF. I need to think about whether 
+\f1\i that
+\f0\i0  is expected to be flux-conserving in some way, and if not then what the implications of that are. There are some image regions between lenslets that are always going to be dim, and background light present in the raw images is going to be amplified in the error back-propagation, I think. It is amplified 
+\f1\i less
+\f0\i0  using Yoon\'92s reformulation of the Richardson-Lucy (compared to the standard R-L), but the effects are still visible.\
 - I am pretty sure the edge effects (1-2 lenslet border around the edge of the image) can be fixed using my \'93missing plane\'94 approach.\
 \
 \ul Performance\
-\ulnone - My single-threaded run time is ~625s for z=-26, 85.9s@8x. ~7.2x speedup over original, which is pretty reasonable.\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+\cf0 \ulnone - My single-threaded run time is ~625s for z=-26, 85.9s@8x. ~7.2x speedup over original, which is pretty reasonable.\
 \
 Stage 1 (\'93computing PSFs\'94) took 27:46 to do the entire calculation for planes 26:2:0. With 8 cores it took 6m08 (4.5x speedup). Presumably the efficiency gains are reduced for smaller problem sizes\'85? -> It looks like a good chunk of time is being taken either in returning the results or in processing them after the multithreaded code is over. 
-\b I could investigate
-\b0  whether there is a bottleneck there that I could improve on (if I care). It might turn out to be the fresnel2D part, for example\'85\
+\f2\b I could investigate
+\f0\b0  whether there is a bottleneck there that I could improve on (if I care). It might turn out to be the fresnel2D part, for example\'85\
 For the first few planes, Matlab takes 132s, 100s, 77s. I take 91.0, 71.4, 56.8, so I can be happy that I am running faster than the Matlab now!\
 	40 minutes for the Nmax=19 parameter set.\
 \
@@ -36,6 +46,8 @@ For the first few planes, Matlab takes 132s, 100s, 77s. I take 91.0, 71.4, 56.8,
 Stage 3 took 30s (single-threaded). I have not bothered to parallelise this, as it is not a bottleneck.\
 	1m47 for the Nmax=19 parameter set (with the reduced H matrix).\
 \
-\ul Memory usage\
-\ulnone Even with oversampling, stage 1 is not the biggest memory hog. The main issue is the size of H (and Ht). I have used my symmetry relationships to reduce these to ~15% of their original size (although note that this means my .mat files are not compatible with the actual Matlab code).\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+\cf0 \ul Memory usage\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+\cf0 \ulnone Even with oversampling, stage 1 is not the biggest memory hog. The main issue is the size of H (and Ht). I have used my symmetry relationships to reduce these to ~15% of their original size (although note that this means my .mat files are not compatible with the actual Matlab code).\
 }
