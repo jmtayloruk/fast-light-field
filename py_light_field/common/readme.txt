@@ -1,0 +1,5 @@
+This directory contains some files that are part of my "common" codebase that I reuse across different projects. 
+
+"common" is normally included as a git submodule within a project. However, this prevents a simple downloading of a .zip file of the complete source code of the main project from github (the submodule is not downloaded, and cannot be inited as the parent is not a git repository). I have therefore included the actual source files directly into the main project. This does have the downside that they could get out of sync - but the functionality I am using here is fairly mature so that is hopefully ok.
+
+Note to self: there is some discussion here https://stackoverflow.com/questions/72600268/github-zip-download-with-empty-submodule-folder about how to add a full zip file (including submodules) to a release - in case I ever want to go back to this in future.
