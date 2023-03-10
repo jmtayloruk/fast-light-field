@@ -2,6 +2,9 @@
 # This may be somewhat redundant now that MKL seems to be being used as a backend
 # (although it might also be useful to help me disable that usage while investigating performance!)
 
+# Note that (as of Mar 2023) there are special instructions that must be followed if you are
+# installing pyfftw on Apple M1 hardware: https://github.com/andrej5elin/howto_fftw_apple_silicon
+
 import scipy.fftpack
 import numpy as np
 from numpy.fft import fft, fftn, rfft, rfftn, irfftn
