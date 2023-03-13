@@ -66,15 +66,16 @@ numpy: `Python version >= 3.7 required`. The solution is to manually run somethi
 
 imagecodecs: `imagecodecs/opj_color.c:45:22: fatal error: openjpeg.h: No such file or directory`. Solution is to manually run something like `python3 -m pip install --user tifffile==2019.7.2` to install an older version of tifffile.
 
-pyfftw: `Could not find the FFTW header 'fftw3.h'`. Are you installing on an Apple M1 machine? 
-If so, [follow these instructions](https://github.com/andrej5elin/howto_fftw_apple_silicon) to manually install pyfftw.
 
-pyfftw: if you encounter any other issues, then actually this is installation is not required as part of critical high-performance code.
-Edit `requirements_minimum.txt` to remove it, change the `if False` in `myfft.py` to `if True`.
+matplotlib/pillow: if you get an error saying libjpeg not installed, then either install it or comment out the matplotlib line in `requirements_minimum.txt`.
+The core fast-light-field code will still work, you just won't be able to run any of the auxiliary jupyter notebooks that generate plots.
 
 After running these manual fixes, rerun the “install dependencies” command from the original install instructions (above) and hopefully it will succeed.
 
-Error: `No module named xxx`. Are you running in a virtual environment? If so, you probably forgot to remote the `--user` flag from one of the commands you ran.
+Runtime error: `No module named xxx`. Are you running in a virtual environment? If so, you probably forgot to remote the `--user` flag from one of the commands you ran.
+
+Runtime error: `Symbol not found: _aligned_alloc`. This seems to happen if pyfftw is already installed. Solution is to install fast-light-field in a virtual environment, without pyfftw.
+Drop me an email if you are not sure what this means. 
 
 I have occasionally seen problems where skimage crashes when called from our code. I do not understand the root cause of that, but I think I fixed it by reinstalling skimage.
 

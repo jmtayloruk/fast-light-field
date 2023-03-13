@@ -15,10 +15,20 @@ try:
 except ImportError:
     pass
 
-if False:
+if True:
     # Old FFT code
+    # I have reactivated this old code branch because of problems I have encountered with pyfftw.
+    # That should not be a problem, since I don't use this myfft.py code for anything performance-critical.
+    #
+    # Detailed explanation for posterity:
+    # If I have the pyfftw module installed on OS X then I get dylib errors because of
+    # some sort of incompatibility with how it is built, and how distutils extensions
+    # seem to be build for OS X 10.9 (at least they are on my laptop and I can't see how to change that).
+    # The result is that my light field C code picks up the "wrong" fftw dependency dylib and
+    # fails on launch as a consequence of this.
+    # (additional reminder to myself of these instructions for installing pyfftw on Apple M1 hardware: https://github.com/andrej5elin/howto_fftw_apple_silicon)
     def myFFT2(mat, shape):
-        # Perform a 'float' FFT on the matrix we are passed.
+	# Perform a 'float' FFT on the matrix we are passed.
         # It would probably be faster if there was a way to perform the FFT natively on the 'float' type,
         # but scipy does not seem to support that option
         #
