@@ -11,5 +11,5 @@ scipy==1.5.1
 six==1.15.0
 tifffile==2020.7.22
 tqdm==4.48.0
-#joblib==0.16.0   # Not required any more
+joblib==0.16.0
 matplotlib=3.3.0
