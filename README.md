@@ -66,6 +66,12 @@ numpy: `Python version >= 3.7 required`. The solution is to manually run somethi
 
 imagecodecs: `imagecodecs/opj_color.c:45:22: fatal error: openjpeg.h: No such file or directory`. Solution is to manually run something like `python3 -m pip install --user tifffile==2019.7.2` to install an older version of tifffile.
 
+pyfftw: `Could not find the FFTW header 'fftw3.h'`. Are you installing on an Apple M1 machine? 
+If so, [follow these instructions](https://github.com/andrej5elin/howto_fftw_apple_silicon) to manually install pyfftw.
+
+pyfftw: if you encounter any other issues, then actually this is installation is not required as part of critical high-performance code.
+Edit `requirements_minimum.txt` to remove it, change the `if False` in `myfft.py` to `if True`.
+
 After running these manual fixes, rerun the “install dependencies” command from the original install instructions (above) and hopefully it will succeed.
 
 Error: `No module named xxx`. Are you running in a virtual environment? If so, you probably forgot to remote the `--user` flag from one of the commands you ran.
