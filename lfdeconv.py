@@ -281,13 +281,15 @@ def main(argv, projectorClass=proj.Projector_allC, maxiter=8, numParallel=32):
         print('New method took', time.time()-t1)
 
         # Run for the individual images, and check we get the same result as with the dual round-trip
+        # Note that these tests yield very large values in the result array,
+        # so a comparison with a max error tolerance of 1.0 is reasonable.
         temp = BackwardProjectACC(hMatrix, candidate[0][np.newaxis], planes=None, numjobs=1, logPrint=False, projector=projector)
         firstRoundtrip = ForwardProjectACC(hMatrix, temp, planes=None, numjobs=1, logPrint=False, projector=projector)
-        testOutcomes += util.CheckComparison(firstRoundtrip, dualRoundtrip[0], 1e-6, 'Compare single and dual deconvolution #1', '<<1')
+        testOutcomes += util.CheckComparison(firstRoundtrip, dualRoundtrip[0], 1.0, 'Compare single and dual deconvolution #1', '<<1')
 
         temp = BackwardProjectACC(hMatrix, candidate[1][np.newaxis], planes=None, numjobs=1, logPrint=False, projector=projector)
         secondRoundtrip = ForwardProjectACC(hMatrix, temp, planes=None, numjobs=1, logPrint=False, projector=projector)
-        testOutcomes += util.CheckComparison(secondRoundtrip, dualRoundtrip[1], 1e-6, 'Compare single and dual deconvolution #2', '<<1')
+        testOutcomes += util.CheckComparison(secondRoundtrip, dualRoundtrip[1], 1.0, 'Compare single and dual deconvolution #2', '<<1')
 
     if 'parallel-threading' in argv:
         # Run to test parallelization

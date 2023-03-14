@@ -23,9 +23,11 @@ if not os.path.exists('fftw-3.3.8/.libs/libfftw3f.a'):
 # but I'll try it and see if it works out ok for now.
 archInfo = platform.architecture()
 if (archInfo[0] == '32bit'):
-	ARCH = ['-arch', 'i386']
+	ARCH = ['-march=native', '-arch', 'i386']
+elif ('macOS' in platform.platform()) and (platform.processor() == 'arm'):
+    ARCH = ['-arch', 'apple-a12']
 else:
-	ARCH = ['-arch', 'x86_64']
+	ARCH = ['-march=native', '-arch', 'x86_64']
 
 # Determine if the -arch parameter is actually even available on this platform,
 # by running a dummy gcc command that includes that option
@@ -44,7 +46,7 @@ py_light_field = Extension('py_light_field',
 	include_dirs = ['/usr/local/include', numpy.get_include()],
 	sources = ['py_light_field.cpp', 'common/jPythonArray.cpp', 'common/jPythonCommon.cpp', 'common/jMutex.cpp', 'common/jAssert.cpp', 'common/DebugPrintf_Unix.cpp'],
 	extra_link_args = ARCH + ['-Lfftw-3.3.8/.libs', '-Lfftw-3.3.8/threads/.libs', 'fftw-3.3.8/.libs/libfftw3f.a', 'fftw-3.3.8/threads/.libs/libfftw3f_threads.a'],
-	extra_compile_args = ['-O3', '-flax-vector-conversions', '-march=native', '-std=c++11'] + ARCH
+	extra_compile_args = ['-O3', '-flax-vector-conversions', '-std=c++11'] + ARCH
 )
 BUILD_MODULES.append(py_light_field)
 
