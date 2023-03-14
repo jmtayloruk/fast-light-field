@@ -2,13 +2,12 @@
 #include <map>
 #include <sys/resource.h>
 #include "common/jAssert.h"
-#include "common/VectorFunctions.h"
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include "Python.h"
 #include "numpy/arrayobject.h"
 #include "common/jMutex.h"
 #include "common/jPythonCommon.h"
-#include "common/PIVImageWindow.h"
+#include <complex>
 #include "fftw-3.3.8/api/fftw3.h"
 
 // Note: the TESTING macro is set when we build within Xcode, but not when we build using setup.py
@@ -60,7 +59,7 @@ double gProgressReportingInterval = 1e10;
         template<class _Xp> complex_fast& operator= (const complex_fast<_Xp>& __c)
           {std::complex<T>::operator=(__c); return *this;}
 
-        template<class _Tp> static inline complex_fast<_Tp> conj(const complex<_Tp>& __c)
+        template<class _Tp> static inline complex_fast<_Tp> conj(const std::complex<_Tp>& __c)
         {
             return complex_fast<_Tp>(__c.real(), -__c.imag());
         }
@@ -72,10 +71,10 @@ double gProgressReportingInterval = 1e10;
             Anyway, this protects against that eventuality. Obviously other operators exist, but I can't rewrite the whole class...
          
          */
-        template<class _Xp> complex_fast& operator+=(const complex<_Xp>& __c) =delete;
+        template<class _Xp> complex_fast& operator+=(const std::complex<_Xp>& __c) =delete;
         template<class _Xp> complex_fast& operator+=(const complex_fast<_Xp>& __c)
         {
-            complex<_Xp>::operator+=(__c); return *this;
+            std::complex<_Xp>::operator+=(__c); return *this;
         };
     };
 

@@ -3,6 +3,10 @@ import numpy	# So we can work out where the numpy headers live!
 import platform
 import os, sys
 
+# TODO: I don't know what the right way is to express dependencies in a setup.py file, but this here is not good practice.
+# I should improve it
+# Currently if we run 'setup.py clean' then this *builds* fftw!
+
 # Check dependencies have been built
 if not os.path.exists('fftw-3.3.8/.libs/libfftw3f.a'):
     print('=== NOTE: building FFTW. This may take some time ===')
@@ -38,7 +42,7 @@ BUILD_MODULES = []
 # I need to improve my VectorTypes.h, but I'm not even using that in this code, so that's a problem for another day!
 py_light_field = Extension('py_light_field',
 	include_dirs = ['/usr/local/include', numpy.get_include()],
-	sources = ['py_light_field.cpp', 'common/jPythonArray.cpp', 'common/PIVImageWindow.cpp', 'common/jPythonCommon.cpp', 'common/jMutex.cpp', 'common/jAssert.cpp', 'common/DebugPrintf_Unix.cpp'],
+	sources = ['py_light_field.cpp', 'common/jPythonArray.cpp', 'common/jPythonCommon.cpp', 'common/jMutex.cpp', 'common/jAssert.cpp', 'common/DebugPrintf_Unix.cpp'],
 	extra_link_args = ARCH + ['-Lfftw-3.3.8/.libs', '-Lfftw-3.3.8/threads/.libs', 'fftw-3.3.8/.libs/libfftw3f.a', 'fftw-3.3.8/threads/.libs/libfftw3f_threads.a'],
 	extra_compile_args = ['-O3', '-flax-vector-conversions', '-march=native', '-std=c++11'] + ARCH
 )
