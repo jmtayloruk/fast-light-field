@@ -3,7 +3,6 @@ import os, sys, time, warnings
 import csv, glob
 import cProfile, pstats
 import numpy as np
-import matplotlib.pyplot as plt
 
 import jutils as util
 import lfdeconv, psfmatrix, lfimage
@@ -50,6 +49,10 @@ def AnalyzeTestResults2(statsFilePath):
         for row in csv_reader:
             rows.append(row)
     rows = np.array(rows).astype(np.float).transpose()
+
+    # I don't import this at the top level, because matplotlib installation is inconvenient on some platforms
+    # so I don't want it to be compulsory for all functionality in this module
+    import matplotlib.pyplot as plt
 
     plt.plot(rows[0], rows[2]/rows[2,0], label='work time')
     plt.plot(rows[0], np.sum(rows[5:8], axis=0)/(rows[0]*rows[1]), label='dead time')
@@ -176,6 +179,10 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
                     AnalyzeTestResults(_numJobs)
         elif arg == 'analyze-saved-data':
             # Plot some analysis based on previously-acquired performance statistics
+            # I don't import matplotlib at the top level, because matplotlib installation is inconvenient on some platforms
+            # so I don't want it to be compulsory for all functionality in this module
+            import matplotlib.pyplot as plt
+            
             plt.title('Dummy work on empty arrays')
             AnalyzeTestResults2('stats-dummy.txt')
             plt.title('Real work')
