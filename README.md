@@ -37,10 +37,10 @@ python3 -m venv flf-venv
 . ./flf-venv/bin/activate
 
 # Install dependencies
-# You should check that this next command has run successfully - it should “Successfully installed” followed by a list of module names. 
+# You should check that this next command has run successfully - it should print “Successfully installed” followed by a list of module names. 
 # There may be earlier error messages that can probably be ignored, but if it does not make it to “Successfully installed” 
 # then something has gone wrong that needs fixing. See “troubleshooting”, below
-python3 -m pip install --user -r requirements_minimum.txt
+python3 -m pip install --user -r requirements.txt
 
 # OPTIONAL: if you want GPU support, run this next command
 # Note that the actual cuda library also needs to be installed first (see cuda documentation).
@@ -59,7 +59,7 @@ python3 setup.py --user build self-test
 python3 setup.py benchmark
 ```
 
-### Troubleshooting - general python modules
+### Troubleshooting - python module installation
 Unfortunately, installing the required python modules can be temperamental, even for a relatively simple project like this. If you encounter error messages while installing the dependencies, you may need to tweak things a bit. Drop me an email if you run into problems you can’t sort. Some issues I have encountered:
 
 numpy: `Python version >= 3.7 required`. The solution is to manually run something like `python3 -m pip install --user numpy==1.18.5` to install an older version of numpy that is compatible with your version of python.
@@ -67,24 +67,32 @@ numpy: `Python version >= 3.7 required`. The solution is to manually run somethi
 imagecodecs: `imagecodecs/opj_color.c:45:22: fatal error: openjpeg.h: No such file or directory`. Solution is to manually run something like `python3 -m pip install --user tifffile==2019.7.2` to install an older version of tifffile.
 
 
-matplotlib/pillow: if you get an error saying libjpeg not installed, then either install it or comment out the matplotlib line in `requirements_minimum.txt`.
+matplotlib/pillow: if you get an error saying libjpeg not installed, then either install it or comment out the matplotlib line in `requirements.txt`.
 The core fast-light-field code will still work, you just won't be able to run any of the auxiliary jupyter notebooks that generate plots.
 
+If you encounter any incompatibility issues, you could try installing in a virtual environment using one of the `requirements_exact_***.txt` in place of `requirements.txt`.
+Those files list specific combinations of module versions that I know work (at least for a particular version of python).
+These version numbers will over time become outdated, but for future-proofing these are combinations that I know should work.
+
 After running these manual fixes, rerun the “install dependencies” command from the original install instructions (above) and hopefully it will succeed.
-
-Runtime error: `No module named xxx`. Are you running in a virtual environment? If so, you probably forgot to remote the `--user` flag from one of the commands you ran.
-
-Runtime error: `Symbol not found: _aligned_alloc`. This seems to happen if pyfftw is already installed. Solution is to install fast-light-field in a virtual environment, without pyfftw.
-Drop me an email if you are not sure what this means. 
-
-I have occasionally seen problems where skimage crashes when called from our code. I do not understand the root cause of that, but I think I fixed it by reinstalling skimage.
 
 ### Troubleshooting - cupy module
 Unfortunately cupy seems rather fiddly to install. We have found that the following helps get past errors:
 ```
-    python3 -m pip install --user wheel
-    python3 -m pip install --user cupy==8.2.0
+python3 -m pip install --user wheel
+python3 -m pip install --user cupy==8.2.0
 ```
+
+### Troubleshooting - errors on launch
+
+Runtime error: `No module named xxx`. Are you running in a virtual environment? If so, you probably forgot to remote the `--user` flag from one of the commands you ran.
+
+Runtime error: `Symbol not found: _aligned_alloc`. This seems to happen (on Mac OS?) if pyfftw is already installed. Solution is to install fast-light-field in a virtual environment, without pyfftw.
+Drop me an email if you are not sure what this means. 
+
+I have occasionally seen problems where skimage crashes when called from our code. I do not understand the root cause of that, but I think I fixed it by reinstalling skimage.
+
+If you encounter any errors not listed here, please don't hesitate to get in touch with me by email for help!
 
 ## Deconvolving light field images
 

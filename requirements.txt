@@ -1,12 +1,13 @@
-# These list an exact combination of module versions that I know works.
-Cython==0.29.21
-h5py==2.10.0
-numpy==1.19.1
-# psutil requirement picks bug fix to give correct CPU count for motherboards with >=1 socket
-psutil==5.7.3
-scipy==1.5.1
-six==1.15.0
-tifffile==2020.7.22
-tqdm==4.48.0
-joblib==0.16.0
-matplotlib=3.3.0
+# I have downgraded some of these to support python3.5 (tested on beag-shuil)
+Cython>=0.29.21
+h5py>=2.10.0
+numpy>=1.19.5 # But note a serious bug on windows that means versions 1.19-1.21 are undesitable on that platform
+psutil>=5.7.3 # psutil requirement picks bug fix to give correct CPU count for motherboards with >=1 socket
+scipy>=1.4.1
+six>=1.15.0
+tifffile>=2019.7.2
+tqdm>=4.48.0
+# Note that there is a security bug fixed in 1.2.0 so this is strongly preferred
+joblib>=1.1.1; python_version < '3.7'  
+joblib>=1.2.0; python_version >= '3.7'  
+matplotlib>=3.0.3
