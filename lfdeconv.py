@@ -88,7 +88,7 @@ def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.Physical
         assert(im is not None)
         if (prevedel) or (Xguess is None):
             # We will need to know the backprojection of the image
-            Htf = BackwardProjectACC(hMatrix, im, progress=None, projector=projector)
+            Htf = BackwardProjectACC(hMatrix, im, numjobs=numjobs, progress=None, projector=projector)
     else:
         # Caller has provided the initial backprojection (and so we don't expect them to provide the image)
         if projector.storeVolumesOnGPU:
@@ -107,7 +107,7 @@ def DeconvRL(hMatrix, Htf, maxIter, Xguess, logPrint=True, numjobs=util.Physical
         wh = np.where(trustMask == 0)
         for _im in im:
             assert(np.sum(_im[wh]) == 0)   # Caller must ensure image=0 in untrusted regions
-        trustBack = BackwardProjectACC(hMatrix, trustMask[np.newaxis], progress=None, projector=projector)
+        trustBack = BackwardProjectACC(hMatrix, trustMask[np.newaxis], numjobs=numjobs, progress=None, projector=projector)
         
     def RLUpdateFuncPrevedel(Xguess, Htf, HXguessBack, cc=slice(None)):
         assert(trustMask is None)

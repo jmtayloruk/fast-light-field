@@ -42,6 +42,8 @@ python3 -m venv flf-venv
 # then something has gone wrong that needs fixing. See “troubleshooting”, below
 python3 -m pip install --user -r requirements.txt
 
+# On an Apple M1 silicon platform, you may now need to do a special installation of psutil - see "troubleshooting" below 
+
 # OPTIONAL: if you want GPU support, run this next command
 # Note that the actual cuda library also needs to be installed first (see cuda documentation).
 # This step seems to be awkward, and I have a few possible suggestions under “troubleshooting”, below
@@ -88,7 +90,11 @@ python3 -m pip install --user cupy==8.2.0
 Runtime error: `No module named xxx`. Are you running in a virtual environment? If so, you probably forgot to remote the `--user` flag from one of the commands you ran.
 
 Runtime error: `Symbol not found: _aligned_alloc`. This seems to happen (on Mac OS?) if pyfftw is already installed. Solution is to install fast-light-field in a virtual environment, without pyfftw.
-Drop me an email if you are not sure what this means. 
+Drop me an email if you are not sure what this means.
+
+Runtime error on Apple M1 silicon: `No such file or directory (originated from sysctlbyname('hw.cpufrequency'))`.
+As of June 2023 there is an unfixed bug in the `psutil` module. To work around this until a fix is available,
+run `pip install --user git+https://github.com/snOm3ad/psutil.git@fix-cpu-freq-apple-silicon` after the main `pip install` step in the installation instructions above. 
 
 I have occasionally seen problems where skimage crashes when called from our code. I do not understand the root cause of that, but I think I fixed it by reinstalling skimage.
 
@@ -146,8 +152,28 @@ Although the entire fast-light-field project is not currently packaged as a form
 
 ## Benchmarking
 
-As mentioned in the installation instructions, you can get some quick-ish benchmark measurements by running `python3 setup.py benchmark`.
-For more in-depth benchmarks on realistically-sized tasks (as presented in our manuscript), see `benchmarking.ipynb`.
+As mentioned in the installation instructions, you can get some quick-ish initial benchmark measurements by running `python3 setup.py benchmark`.
+
+For more in-depth benchmarks on realistically-sized tasks (as presented in the accompanying paper), see [benchmarking.ipynb](benchmarking.ipynb).
+That notebook demonstrates and measures the benchmark scenario in detail. The benchmark reconstructs a pre-rectified 1463x1273 pixel image using a point spread function with the following characteristics:
+
+| Parameter | Value |
+| ----------- | ----------- |
+| Numerical Aperture | 0.5  |
+| Magnification | 22.222   |
+| ML Pitch (µm) | 125 |
+| f_ML (µm) | 3125  |
+| Refractive index | 1.33   |
+| wavelength (nm) | 520 |
+| z range (µm) | ±60   |
+| Number of planes | 25  |
+| N | 19  |
+| X | 1463   |
+| Y | 1273   |
+| N_iter | 4 |
+
+where ML is microlens and other symbols are defined in the accompanying paper.
+
 
 ## Integrating with Matlab code
 

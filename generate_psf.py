@@ -809,7 +809,7 @@ def GeneratePSFFromFilePath(filePath, OSR=3):
         normalisePSF = False
         reproduceMaxBug = True
     elif filename.startswith('PSFmatrix_'):
-        raise ValueError('\033[0;31mWe cannot generate filename %s because this filename represents a matrix generated from Matlab. We can only generate fdnormPSFmatrix or reducedPSFmatrix\033[0m' % filename)
+        raise ValueError(f'\033[0;31mWe cannot generate filename {filename} because this filename represents a matrix generated from Matlab. We can only generate fdnormPSFmatrix or reducedPSFmatrix\033[0m. If you have one generated from within matlab, copy it into the PSFmatrix directory.')
     else:
         raise ValueError('\033[0;31mUnrecognised matrix file prefix on filename %s\033[0m' % filename)
     pos = filename.find('PSFmatrix_')

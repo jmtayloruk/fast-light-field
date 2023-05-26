@@ -1,6 +1,6 @@
 # This file contains some snippets I use for investigating the performance of my light-field deconvolution code
 import os, sys, time, warnings
-import csv, glob
+import csv, glob, tifffile
 import cProfile, pstats
 import numpy as np
 
@@ -66,7 +66,7 @@ def SetNumJobs(nj):
     plf.SetNumThreadsToUse(nj)
     nj = plf.GetNumThreadsToUse()  # Read the value back, so we know the true number even if "0" was specified
     print('Will use {0} parallel threads'.format(nj))
-    # JT: I have disabled this because it overrides the path set in benchmark.py
+    # JT: I have disabled this because it overrides the path that might be set below in the 'parallel-scaling' action.
     #     I'm not sure if I rely on this threadsN.txt anywhere, though...
     #plf.SetThreadFileName('threads{0}.txt'.format(nj))
     return nj
@@ -77,7 +77,7 @@ def IsNumericArg(arg, stem):
 def SetImage(img, batchSize):
     return img[np.newaxis], np.tile(img[np.newaxis,:,:], (batchSize,1,1))
 
-def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=None, numJobs=plf.GetNumThreadsToUse(), projectorClass=proj.Projector_allC):
+def main(argv, defaultImage=None, matPath=None, outputFilename='performance_analysis_output.tif'):
     #########################################################################
     # Test code for performance measurement
     #########################################################################
@@ -90,11 +90,15 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
     if not 'prime-cache' in argv:
         print('NOTE: cache is not being primed - timings for early runs will include FFT planning time')
 
-    numJobs = SetNumJobs(numJobs)
+    # These are the defaults, but they may be overridden by specifiers in the instruction sequence we are passed
+    batchSize = 30
+    numJobs = SetNumJobs(plf.GetNumThreadsToUse())
     iterations = 4
+    projectorClass = projectorClass=proj.Projector_allC
     
     # Default to cpu mode unless/until explicitly specified otherwise
-    args = ['no-cache-FH', 'volumes-on-cpu', 'cpu', 'back-project', 'no-profile', 'default-matrix', 'default-image'] + argv
+    # Note that 'i0' means we default to benchmarking the initial back-projection operation only
+    args = ['no-cache-FH', 'volumes-on-cpu', 'cpu', 'i0', 'no-profile', 'default-matrix', 'default-image'] + argv
     projector = None
     results = []
 
@@ -109,12 +113,6 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
             projectorClass = proj.Projector_allC
             projector = projectorClass()
             projector.cacheFH = cacheFH
-        elif arg == 'back-project':
-            print('Benchmarking backprojection operator')
-            backProjectOnly = True
-        elif arg == 'deconv':
-            print('Benchmarking full deconvolution')
-            backProjectOnly = False
         elif arg == 'profile':
             profile = True
         elif arg == 'no-profile':
@@ -129,6 +127,7 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
                 projector.storeVolumesOnGPU = storeVolumesOnGPU
         elif IsNumericArg(arg, 'j'):
             numJobs = SetNumJobs(int(arg[1:]))
+            print(f"Setting numjobs to {numJobs}")
         elif IsNumericArg(arg, 'x'):
             batchSize = int(arg[1:])
             inputImage,inputImageBatch = SetImage(inputImage[0], batchSize)
@@ -139,8 +138,11 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
             hMatrix = psfmatrix.LoadMatrix(matPath)
         elif arg == 'piv-matrix':
             hMatrix = psfmatrix.LoadMatrix('PSFmatrix/fdnormPSFmatrix_M22.2NA0.5MLPitch125fml3125from-56to56zspacing4Nnum19lambda520n1.33.mat')
-        elif arg == 'olaf-matrix':
+        elif arg == 'nils-matrix':
             hMatrix = psfmatrix.LoadMatrix('PSFmatrix/fdnormPSFmatrix_M22.222NA0.5MLPitch125fml3125from-60to60zspacing5Nnum19lambda520n1.33.mat')
+        elif arg == 'nils-matrix-matlab':
+            print("NOTE: using an unnormalised matrix for direct comparison with original matlab code that uses buggy PSF")
+            hMatrix = psfmatrix.LoadMatrix('PSFmatrix/PSFmatrix_M22.222NA0.5MLPitch125fml3125from-60to60zspacing5Nnum19lambda520n1.33.mat')
         elif arg == 'cache-FH':
             cacheFH = True
             if projector is not None:
@@ -156,25 +158,31 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
             inputImage,inputImageBatch = SetImage(np.ones((19*19,19*19), dtype='float32'), batchSize)
         elif arg == 'smaller-image':
             inputImage,inputImageBatch = SetImage(inputImage[0,0:20*15,0:15*15], batchSize)
-        elif arg == 'olaf-image':
-            # This is just a dummy image with the same dimensions as Nils's test image for the Olaf code
-            # Note that the image dimensions are deliberately the wrong way round, since that seems to be what we are given from Matlab for this dataset
-            inputImage,inputImageBatch = SetImage(np.ones((1463, 1273), dtype='float32'), batchSize)
+        elif arg == 'nils-image':
+            if True:
+                inputImage,inputImageBatch = SetImage(tifffile.imread("Data/02_Rectified/exampleData/Nils_test_LFImage.tif").astype('float32'), batchSize)
+            else:
+                # This is just a dummy image with the same dimensions as Nils' test image
+                # Note that the image dimensions are deliberately the wrong way round, since that seems to be what we are given from Matlab for this dataset
+                inputImage,inputImageBatch = SetImage(np.ones((1463, 1273), dtype='float32'), batchSize)
 
         elif arg == 'parallel-scaling':
             # Investigate performance for different numbers of parallel CPU threads
             if (projectorClass is proj.Projector_gpuHelpers):
                 print('NOTE: will not investigate parallel scaling on GPU')
             else:
+                print(f"_numJobs will be in range {range(1,numJobs+1)}")
                 for _numJobs in range(1,numJobs+1):
                     print('Profiling with {0} parallel threads:'.format(_numJobs))
                     hMatrix.ClearCache()
+                    # The thread file gives very detailed breakdown of what work is scheduled on what thread,
+                    # if we want to investigate threading performance on that level.
+                    # I have disabled it for now, as the logging might make a tiny difference to performance
+                    #plf.SetThreadFileName(f'thread-benchmarks/threads_new_{numJobs}.txt')
                     ru1 = util.cpuTime('both')
-                    if backProjectOnly:
-                        temp = lfdeconv.BackwardProjectACC(hMatrix, inputImageBatch, planes=planesToProcess, progress=util.noProgressBar, numjobs=_numJobs, projector=projector, logPrint=False)
-                    else:
-                        temp = lfdeconv.DeconvRL(hMatrix, Htf=None, maxIter=iterations, Xguess=None, im=inputImageBatch, logPrint=False, numjobs=_numJobs, projector=projector)
+                    runResult = lfdeconv.DeconvRL(hMatrix, Htf=None, maxIter=iterations, Xguess=None, im=inputImageBatch, logPrint=False, numjobs=_numJobs, projector=projector)
                     ru2 = util.cpuTime('both')
+                    #plf.SetThreadFileName('')
                     print('overall delta rusage:', ru2-ru1)
                     AnalyzeTestResults(_numJobs)
         elif arg == 'analyze-saved-data':
@@ -209,7 +217,7 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
                 print('Filename doesnt follow the expected format. We will try and load it anyway...')
             (_H, _Ht, _CAindex, _, _, _, _) = psfmatrix.LoadRawMatrixData(oldMatPath)
             def RunThis():
-                return proj.BackwardProjectACC_old(_Ht, inputImage, _CAindex, planes=planesToProcess)
+                return proj.BackwardProjectACC_old(_Ht, inputImage, _CAindex)
         elif arg == 'prime-cache':
             # Do a single-image run to take care of one-off work such as FFT planning,
             # so that is not included in the timings of subsequent tests
@@ -217,29 +225,29 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
             # because the self-calibrating block sizes will vary depending on the number of images
             print('Priming cache (single image)')
             def RunThis():
-                result = lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, progress=util.noProgressBar, projector=projector, logPrint=False)
+                result = lfdeconv.BackwardProjectACC(hMatrix, inputImage, progress=util.noProgressBar, projector=projector, logPrint=False)
                 return result
         elif arg == 'new':
-            # Run my new fast code
+            # Run my new fast code on a single image (not the optimal scenario)
             print('Benchmarking new fast code (single image)')
             def RunThis():
-                if backProjectOnly:
-                    return lfdeconv.BackwardProjectACC(hMatrix, inputImage, planes=planesToProcess, progress=util.noProgressBar, numjobs=numJobs, projector=projector, logPrint=False)
-                else:
-                    return lfdeconv.DeconvRL(hMatrix, Htf=None, maxIter=iterations, Xguess=None, im=inputImage, logPrint=False, numjobs=numJobs, projector=projector)
+                return lfdeconv.DeconvRL(hMatrix, Htf=None, maxIter=iterations, Xguess=None, im=inputImage, logPrint=False, numjobs=numJobs, projector=projector)
         elif arg == 'new-piv':
             # Run my code in the sort of scenario I would expect to run it in for my PIV experiments.
             print('Benchmarking new fast code (PIV scenario)')
             def RunThis():
-                return lfdeconv.BackwardProjectACC(hMatrix, inputImageBatch[0:2], planes=planesToProcess, progress=util.noProgressBar, numjobs=numJobs, projector=projector, logPrint=False)
+                return lfdeconv.BackwardProjectACC(hMatrix, inputImageBatch[0:2], progress=util.noProgressBar, numjobs=numJobs, projector=projector, logPrint=False)
         elif arg == 'new-batch':
             # Run my code in the sort of scenario I would expect to run it in when batch-processing video
             print('Benchmarking new fast code (batch scenario)')
             def RunThis():
-                if backProjectOnly:
-                    return lfdeconv.BackwardProjectACC(hMatrix, inputImageBatch, planes=planesToProcess, progress=util.noProgressBar, numjobs=numJobs, projector=projector, logPrint=False)
-                else:
-                    return lfdeconv.DeconvRL(hMatrix, Htf=None, maxIter=iterations, Xguess=None, im=inputImageBatch, progress=util.noProgressBar, logPrint=False, numjobs=numJobs, projector=projector)
+                return lfdeconv.DeconvRL(hMatrix, Htf=None, maxIter=iterations, Xguess=None, im=inputImageBatch, progress=util.noProgressBar, logPrint=False, numjobs=numJobs, projector=projector)
+        elif arg == 'save-last-output':
+            if runResult is not None:
+                # Save a tiff file representing the reconstruction we last generated.
+                tifffile.imsave(outputFilename, normalised[:,0])
+            else:
+                print('COULD NOT SAVE OUTPUT - no deconvolution yet performed')
         else:
             print('UNRECOGNISED ARGUMENT:', arg)
             
@@ -250,7 +258,7 @@ def main(argv, defaultImage=None, batchSize=30, matPath=None, planesToProcess=No
                 pr.enable()
             ru1 = util.cpuTime('both')
             t1 = time.time()
-            temp = RunThis()
+            runResult = RunThis()
             t2 = time.time()
             ru2 = util.cpuTime('both')
             if profile:

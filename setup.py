@@ -59,6 +59,6 @@ if __name__ == "__main__":
         # Run benchmarks
         # Note that we shouldn't do the import globally, before we have built all our dependencies
         import benchmark
-        result = benchmark.main()
+        result = benchmark.RunSimpleBenchmarks()
         with open('benchmarks.txt', 'a') as f:
             f.write("%s: %s\n" % (datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"), result))
