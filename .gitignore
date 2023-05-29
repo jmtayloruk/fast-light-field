@@ -3,6 +3,8 @@ py_light_field/build/*
 py_light_field/test-py-light-field/test-py-light-field.xcodeproj/project.xcworkspace/xcshareddata
 py_light_field/test-py-light-field/test-py-light-field.xcodeproj/project.xcworkspace/xcuserdata
 py_light_field/test-py-light-field/DerivedData/
+py_light_field/UNKNOWN.egg-info/
+py_light_field/dist/
 *.pyc
 piv-raw-data
 lff-venv
@@ -18,4 +20,8 @@ light-field-integrands/light_field_integrands.html
 light-field-integrands/light_field_integrands.h
 light-field-integrands/light_field_integrands.c
 light-field-integrands/light_field_integrands.*.so
-
+light-field-integrands/UNKNOWN.egg-info/
+light-field-integrands/dist/
+cpu_deconv.pdf
+gpu_deconv.pdf
+thread_scaling.pdf

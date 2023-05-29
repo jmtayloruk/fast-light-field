@@ -245,7 +245,7 @@ def main(argv, defaultImage=None, matPath=None, outputFilename='performance_anal
         elif arg == 'save-last-output':
             if runResult is not None:
                 # Save a tiff file representing the reconstruction we last generated.
-                tifffile.imsave(outputFilename, normalised[:,0])
+                tifffile.imsave(outputFilename, runResult[:,0])
             else:
                 print('COULD NOT SAVE OUTPUT - no deconvolution yet performed')
         else:

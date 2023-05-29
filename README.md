@@ -64,6 +64,8 @@ python3 setup.py benchmark
 ### Troubleshooting - python module installation
 Unfortunately, installing the required python modules can be temperamental, even for a relatively simple project like this. If you encounter error messages while installing the dependencies, you may need to tweak things a bit. Drop me an email if you run into problems you can’t sort. Some issues I have encountered:
 
+pip install: `ERROR: Can not perform a '--user' install. User site-packages are not visible in this virtualenv`. You created a virtual environment but forgot to remove the `--user` qualifiers from subsequent commands in the install instructions.
+
 numpy: `Python version >= 3.7 required`. The solution is to manually run something like `python3 -m pip install --user numpy==1.18.5` to install an older version of numpy that is compatible with your version of python.
 
 imagecodecs: `imagecodecs/opj_color.c:45:22: fatal error: openjpeg.h: No such file or directory`. Solution is to manually run something like `python3 -m pip install --user tifffile==2019.7.2` to install an older version of tifffile.
