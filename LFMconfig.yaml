@@ -1,0 +1,16 @@
+gridType: 'reg'
+focus: 'single'
+plenoptic: 1
+uLensMask: 1
+M: 22.222
+NA: 0.5000
+ftl: 200000.0
+fm: [4250.0, 4950.0, 5900.0]
+tube2mla: 200000.0
+mla2sensor: 3125.0
+lensPitch: 125.0
+pixelPitch: 6.5000
+WaveLength: 0.5200
+n: 1.33
+comment: 'Test LFM standard config for Heartimaging on a one sided isoLFM setup'
+comment2: 'Thanks to Nils Norlin for sharing this file that is required to deconvolve his data using Olaf'
