@@ -23,7 +23,10 @@ git clone https://github.com/jmtayloruk/fast-light-field.git
 ```
 
 ## Installing
-Once you have downloaded the fast-light-field directory, run the following command-line operations:
+This code is well tested on a variety of Python toolchains on Linux and Mac OS. 
+Windows is not currently supported (see note below).
+
+To install (on Linux or Mac OS), once you have downloaded the fast-light-field directory, run the following command-line operations:
 
 ```
 # Start in the fast-light-field directory
@@ -197,3 +200,10 @@ where ML is microlens and other symbols are defined in the accompanying paper.
 I have a separate repository [https://github.com/jmtayloruk/prevedel-yoon-matlab-light-field](https://github.com/jmtayloruk/prevedel-yoon-matlab-light-field)
 that documents and demonstrates how to call my fast code from Matlab, if you have existing analysis pipelines written as Matlab scripts.
 This requires some additional RAM, but allows the full speed of my implementation to be accessed from Matlab code.
+
+## Windows support
+
+MS Windows is not currently supported. Even though the main fast-light-field module is Python-based, the backend relies
+on highly-optimized C, Cython and CUDA code. This does not currently compile on Windows.
+It would probably be possible to make it work through MinGW, but I do not have the experience to make that happen.
+If anybody does get that working, do please share with me the instructions, and any tweaks needed to the project code.

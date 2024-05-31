@@ -1,0 +1,39 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2639
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;\f1\fswiss\fcharset0 Helvetica-Oblique;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww17080\viewh10280\viewkind0
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\partightenfactor0
+
+\f0\fs24 \cf0 These are my brief notes on my attempts to get fast-light-field to install on Windows (Nov 2023).\
+Ultimately we are encountering masses of errors and I don\'92t think I\'92m going to have the time to get this to work.\
+It would probably be possible to make it work through MinGW, but I do not have the experience or time to figure out how to make that happen.\
+If anybody does get that working, do please share with me the instructions, and any tweaks needed to the project code.\
+\
+\
+Error: cython build requires visual studio 14.0 or greater.\
+Some people say that this can be fixed by: pip install --upgrade setuptools     but that wasn\'92t sufficient for me\
+
+\f1\i I think I did fix this in the end, but I can\'92t remember what I actually did to solve it\'85
+\f0\i0 \
+\
+\
+in light-field-integrands/bessel.c replace the 1/0 with NAN and it compiles\
+\
+and need to change the code in fast-light-field/setup.py to do os.chdir and then chdir ..\
+\
+Windows: Manually extract fftw-3.3.8.tar.gz into the same directory (right-click and choose Extract here)\
+\
+fast-light-field/setup.py split out the FFTW build command into individual steps\
+-> But it still doesn\'92t work (issues with building it on Windows that I haven\'92t tried to solve - including that the \'93make\'94 command does not exist)\
+\
+Compiling fast-light-field:\
+- remove includes of sys/cdefs.h, sys.errno.h. \
+- __attribute (in jAssert.h) is not defined so delete it\
+- In jCommon.h delete the random number generator functions\
+- In jAssert.cpp remove execinfo.h, backtrace etc\
+\
+-> But it still doesn\'92t work (for example pthreads and mutexes aren\'92t available, which are fundamental to the code).\
+-> I\'92m not sure if MinGW should be able to sidestep those issues, but I\'92m not familiar enough with it to know\'85\
+\
+}
