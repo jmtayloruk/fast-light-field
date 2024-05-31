@@ -5,7 +5,7 @@ import os, sys
 
 # TODO: I don't know what the right way is to express dependencies in a setup.py file, but this here is not good practice.
 # I should improve it
-# Currently if we run 'setup.py clean' then this *builds* fftw!
+# TODO: Currently if we run 'setup.py clean' then this *builds* fftw!
 
 # Check dependencies have been built
 if not os.path.exists('fftw-3.3.8/.libs/libfftw3f.a'):
@@ -50,4 +50,9 @@ py_light_field = Extension('py_light_field',
 )
 BUILD_MODULES.append(py_light_field)
 
-setup (ext_modules = BUILD_MODULES)
+setup (name='py_light_field',
+       version='1.0.0',
+       description='Utility module used by fast-light-field, providing optimised C-based projection operations',
+       author='Jonathan Taylor, University of Glasgow',
+       url='https://github.com/jmtayloruk/fast-light-field',
+       ext_modules = BUILD_MODULES)

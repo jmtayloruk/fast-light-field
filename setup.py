@@ -1,5 +1,13 @@
 # This is not actually a standard distutils setup.py script.
 # Here we build and install the submodules, and optionally run the self-test routines
+#
+# In future I might be able to turn this into a proper distutils script, but part of my issue
+# is that I am not *installing* fast-light-field, I am just setting things up so it can run in situ.
+# Note that, looking back at things, it looks like I should be able to figure out a better way of
+# doing the setup.py distutils stuff - see documentation:
+#   https://docs.python.org/3.11/distutils/apiref.html#distutils.core.setup
+#   https://docs.python.org/3.11/distutils/apiref.html#distutils.core.Extension
+#   https://setuptools.pypa.io/en/latest/setuptools.html
 import sys, os, datetime
 
 if __name__ == "__main__":

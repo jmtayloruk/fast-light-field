@@ -31,18 +31,18 @@ cd fast-light-field
 
 # OPTIONAL: now you have a choice of whether you want to use a python virtual environment or not.
 # If you don’t know what that is, just skip these next two commands
-# IMPORTANT: if you do set up a virtual environment, it is vital that you omit the “--user” flag from all subsequent commands,
-# or you may get hard-to-diagnose errors
+# IMPORTANT: if you do set up a virtual environment, it is vital that you
+# omit the “--user” flag from all subsequent commands, or you may get hard-to-diagnose errors
 python3 -m venv flf-venv
 . ./flf-venv/bin/activate
 
 # Install dependencies
-# You should check that this next command has run successfully - it should print “Successfully installed” followed by a list of module names. 
-# There may be earlier error messages that can probably be ignored, but if it does not make it to “Successfully installed” 
+# You should check that this next command has run successfully -
+# it should print “Successfully installed” followed by a list of module names. 
+# There may be earlier error messages that can probably be ignored, 
+# but if it does not make it to “Successfully installed” 
 # then something has gone wrong that needs fixing. See “troubleshooting”, below
 python3 -m pip install --user -r requirements.txt
-
-# On an Apple M1 silicon platform, you may now need to do a special installation of psutil - see "troubleshooting" below 
 
 # OPTIONAL: if you want GPU support, run this next command
 # Note that the actual cuda library also needs to be installed first (see cuda documentation).
@@ -52,11 +52,14 @@ python3 -m pip install --user cupy pycuda pynvml
 # Get everything set up for the fast-light-field code (this will take 5-10 minutes)
 python3 setup.py --user build self-test
 
-# If all is well, you will get a lot of output on the command line, but ultimately it should end with a green line reading “== Self-tests complete (passed 24/24) ==“. 
+# If all is well, you will get a lot of output on the command line, but ultimately 
+# it should end with a green line reading “== Self-tests complete (passed 24/24) ==“. 
 # If anything goes wrong, please just drop me an email.
 
-# Optional: run this command to get some benchmark measurements of performance on your system (takes about 5-10 minutes first time round, about 2 minutes for subsequent runs)
-# Make sure your computer is otherwise idle - if it is doing something else while this runs, the benchmark numbers will be degraded.
+# Optional: run this command to get some benchmark measurements of performance on your system 
+# (takes about 5-10 minutes first time round, about 2 minutes for subsequent runs)
+# Make sure your computer is otherwise idle - if it is doing something else while this runs, 
+# the benchmark numbers will be degraded.
 # I would be very interested to see the output if you want to send it to me by email
 python3 setup.py benchmark
 ```
@@ -95,8 +98,9 @@ Runtime error: `Symbol not found: _aligned_alloc`. This seems to happen (on Mac 
 Drop me an email if you are not sure what this means.
 
 Runtime error on Apple M1 silicon: `No such file or directory (originated from sysctlbyname('hw.cpufrequency'))`.
-As of June 2023 there is an unfixed bug in the `psutil` module. To work around this until a fix is available,
-run `pip install --user git+https://github.com/snOm3ad/psutil.git@fix-cpu-freq-apple-silicon` after the main `pip install` step in the installation instructions above. 
+As of June 2023 there was an unfixed bug in the `psutil` module. 
+That seems to have been fixed in psutil version 5.9.8 in Jan 2024, so I don't think you should encounter this error any more.
+If you do, the best solution is likely to be to upgrade psutil. Historical note: the fix is in psutil commit 14a33ffe05 from 6.1.2024.  
 
 I have occasionally seen problems where skimage crashes when called from our code. I do not understand the root cause of that, but I think I fixed it by reinstalling skimage.
 
