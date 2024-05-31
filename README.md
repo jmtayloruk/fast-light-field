@@ -77,6 +77,17 @@ imagecodecs: `imagecodecs/opj_color.c:45:22: fatal error: openjpeg.h: No such fi
 matplotlib/pillow: if you get an error saying libjpeg not installed, then either install it or comment out the matplotlib line in `requirements.txt`.
 The core fast-light-field code will still work, you just won't be able to run any of the auxiliary jupyter notebooks that generate plots.
 
+error with running the main setup.py build command:
+```
+No local packages or working download links found for light-field-integrands==1.0.0
+error: Could not find suitable distribution for Requirement.parse('light-field-integrands==1.0.0')
+```
+(or the equivalent error for py-light-field). I am not sure what is the cause of this error. 
+It seems to be an indexing issue (probably connected with my use of an old-fashioned build process).
+It seems to happen the first time you run `python3 setup.py --user build self-test`, 
+but if you rerun the command involving `requirements.txt`
+and then run the `build self-test` command a second time, the build seems to work ok.
+
 If you encounter any incompatibility issues, you could try installing in a virtual environment using one of the `requirements_exact_***.txt` in place of `requirements.txt`.
 Those files list specific combinations of module versions that I know work (at least for a particular version of python).
 These version numbers will over time become outdated, but for future-proofing these are combinations that I know should work.

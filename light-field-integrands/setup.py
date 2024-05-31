@@ -11,4 +11,5 @@ setup(name="light_field_integrands",
       url="https://github.com/jmtayloruk/fast-light-field",
       ext_modules=cythonize(Extension("light_field_integrands",
                                       sources=["light_field_integrands.pyx", "bessel.c"]),
-                            annotate=True))
+                            annotate=True),
+      install_requires=[])

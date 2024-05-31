@@ -55,4 +55,5 @@ setup (name='py_light_field',
        description='Utility module used by fast-light-field, providing optimised C-based projection operations',
        author='Jonathan Taylor, University of Glasgow',
        url='https://github.com/jmtayloruk/fast-light-field',
-       ext_modules = BUILD_MODULES)
+       ext_modules = BUILD_MODULES,
+       install_requires=[])
