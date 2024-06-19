@@ -45,14 +45,19 @@ def isnotebook():
         return False      # Probably standard Python interpreter
 
 # This next bit creates the object tqdm_alias.
-# If we are running in a notebook, the object maps to tqdm_notebook
-# Otherwise it maps to vanilla tqdm
-# Callers can import the correct one into their own environment via:
+# I used to do this by manually detecting if running in a notebook,
+# but actually tqdm has its own facility to handle that now
+# My existing code will still import via:
 #   from jutils import tqdm_alias as tqdm
+'''
+# old code
 if isnotebook():
     from tqdm.notebook import tqdm as tqdm_alias
 else:
     from tqdm import tqdm as tqdm_alias
+'''
+from tqdm.auto import tqdm as tqdm_alias
+
 
 def PhysicalCoreCount():
     # On my mac pro, this cpu_count() call correctly returns 8 (psutil version 5.2.2).
