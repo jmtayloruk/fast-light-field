@@ -8,7 +8,7 @@ import numpy as np
 import scipy.special, scipy.integrate, scipy.signal, scipy.misc
 import sys, types, time, os, h5py, warnings, cProfile, pstats, multiprocessing, psutil, gc
 from joblib import Parallel, delayed
-from tqdm import tqdm as tqdm
+from jutils import tqdm_alias as tqdm
 import light_field_integrands
 import jutils as util
 import scanf_py3k as scanf
